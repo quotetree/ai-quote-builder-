@@ -19,13 +19,14 @@ type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping";
 
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
   const { products, loading, createProduct, updateProduct, deleteProduct, bulkCreateProducts } = useProducts();
-  const { productFamilies, createProductFamily } = useProductFamilies();
+  const { productFamilies, createProductFamily, updateProductFamily, deleteProductFamily } = useProductFamilies();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [showFamilyManager, setShowFamilyManager] = useState(false);
 
   if (!isOpen) return null;
 
@@ -285,6 +286,12 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
                 className="hidden"
               />
             </label>
+            <button
+              onClick={() => setShowFamilyManager(true)}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+            >
+              Manage Families
+            </button>
             <div className="flex-1" />
             <span className="text-sm text-gray-600">
               {products.length} {products.length === 1 ? "product" : "products"}
@@ -361,6 +368,17 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           )}
         </div>
       </div>
+
+      {/* Product Family Manager Modal */}
+      {showFamilyManager && (
+        <ProductFamilyManager
+          productFamilies={productFamilies}
+          products={products}
+          onClose={() => setShowFamilyManager(false)}
+          onUpdate={updateProductFamily}
+          onDelete={deleteProductFamily}
+        />
+      )}
     </div>
   );
 }
@@ -970,6 +988,196 @@ function CreateProductFamilyModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// Product Family Manager Component
+function ProductFamilyManager({
+  productFamilies,
+  products,
+  onClose,
+  onUpdate,
+  onDelete,
+}: {
+  productFamilies: any[];
+  products: any[];
+  onClose: () => void;
+  onUpdate: (id: string, updates: any) => Promise<any>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [editingFamily, setEditingFamily] = useState<any | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
+  const getProductCount = (familyId: string) => {
+    return products.filter((p) => p.product_family_id === familyId).length;
+  };
+
+  const handleEdit = (family: any) => {
+    setEditingFamily(family);
+    setEditName(family.name);
+    setEditDescription(family.description || "");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingFamily || !editName.trim()) return;
+    
+    try {
+      await onUpdate(editingFamily.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+      });
+      toast.success("Family updated successfully");
+      setEditingFamily(null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update family");
+    }
+  };
+
+  const handleDelete = async (family: any) => {
+    const productCount = getProductCount(family.id);
+    
+    let confirmMessage = `Are you sure you want to delete "${family.name}"?`;
+    if (productCount > 0) {
+      confirmMessage += `\n\n${productCount} product${productCount === 1 ? '' : 's'} will have their family removed.`;
+    }
+    
+    if (!confirm(confirmMessage)) return;
+    
+    setIsDeleting(family.id);
+    try {
+      await onDelete(family.id);
+      toast.success("Family deleted successfully");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete family");
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">Manage Product Families</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              {productFamilies.length} {productFamilies.length === 1 ? "family" : "families"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Family List */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {productFamilies.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500">No product families yet.</p>
+              <p className="text-sm text-gray-400 mt-1">Create one when adding a new product.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {productFamilies.map((family) => (
+                <div
+                  key={family.id}
+                  className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                >
+                  {editingFamily?.id === family.id ? (
+                    // Edit Mode
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Family Name
+                        </label>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Description
+                        </label>
+                        <textarea
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveEdit}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingFamily(null)}
+                          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // View Mode
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-gray-900">{family.name}</h4>
+                        {family.description && (
+                          <p className="text-sm text-gray-600 mt-1">{family.description}</p>
+                        )}
+                        <p className="text-xs text-gray-500 mt-2">
+                          {getProductCount(family.id)} product{getProductCount(family.id) === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        <button
+                          onClick={() => handleEdit(family)}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit family"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(family)}
+                          disabled={isDeleting === family.id}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                          title="Delete family"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="w-full px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
