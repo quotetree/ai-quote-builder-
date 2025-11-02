@@ -306,6 +306,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             <ProductsTable
               products={filteredProducts}
               loading={loading}
+              productFamilies={productFamilies}
               onView={(product) => {
                 setViewingProduct(product);
                 setViewMode("product-detail");
@@ -422,14 +423,22 @@ function ProductsTable({
   onView,
   onEdit,
   onDelete,
+  productFamilies,
 }: {
   products: Product[];
   loading: boolean;
   onView: (product: Product) => void;
   onEdit: (product: Product) => void;
   onDelete: (productId: string) => void;
+  productFamilies: any[];
 }) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+
+  const getFamilyName = (familyId: string | null) => {
+    if (!familyId) return "—";
+    const family = productFamilies.find((f) => f.id === familyId);
+    return family ? family.name : "—";
+  };
 
   if (loading) {
     return (
@@ -463,7 +472,7 @@ function ProductsTable({
               Product Name
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Product Type
+              Product Family
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Description
@@ -496,7 +505,7 @@ function ProductsTable({
                 </div>
               </td>
               <td className="px-6 py-4 text-sm text-gray-900">
-                {product.product_type || "—"}
+                {getFamilyName(product.product_family_id)}
               </td>
               <td className="px-6 py-4">
                 <p className="text-sm text-gray-600 line-clamp-2 max-w-md">
