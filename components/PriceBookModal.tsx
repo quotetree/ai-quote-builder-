@@ -462,6 +462,10 @@ function ProductForm({
       toast.error("Product Name is required");
       return;
     }
+    if (!formData.product_family_id) {
+      toast.error("Product Family is required");
+      return;
+    }
     if (!formData.list_price || formData.list_price <= 0) {
       toast.error("List Price must be greater than 0");
       return;
@@ -538,7 +542,7 @@ function ProductForm({
         {/* Product Family */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Product Family
+            Product Family <span className="text-red-500">*</span>
           </label>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -546,9 +550,10 @@ function ProductForm({
                 value={formData.product_family_id}
                 onChange={(e) => setFormData({ ...formData, product_family_id: e.target.value })}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                required
                 disabled={familiesLoading}
               >
-                <option value="">Select a product family (optional)</option>
+                <option value="">Select a product family</option>
                 {productFamilies.map((family) => (
                   <option key={family.id} value={family.id}>
                     {family.name}
