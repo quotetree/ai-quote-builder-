@@ -19,6 +19,7 @@ type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping";
 
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
   const { products, loading, createProduct, updateProduct, deleteProduct, bulkCreateProducts } = useProducts();
+  const { productFamilies } = useProductFamilies();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -93,6 +94,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         return isNaN(parsed) ? defaultValue : parsed;
       };
 
+      // Helper function to find product family ID by name
+      const findFamilyId = (familyName: string | null): string | null => {
+        if (!familyName) return null;
+        const family = productFamilies.find(
+          (f) => f.name.toLowerCase() === familyName.toLowerCase().trim()
+        );
+        return family ? family.id : null;
+      };
+
       const productsData = csvData
         .filter((row) => row[columnMapping.product_name])
         .map((row) => {
@@ -102,11 +112,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             listPrice
           );
           
+          // Map family name to family ID
+          const familyName = columnMapping.product_family ? row[columnMapping.product_family] : null;
+          const familyId = findFamilyId(familyName);
+          
           return {
             product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
             product_name: row[columnMapping.product_name],
             product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
-            product_family_id: null, // CSV imports don't require family assignment
+            product_family_id: familyId,
             description: columnMapping.description ? row[columnMapping.description] : null,
             list_price: listPrice,
             sales_price: salesPrice,
@@ -257,6 +271,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
               mapping={columnMapping}
               onMappingChange={setColumnMapping}
               sampleData={csvData[0] || {}}
+              productFamilies={productFamilies}
               onCancel={() => {
                 setViewMode("list");
                 setCsvData([]);
@@ -654,6 +669,7 @@ function CsvColumnMapping({
   mapping,
   onMappingChange,
   sampleData,
+  productFamilies,
   onCancel,
   onImport,
 }: {
@@ -661,6 +677,7 @@ function CsvColumnMapping({
   mapping: Record<string, string>;
   onMappingChange: (mapping: Record<string, string>) => void;
   sampleData: Record<string, any>;
+  productFamilies: any[];
   onCancel: () => void;
   onImport: () => void;
 }) {
@@ -673,6 +690,7 @@ function CsvColumnMapping({
   const optionalFields = [
     { key: "product_number", label: "Product Code", required: false },
     { key: "product_brand", label: "Product Brand", required: false },
+    { key: "product_family", label: "Product Family", required: false },
     { key: "product_type", label: "Product Type", required: false },
     { key: "description", label: "Description", required: false },
     { key: "cost_price", label: "Cost Price", required: false },
@@ -693,9 +711,22 @@ function CsvColumnMapping({
       </div>
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-        <p className="text-sm text-blue-800">
+        <p className="text-sm text-blue-800 mb-2">
           <strong>Preview:</strong> First row from your CSV
         </p>
+        {mapping.product_family && productFamilies.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-blue-200">
+            <p className="text-sm text-blue-800 mb-1">
+              <strong>Available Product Families:</strong>
+            </p>
+            <p className="text-xs text-blue-700">
+              {productFamilies.map((f) => f.name).join(", ")}
+            </p>
+            <p className="text-xs text-blue-600 mt-1 italic">
+              Products will be matched to families by name (case-insensitive). Unmatched products will have no family assigned.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="space-y-4">
