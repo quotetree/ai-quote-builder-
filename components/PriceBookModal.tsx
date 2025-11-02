@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, ExternalLink } from "lucide-react";
+import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
 import { Product } from "@/types/database";
@@ -15,7 +15,7 @@ interface PriceBookModalProps {
   onClose: () => void;
 }
 
-type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping";
+type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping" | "product-detail";
 
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
   const { products, loading, createProduct, updateProduct, deleteProduct, bulkCreateProducts } = useProducts();
@@ -23,6 +23,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
@@ -305,6 +306,10 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             <ProductsTable
               products={filteredProducts}
               loading={loading}
+              onView={(product) => {
+                setViewingProduct(product);
+                setViewMode("product-detail");
+              }}
               onEdit={(product) => {
                 setEditingProduct(product);
                 setViewMode("new-product");
@@ -366,6 +371,33 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
               onImport={handleCsvImport}
             />
           )}
+
+          {viewMode === "product-detail" && viewingProduct && (
+            <ProductDetail
+              product={viewingProduct}
+              productFamilies={productFamilies}
+              onBack={() => {
+                setViewingProduct(null);
+                setViewMode("list");
+              }}
+              onEdit={() => {
+                setEditingProduct(viewingProduct);
+                setViewMode("new-product");
+              }}
+              onDelete={async () => {
+                if (confirm("Are you sure you want to delete this product?")) {
+                  try {
+                    await deleteProduct(viewingProduct.id);
+                    toast.success("Product deleted");
+                    setViewingProduct(null);
+                    setViewMode("list");
+                  } catch (error) {
+                    toast.error("Failed to delete product");
+                  }
+                }
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -387,11 +419,13 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 function ProductsTable({
   products,
   loading,
+  onView,
   onEdit,
   onDelete,
 }: {
   products: Product[];
   loading: boolean;
+  onView: (product: Product) => void;
   onEdit: (product: Product) => void;
   onDelete: (productId: string) => void;
 }) {
@@ -451,14 +485,10 @@ function ProductsTable({
               <td className="px-6 py-4">
                 <div className="flex flex-col">
                   <button
-                    className="text-blue-600 hover:text-blue-800 font-medium text-left inline-flex items-center gap-1"
-                    onClick={() => {
-                      // Navigate to product detail page
-                      window.open(`/pricebook/${product.id}`, "_blank");
-                    }}
+                    className="text-blue-600 hover:text-blue-800 font-medium text-left"
+                    onClick={() => onView(product)}
                   >
                     {product.product_name}
-                    <ExternalLink size={14} />
                   </button>
                   {product.product_number && (
                     <span className="text-xs text-gray-500">#{product.product_number}</span>
@@ -1178,6 +1208,165 @@ function ProductFamilyManager({
             Close
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Product Detail Component
+function ProductDetail({
+  product,
+  productFamilies,
+  onBack,
+  onEdit,
+  onDelete,
+}: {
+  product: Product;
+  productFamilies: any[];
+  onBack: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const family = productFamilies.find((f) => f.id === product.product_family_id);
+
+  return (
+    <div className="max-w-4xl mx-auto p-8">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+                Product
+              </span>
+              <h2 className="text-2xl font-bold text-gray-900">{product.product_name}</h2>
+            </div>
+            <div className="flex items-center gap-4 text-sm text-gray-600">
+              {product.product_number && (
+                <div>
+                  <span className="font-medium">Product Code:</span> {product.product_number}
+                </div>
+              )}
+              {family && (
+                <div>
+                  <span className="font-medium">Product Family:</span> {family.name}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onEdit}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2 font-medium"
+            >
+              <Edit size={16} />
+              Edit
+            </button>
+            <button
+              onClick={onDelete}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium"
+            >
+              <Trash2 size={16} />
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Details Section */}
+      <div className="bg-white border border-gray-200 rounded-lg">
+        <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+          <h3 className="text-lg font-semibold text-gray-900">Details</h3>
+        </div>
+        
+        <div className="p-6 space-y-6">
+          {/* Row 1: Product Name and Code */}
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Product Name</label>
+              <p className="text-base text-gray-900">{product.product_name}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Product Code</label>
+              <p className="text-base text-gray-900">{product.product_number || "—"}</p>
+            </div>
+          </div>
+
+          {/* Row 2: Brand and Type */}
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Product Brand</label>
+              <p className="text-base text-gray-900">{product.product_brand || "—"}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Product Type</label>
+              <p className="text-base text-gray-900">{product.product_type || "—"}</p>
+            </div>
+          </div>
+
+          {/* Row 3: Product Family */}
+          <div>
+            <label className="block text-sm font-medium text-gray-500 mb-1">Product Family</label>
+            <p className="text-base text-gray-900">{family ? family.name : "—"}</p>
+            {family && family.description && (
+              <p className="text-sm text-gray-600 mt-1">{family.description}</p>
+            )}
+          </div>
+
+          {/* Row 4: Description */}
+          <div>
+            <label className="block text-sm font-medium text-gray-500 mb-1">Description</label>
+            <p className="text-base text-gray-900 whitespace-pre-wrap">
+              {product.description || "—"}
+            </p>
+          </div>
+
+          {/* Row 5: Pricing */}
+          <div className="grid grid-cols-3 gap-6 pt-4 border-t border-gray-200">
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">List Price</label>
+              <p className="text-lg font-semibold text-gray-900">${product.list_price.toLocaleString()}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Sales Price</label>
+              <p className="text-lg font-semibold text-blue-600">${product.sales_price.toLocaleString()}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
+              <p className="text-lg font-semibold text-gray-900">
+                {product.cost_price ? `$${product.cost_price.toLocaleString()}` : "—"}
+              </p>
+            </div>
+          </div>
+
+          {/* Row 6: Unit */}
+          <div className="pt-4 border-t border-gray-200">
+            <label className="block text-sm font-medium text-gray-500 mb-1">Unit</label>
+            <p className="text-base text-gray-900">{product.unit || "ea"}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="mt-6 flex gap-3">
+        <button
+          onClick={onBack}
+          className="px-6 py-3 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onEdit}
+          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+        >
+          Save & New
+        </button>
+        <button
+          onClick={onEdit}
+          className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+        >
+          Save
+        </button>
       </div>
     </div>
   );
