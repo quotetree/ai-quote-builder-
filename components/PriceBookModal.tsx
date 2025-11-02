@@ -19,7 +19,7 @@ type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping";
 
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
   const { products, loading, createProduct, updateProduct, deleteProduct, bulkCreateProducts } = useProducts();
-  const { productFamilies } = useProductFamilies();
+  const { productFamilies, createProductFamily } = useProductFamilies();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -94,15 +94,81 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         return isNaN(parsed) ? defaultValue : parsed;
       };
 
-      // Helper function to find product family ID by name
-      const findFamilyId = (familyName: string | null): string | null => {
-        if (!familyName) return null;
-        const family = productFamilies.find(
-          (f) => f.name.toLowerCase() === familyName.toLowerCase().trim()
-        );
-        return family ? family.id : null;
+      // Helper function to normalize text for comparison
+      const normalizeText = (text: string): string => {
+        return text.toLowerCase().trim().replace(/\s+/g, ' ');
       };
 
+      // Helper function to get singular form (simple implementation)
+      const toSingular = (text: string): string => {
+        const normalized = normalizeText(text);
+        if (normalized.endsWith('ies')) {
+          return normalized.slice(0, -3) + 'y';
+        }
+        if (normalized.endsWith('ses') || normalized.endsWith('ches') || normalized.endsWith('xes')) {
+          return normalized.slice(0, -2);
+        }
+        if (normalized.endsWith('s') && !normalized.endsWith('ss')) {
+          return normalized.slice(0, -1);
+        }
+        return normalized;
+      };
+
+      // Helper function to find or create product family
+      const findOrCreateFamilyId = async (familyName: string | null): Promise<string | null> => {
+        if (!familyName || !familyName.trim()) return null;
+        
+        const normalizedInput = normalizeText(familyName);
+        const singularInput = toSingular(normalizedInput);
+        
+        // Try exact match first (case-insensitive)
+        let match = productFamilies.find(
+          (f) => normalizeText(f.name) === normalizedInput
+        );
+        
+        // Try singular/plural variations
+        if (!match) {
+          match = productFamilies.find(
+            (f) => toSingular(normalizeText(f.name)) === singularInput
+          );
+        }
+        
+        if (match) {
+          return match.id;
+        }
+        
+        // No match found - create new family with proper capitalization
+        // Use the original input but trim and clean up spaces
+        const cleanName = familyName.trim().replace(/\s+/g, ' ');
+        try {
+          const newFamily = await createProductFamily(cleanName, `Imported from CSV`);
+          return newFamily ? newFamily.id : null;
+        } catch (error) {
+          console.error(`Failed to create family "${cleanName}":`, error);
+          return null;
+        }
+      };
+
+      // Collect unique family names from CSV
+      const uniqueFamilyNames = new Set<string>();
+      csvData.forEach((row) => {
+        if (columnMapping.product_family && row[columnMapping.product_family]) {
+          uniqueFamilyNames.add(row[columnMapping.product_family].trim());
+        }
+      });
+
+      // Create/find all families first
+      toast.loading(`Processing ${uniqueFamilyNames.size} product families...`);
+      const familyIdMap = new Map<string, string | null>();
+      
+      for (const familyName of Array.from(uniqueFamilyNames)) {
+        const familyId = await findOrCreateFamilyId(familyName);
+        familyIdMap.set(familyName, familyId);
+      }
+
+      toast.dismiss();
+      
+      // Now process all products
       const productsData = csvData
         .filter((row) => row[columnMapping.product_name])
         .map((row) => {
@@ -112,9 +178,9 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             listPrice
           );
           
-          // Map family name to family ID
-          const familyName = columnMapping.product_family ? row[columnMapping.product_family] : null;
-          const familyId = findFamilyId(familyName);
+          // Get family ID from our map
+          const familyName = columnMapping.product_family ? row[columnMapping.product_family]?.trim() : null;
+          const familyId = familyName ? familyIdMap.get(familyName) || null : null;
           
           return {
             product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
@@ -148,7 +214,19 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
       await bulkCreateProducts(productsData);
       await trackCsvUpload(csvData.length, productsData.length);
-      toast.success(`Successfully imported ${productsData.length} products`);
+      
+      // Count how many new families were created
+      const existingFamilyCount = productFamilies.length;
+      const newFamiliesCreated = Math.max(0, uniqueFamilyNames.size - Array.from(familyIdMap.values()).filter(id => 
+        productFamilies.some(f => f.id === id)
+      ).length);
+      
+      let successMessage = `Successfully imported ${productsData.length} products`;
+      if (newFamiliesCreated > 0) {
+        successMessage += ` and created ${newFamiliesCreated} new product ${newFamiliesCreated === 1 ? 'family' : 'families'}`;
+      }
+      
+      toast.success(successMessage);
       setViewMode("list");
       setCsvData([]);
       setCsvHeaders([]);
@@ -714,16 +792,22 @@ function CsvColumnMapping({
         <p className="text-sm text-blue-800 mb-2">
           <strong>Preview:</strong> First row from your CSV
         </p>
-        {mapping.product_family && productFamilies.length > 0 && (
+        {mapping.product_family && (
           <div className="mt-3 pt-3 border-t border-blue-200">
             <p className="text-sm text-blue-800 mb-1">
-              <strong>Available Product Families:</strong>
+              <strong>Smart Family Matching:</strong>
             </p>
-            <p className="text-xs text-blue-700">
-              {productFamilies.map((f) => f.name).join(", ")}
+            {productFamilies.length > 0 && (
+              <p className="text-xs text-blue-700 mb-2">
+                <strong>Existing families:</strong> {productFamilies.map((f) => f.name).join(", ")}
+              </p>
+            )}
+            <p className="text-xs text-blue-600 italic">
+              ✨ Products will be matched to existing families intelligently (case-insensitive, handles plurals). 
+              New families will be created automatically if no match is found.
             </p>
-            <p className="text-xs text-blue-600 mt-1 italic">
-              Products will be matched to families by name (case-insensitive). Unmatched products will have no family assigned.
+            <p className="text-xs text-blue-500 mt-1">
+              Examples: "camera" matches "Camera", "cameras" matches "Camera", "  HVAC  " matches "HVAC"
             </p>
           </div>
         )}
