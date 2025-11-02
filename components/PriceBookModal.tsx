@@ -86,29 +86,62 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
   const handleCsvImport = async () => {
     try {
+      // Helper function to safely parse numbers
+      const safeParseFloat = (value: any, defaultValue: number = 0): number => {
+        if (value === null || value === undefined || value === '') return defaultValue;
+        const parsed = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+        return isNaN(parsed) ? defaultValue : parsed;
+      };
+
       const productsData = csvData
         .filter((row) => row[columnMapping.product_name])
-        .map((row) => ({
-          product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
-          product_name: row[columnMapping.product_name],
-          product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
-          description: columnMapping.description ? row[columnMapping.description] : null,
-          list_price: parseFloat(row[columnMapping.list_price] || 0),
-          sales_price: parseFloat(row[columnMapping.sales_price] || row[columnMapping.list_price] || 0),
-          cost_price: columnMapping.cost_price ? parseFloat(row[columnMapping.cost_price] || 0) : 0,
-          product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
-          unit: columnMapping.unit ? row[columnMapping.unit] : "ea",
-        }));
+        .map((row) => {
+          const listPrice = safeParseFloat(row[columnMapping.list_price], 0);
+          const salesPrice = safeParseFloat(
+            row[columnMapping.sales_price] || row[columnMapping.list_price],
+            listPrice
+          );
+          
+          return {
+            product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
+            product_name: row[columnMapping.product_name],
+            product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
+            product_family_id: null, // CSV imports don't require family assignment
+            description: columnMapping.description ? row[columnMapping.description] : null,
+            list_price: listPrice,
+            sales_price: salesPrice,
+            cost_price: columnMapping.cost_price ? safeParseFloat(row[columnMapping.cost_price], 0) : 0,
+            product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
+            unit: columnMapping.unit ? row[columnMapping.unit] : "ea",
+          };
+        });
+
+      // Validate that we have products to import
+      if (productsData.length === 0) {
+        toast.error("No valid products found to import");
+        return;
+      }
+
+      // Validate that all products have required fields
+      const invalidProducts = productsData.filter(
+        (p) => !p.product_name || p.list_price === null || p.sales_price === null
+      );
+
+      if (invalidProducts.length > 0) {
+        toast.error(`${invalidProducts.length} products are missing required fields (name, list price, or sales price)`);
+        return;
+      }
 
       await bulkCreateProducts(productsData);
       await trackCsvUpload(csvData.length, productsData.length);
-      toast.success(`Imported ${productsData.length} products`);
+      toast.success(`Successfully imported ${productsData.length} products`);
       setViewMode("list");
       setCsvData([]);
       setCsvHeaders([]);
       setColumnMapping({});
     } catch (error: any) {
-      toast.error(error.message || "Failed to import products");
+      console.error("CSV Import Error:", error);
+      toast.error(error.message || "Failed to import products. Please check your data and try again.");
     }
   };
 
@@ -425,24 +458,16 @@ function ProductForm({
     e.preventDefault();
     
     // Validate required fields
-    if (!formData.product_name) {
+    if (!formData.product_name.trim()) {
       toast.error("Product Name is required");
       return;
     }
-    if (!formData.product_number) {
-      toast.error("Product Code is required");
-      return;
-    }
-    if (!formData.product_family_id) {
-      toast.error("Product Family is required");
-      return;
-    }
     if (!formData.list_price || formData.list_price <= 0) {
-      toast.error("List Price is required");
+      toast.error("List Price must be greater than 0");
       return;
     }
     if (!formData.sales_price || formData.sales_price <= 0) {
-      toast.error("Sales Price is required");
+      toast.error("Sales Price must be greater than 0");
       return;
     }
     
@@ -473,14 +498,13 @@ function ProductForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Code <span className="text-red-500">*</span>
+              Product Code
             </label>
             <input
               type="text"
               value={formData.product_number}
               onChange={(e) => setFormData({ ...formData, product_number: e.target.value })}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              required
             />
           </div>
         </div>
@@ -514,7 +538,7 @@ function ProductForm({
         {/* Product Family */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Product Family <span className="text-red-500">*</span>
+            Product Family
           </label>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -522,10 +546,9 @@ function ProductForm({
                 value={formData.product_family_id}
                 onChange={(e) => setFormData({ ...formData, product_family_id: e.target.value })}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
-                required
                 disabled={familiesLoading}
               >
-                <option value="">Select a product family</option>
+                <option value="">Select a product family (optional)</option>
                 {productFamilies.map((family) => (
                   <option key={family.id} value={family.id}>
                     {family.name}
