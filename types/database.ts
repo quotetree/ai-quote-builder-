@@ -28,6 +28,7 @@ export interface Product {
   user_id: string;
   product_number: string | null;
   product_name: string;
+  product_brand: string | null;
   product_family_id: string | null;
   product_type: string | null;
   product_tags: string[] | null;
@@ -125,6 +126,7 @@ export interface CreateProjectForm {
 export interface CreateProductForm {
   product_number?: string;
   product_name: string;
+  product_brand?: string;
   product_family_id?: string;
   product_type?: string;
   product_tags?: string[];

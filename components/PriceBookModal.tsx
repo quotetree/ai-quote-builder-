@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, ExternalLink } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
+import { useProductFamilies } from "@/hooks/useProductFamilies";
 import { Product } from "@/types/database";
 import { trackProductCreated, trackCsvUpload } from "@/lib/analytics";
 import toast from "react-hot-toast";
@@ -51,8 +52,10 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           const lower = header.toLowerCase();
           if (lower.includes("name") && !lower.includes("family")) {
             autoMapping.product_name = header;
-          } else if (lower.includes("number") || lower.includes("id") || lower.includes("sku")) {
+          } else if (lower.includes("number") || lower.includes("id") || lower.includes("sku") || lower.includes("code")) {
             autoMapping.product_number = header;
+          } else if (lower.includes("brand") || lower.includes("manufacturer")) {
+            autoMapping.product_brand = header;
           } else if (lower.includes("description") || lower.includes("desc")) {
             autoMapping.description = header;
           } else if (lower.includes("list") && lower.includes("price")) {
@@ -88,6 +91,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         .map((row) => ({
           product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
           product_name: row[columnMapping.product_name],
+          product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
           description: columnMapping.description ? row[columnMapping.description] : null,
           list_price: parseFloat(row[columnMapping.list_price] || 0),
           sales_price: parseFloat(row[columnMapping.sales_price] || row[columnMapping.list_price] || 0),
@@ -390,39 +394,57 @@ function ProductForm({
   onCancel: () => void;
   onSave: (data: Partial<Product>) => void;
 }) {
+  const { productFamilies, loading: familiesLoading } = useProductFamilies();
   const [formData, setFormData] = useState({
     product_number: product?.product_number || "",
     product_name: product?.product_name || "",
+    product_brand: product?.product_brand || "",
     product_type: product?.product_type || "",
+    product_family_id: product?.product_family_id || "",
     description: product?.description || "",
     list_price: product?.list_price || 0,
     sales_price: product?.sales_price || 0,
-    cost_price: product?.cost_price || 0,
     unit: product?.unit || "ea",
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate required fields
+    if (!formData.product_name) {
+      toast.error("Product Name is required");
+      return;
+    }
+    if (!formData.product_number) {
+      toast.error("Product Code is required");
+      return;
+    }
+    if (!formData.product_family_id) {
+      toast.error("Product Family is required");
+      return;
+    }
+    if (!formData.list_price || formData.list_price <= 0) {
+      toast.error("List Price is required");
+      return;
+    }
+    if (!formData.sales_price || formData.sales_price <= 0) {
+      toast.error("Sales Price is required");
+      return;
+    }
+    
     onSave(formData);
   };
 
   return (
     <div className="max-w-3xl mx-auto p-8">
-      <h3 className="text-xl font-bold mb-6">{product ? "Edit Product" : "New Product"}</h3>
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="mb-8">
+        <h3 className="text-xl font-bold text-gray-900 mb-1">Product Information</h3>
+        <p className="text-sm text-gray-500">* = Required information</p>
+      </div>
+      
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Product Name and Product Code */}
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Number
-            </label>
-            <input
-              type="text"
-              value={formData.product_number}
-              onChange={(e) => setFormData({ ...formData, product_number: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Optional"
-            />
-          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Product Name <span className="text-red-500">*</span>
@@ -431,25 +453,75 @@ function ProductForm({
               type="text"
               value={formData.product_name}
               onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Product Code <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.product_number}
+              onChange={(e) => setFormData({ ...formData, product_number: e.target.value })}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
             />
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Product Type
-          </label>
-          <input
-            type="text"
-            value={formData.product_type}
-            onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            placeholder="e.g., Hardware, Service, Equipment"
-          />
+        {/* Product Brand and Product Type */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Product Brand
+            </label>
+            <input
+              type="text"
+              value={formData.product_brand}
+              onChange={(e) => setFormData({ ...formData, product_brand: e.target.value })}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Product Type
+            </label>
+            <input
+              type="text"
+              value={formData.product_type}
+              onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
         </div>
 
+        {/* Product Family */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Product Family <span className="text-red-500">*</span>
+          </label>
+          <div className="relative">
+            <select
+              value={formData.product_family_id}
+              onChange={(e) => setFormData({ ...formData, product_family_id: e.target.value })}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+              required
+              disabled={familiesLoading}
+            >
+              <option value="">Select a product family</option>
+              {productFamilies.map((family) => (
+                <option key={family.id} value={family.id}>
+                  {family.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+          </div>
+        </div>
+
+        {/* Description */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Description
@@ -458,12 +530,13 @@ function ProductForm({
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             rows={4}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             placeholder="Product details..."
           />
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
+        {/* List Price and Sales Price */}
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               List Price <span className="text-red-500">*</span>
@@ -471,9 +544,10 @@ function ProductForm({
             <input
               type="number"
               step="0.01"
+              min="0"
               value={formData.list_price}
               onChange={(e) => setFormData({ ...formData, list_price: parseFloat(e.target.value) || 0 })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
             />
           </div>
@@ -484,49 +558,27 @@ function ProductForm({
             <input
               type="number"
               step="0.01"
+              min="0"
               value={formData.sales_price}
               onChange={(e) => setFormData({ ...formData, sales_price: parseFloat(e.target.value) || 0 })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Cost Price
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={formData.cost_price}
-              onChange={(e) => setFormData({ ...formData, cost_price: parseFloat(e.target.value) || 0 })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Unit
-            </label>
-            <input
-              type="text"
-              value={formData.unit}
-              onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="ea, ft, hr"
             />
           </div>
         </div>
 
+        {/* Buttons */}
         <div className="flex gap-3 pt-6">
           <button
             type="submit"
-            className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
             {product ? "Update Product" : "Create Product"}
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+            className="px-8 py-3 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
           >
             Cancel
           </button>
@@ -559,7 +611,8 @@ function CsvColumnMapping({
   ];
 
   const optionalFields = [
-    { key: "product_number", label: "Product Number", required: false },
+    { key: "product_number", label: "Product Code", required: false },
+    { key: "product_brand", label: "Product Brand", required: false },
     { key: "product_type", label: "Product Type", required: false },
     { key: "description", label: "Description", required: false },
     { key: "cost_price", label: "Cost Price", required: false },
