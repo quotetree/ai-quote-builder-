@@ -28,6 +28,8 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [showFamilyManager, setShowFamilyManager] = useState(false);
+  const [showUnmappedWarning, setShowUnmappedWarning] = useState(false);
+  const [unmappedColumnsCount, setUnmappedColumnsCount] = useState(0);
 
   if (!isOpen) return null;
 
@@ -83,7 +85,26 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     event.target.value = "";
   };
 
+  const handleCsvImportClick = () => {
+    // Define which fields are optional in the pricebook
+    const optionalFields = ['product_number', 'product_brand', 'product_type', 'description'];
+    
+    // Find which optional fields are NOT mapped (check for both undefined and empty string)
+    const unmappedOptionalFields = optionalFields.filter(field => !columnMapping[field] || columnMapping[field] === '');
+    
+    // Show warning if there are unmapped optional fields
+    if (unmappedOptionalFields.length > 0) {
+      setUnmappedColumnsCount(unmappedOptionalFields.length);
+      setShowUnmappedWarning(true);
+    } else {
+      handleCsvImport();
+    }
+  };
+
   const handleCsvImport = async () => {
+    // Close the warning dialog if it was open
+    setShowUnmappedWarning(false);
+    
     try {
       // Helper function to safely parse numbers
       const safeParseFloat = (value: any, defaultValue: number = 0): number => {
@@ -181,15 +202,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           const familyId = familyName ? familyIdMap.get(familyName) || null : null;
           
           return {
-            product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
-            product_name: row[columnMapping.product_name],
+          product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
+          product_name: row[columnMapping.product_name],
             product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
             product_family_id: familyId,
-            description: columnMapping.description ? row[columnMapping.description] : null,
+          description: columnMapping.description ? row[columnMapping.description] : null,
             list_price: listPrice,
             sales_price: salesPrice,
             cost_price: 0, // Default to 0 for CSV imports
-            product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
+          product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
             unit: "ea", // Default to "ea" for CSV imports
           };
         });
@@ -365,7 +386,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
                 setCsvHeaders([]);
                 setColumnMapping({});
               }}
-              onImport={handleCsvImport}
+              onImport={handleCsvImportClick}
             />
           )}
 
@@ -406,6 +427,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           onClose={() => setShowFamilyManager(false)}
           onUpdate={updateProductFamily}
           onDelete={deleteProductFamily}
+        />
+      )}
+
+      {/* Unmapped Columns Warning Modal */}
+      {showUnmappedWarning && (
+        <UnmappedColumnsWarning
+          unmappedCount={unmappedColumnsCount}
+          onCancel={() => setShowUnmappedWarning(false)}
+          onConfirm={handleCsvImport}
         />
       )}
     </div>
@@ -672,16 +702,16 @@ function ProductForm({
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Product Type
-            </label>
-            <input
-              type="text"
-              value={formData.product_type}
-              onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Product Type
+          </label>
+          <input
+            type="text"
+            value={formData.product_type}
+            onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+          />
           </div>
         </div>
 
@@ -1373,6 +1403,58 @@ function ProductDetail({
         >
           Save
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Unmapped Columns Warning Component
+function UnmappedColumnsWarning({
+  unmappedCount,
+  onCancel,
+  onConfirm,
+}: {
+  unmappedCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h3 className="text-lg font-bold text-gray-900">Confirm</h3>
+          <button
+            onClick={onCancel}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          <p className="text-gray-700 text-base leading-relaxed">
+            You have <strong>{unmappedCount}</strong> unmapped {unmappedCount === 1 ? 'column' : 'columns'}. 
+            Are you sure you want to continue the import without mapping?
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onCancel}
+            className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-8 py-2.5 bg-yellow-400 text-gray-900 rounded-lg hover:bg-yellow-500 transition-colors font-medium"
+          >
+            Yes
+          </button>
+        </div>
       </div>
     </div>
   );
