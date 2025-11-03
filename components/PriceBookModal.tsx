@@ -65,14 +65,10 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             autoMapping.list_price = header;
           } else if (lower.includes("sale") && lower.includes("price") || lower === "price") {
             autoMapping.sales_price = header;
-          } else if (lower.includes("cost")) {
-            autoMapping.cost_price = header;
           } else if (lower.includes("family") || lower.includes("category")) {
             autoMapping.product_family = header;
           } else if (lower.includes("type")) {
             autoMapping.product_type = header;
-          } else if (lower.includes("unit")) {
-            autoMapping.unit = header;
           }
         });
 
@@ -192,9 +188,9 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             description: columnMapping.description ? row[columnMapping.description] : null,
             list_price: listPrice,
             sales_price: salesPrice,
-            cost_price: columnMapping.cost_price ? safeParseFloat(row[columnMapping.cost_price], 0) : 0,
+            cost_price: 0, // Default to 0 for CSV imports
             product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
-            unit: columnMapping.unit ? row[columnMapping.unit] : "ea",
+            unit: "ea", // Default to "ea" for CSV imports
           };
         });
 
@@ -828,8 +824,6 @@ function CsvColumnMapping({
     { key: "product_family", label: "Product Family", required: false },
     { key: "product_type", label: "Product Type", required: false },
     { key: "description", label: "Description", required: false },
-    { key: "cost_price", label: "Cost Price", required: false },
-    { key: "unit", label: "Unit", required: false },
   ];
 
   const allFields = [...requiredFields, ...optionalFields];
