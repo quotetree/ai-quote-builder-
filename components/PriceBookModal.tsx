@@ -202,11 +202,11 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
       // Validate that all products have required fields
       const invalidProducts = productsData.filter(
-        (p) => !p.product_name || p.list_price === null || p.sales_price === null
+        (p) => !p.product_name || p.list_price === null || p.sales_price === null || !p.product_family_id
       );
 
       if (invalidProducts.length > 0) {
-        toast.error(`${invalidProducts.length} products are missing required fields (name, list price, or sales price)`);
+        toast.error(`${invalidProducts.length} products are missing required fields (name, product family, list price, or sales price)`);
         return;
       }
 
@@ -814,6 +814,7 @@ function CsvColumnMapping({
 }) {
   const requiredFields = [
     { key: "product_name", label: "Product Name", required: true },
+    { key: "product_family", label: "Product Family", required: true },
     { key: "list_price", label: "List Price", required: true },
     { key: "sales_price", label: "Sales Price", required: true },
   ];
@@ -821,7 +822,6 @@ function CsvColumnMapping({
   const optionalFields = [
     { key: "product_number", label: "Product Code", required: false },
     { key: "product_brand", label: "Product Brand", required: false },
-    { key: "product_family", label: "Product Family", required: false },
     { key: "product_type", label: "Product Type", required: false },
     { key: "description", label: "Description", required: false },
   ];
@@ -854,7 +854,7 @@ function CsvColumnMapping({
               </p>
             )}
             <p className="text-xs text-blue-600 italic">
-              ✨ Products will be matched to existing families intelligently (case-insensitive, handles plurals). 
+              ✨ <strong>Required field:</strong> All products must have a family. Products will be matched to existing families intelligently (case-insensitive, handles plurals). 
               New families will be created automatically if no match is found.
             </p>
             <p className="text-xs text-blue-500 mt-1">
@@ -907,6 +907,9 @@ function CsvColumnMapping({
         <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <p className="text-sm text-yellow-800">
             <strong>Note:</strong> Please map all required fields (marked with *) before importing.
+          </p>
+          <p className="text-xs text-yellow-700 mt-2">
+            Product Family is required. Products without a valid family name will not be imported.
           </p>
         </div>
       )}
