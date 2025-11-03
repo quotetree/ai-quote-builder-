@@ -869,31 +869,6 @@ function CsvColumnMapping({
         </p>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-        <p className="text-sm text-blue-800 mb-2">
-          <strong>Preview:</strong> First row from your CSV
-        </p>
-        {mapping.product_family && (
-          <div className="mt-3 pt-3 border-t border-blue-200">
-            <p className="text-sm text-blue-800 mb-1">
-              <strong>Smart Family Matching:</strong>
-            </p>
-            {productFamilies.length > 0 && (
-              <p className="text-xs text-blue-700 mb-2">
-                <strong>Existing families:</strong> {productFamilies.map((f) => f.name).join(", ")}
-              </p>
-            )}
-            <p className="text-xs text-blue-600 italic">
-              ✨ <strong>Required field:</strong> All products must have a family. Products will be matched to existing families intelligently (case-insensitive, handles plurals). 
-              New families will be created automatically if no match is found.
-            </p>
-            <p className="text-xs text-blue-500 mt-1">
-              Examples: "camera" matches "Camera", "cameras" matches "Camera", "  HVAC  " matches "HVAC"
-            </p>
-          </div>
-        )}
-      </div>
-
       <div className="space-y-4">
         {allFields.map((field) => (
           <div key={field.key} className="grid grid-cols-3 gap-4 items-center">
