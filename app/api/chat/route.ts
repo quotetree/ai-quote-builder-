@@ -39,10 +39,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Get relevant products from price book
+    // Set high limit to fetch all products (Supabase default is 1000)
     const { data: products } = await supabase
       .from("products")
       .select("*")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .limit(10000);
 
     // Check if price book is empty
     if (!products || products.length === 0) {

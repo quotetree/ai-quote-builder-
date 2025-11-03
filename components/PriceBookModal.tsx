@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
@@ -31,14 +31,52 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   const [showUnmappedWarning, setShowUnmappedWarning] = useState(false);
   const [unmappedColumnsCount, setUnmappedColumnsCount] = useState(0);
 
-  if (!isOpen) return null;
+  // Improved search filtering with useMemo for performance and consistency
+  // MUST be called before the early return to follow Rules of Hooks
+  const filteredProducts = useMemo(() => {
+    // If no search query, return all products
+    if (!searchQuery || searchQuery.trim() === "") {
+      return products;
+    }
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.product_number?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    // Split search query into individual words and normalize
+    // "cat6 cable" becomes ["cat6", "cable"]
+    const searchTerms = searchQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s+/) // Split on whitespace
+      .filter(term => term.length > 0);
+
+    if (searchTerms.length === 0) {
+      return products;
+    }
+    
+    const filtered = products.filter((product) => {
+      // Combine all searchable fields into one string for easier matching
+      const searchableText = [
+        product.product_name,
+        product.product_number,
+        product.description,
+        product.product_brand,
+        product.product_type,
+        ...(product.product_tags || [])
+      ]
+        .filter(Boolean) // Remove null/undefined
+        .join(' ') // Join with space
+        .toLowerCase();
+
+      // ALL search terms must be found somewhere in the searchable text
+      // "cat6 cable" will match if BOTH "cat6" AND "cable" appear anywhere
+      return searchTerms.every(term => searchableText.includes(term));
+    });
+
+    // Debug logging
+    console.log(`🔍 Search for "${searchQuery}" (${searchTerms.length} terms): Found ${filtered.length} of ${products.length} products`);
+    
+    return filtered;
+  }, [products, searchQuery]);
+
+  if (!isOpen) return null;
 
   const handleCsvFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -133,6 +171,9 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         return normalized;
       };
 
+      // Track newly created families during this import to prevent duplicates
+      const newlyCreatedFamilies: Array<{ id: string; name: string }> = [];
+
       // Helper function to find or create product family
       const findOrCreateFamilyId = async (familyName: string | null): Promise<string | null> => {
         if (!familyName || !familyName.trim()) return null;
@@ -140,12 +181,12 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         const normalizedInput = normalizeText(familyName);
         const singularInput = toSingular(normalizedInput);
         
-        // Try exact match first (case-insensitive)
+        // Check existing product families
         let match = productFamilies.find(
           (f) => normalizeText(f.name) === normalizedInput
         );
         
-        // Try singular/plural variations
+        // Try singular/plural variations in existing families
         if (!match) {
           match = productFamilies.find(
             (f) => toSingular(normalizeText(f.name)) === singularInput
@@ -153,36 +194,61 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         }
         
         if (match) {
+          console.log(`✅ Found existing family: "${familyName}" → "${match.name}"`);
           return match.id;
+        }
+        
+        // Check newly created families from this import session
+        const newMatch = newlyCreatedFamilies.find(
+          (f) => normalizeText(f.name) === normalizedInput || toSingular(normalizeText(f.name)) === singularInput
+        );
+        
+        if (newMatch) {
+          console.log(`✅ Using newly created family: "${familyName}" → "${newMatch.name}"`);
+          return newMatch.id;
         }
         
         // No match found - create new family with proper capitalization
         // Use the original input but trim and clean up spaces
         const cleanName = familyName.trim().replace(/\s+/g, ' ');
         try {
+          console.log(`🆕 Creating new family: "${cleanName}"`);
           const newFamily = await createProductFamily(cleanName, `Imported from CSV`);
-          return newFamily ? newFamily.id : null;
+          if (newFamily) {
+            newlyCreatedFamilies.push({ id: newFamily.id, name: newFamily.name });
+            return newFamily.id;
+          }
+          return null;
         } catch (error) {
           console.error(`Failed to create family "${cleanName}":`, error);
           return null;
         }
       };
 
-      // Collect unique family names from CSV
-      const uniqueFamilyNames = new Set<string>();
+      // Collect unique family names from CSV (normalize to avoid duplicates)
+      const uniqueFamilyNamesMap = new Map<string, string>(); // normalized -> original
       csvData.forEach((row) => {
         if (columnMapping.product_family && row[columnMapping.product_family]) {
-          uniqueFamilyNames.add(row[columnMapping.product_family].trim());
+          const original = row[columnMapping.product_family].trim();
+          const normalized = toSingular(normalizeText(original));
+          
+          // Only add if we haven't seen this normalized version
+          if (!uniqueFamilyNamesMap.has(normalized)) {
+            uniqueFamilyNamesMap.set(normalized, original);
+          }
         }
       });
 
-      // Create/find all families first
-      toast.loading(`Processing ${uniqueFamilyNames.size} product families...`);
-      const familyIdMap = new Map<string, string | null>();
+      const uniqueFamilyNames = Array.from(uniqueFamilyNamesMap.values());
       
-      for (const familyName of Array.from(uniqueFamilyNames)) {
+      // Create/find all families first
+      toast.loading(`Processing ${uniqueFamilyNames.length} product families...`);
+      const familyIdMap = new Map<string, string | null>(); // normalized -> familyId
+      
+      for (const familyName of uniqueFamilyNames) {
         const familyId = await findOrCreateFamilyId(familyName);
-        familyIdMap.set(familyName, familyId);
+        const normalized = toSingular(normalizeText(familyName));
+        familyIdMap.set(normalized, familyId);
       }
 
       toast.dismiss();
@@ -197,9 +263,10 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             listPrice
           );
           
-          // Get family ID from our map
+          // Get family ID from our map using normalized key
           const familyName = columnMapping.product_family ? row[columnMapping.product_family]?.trim() : null;
-          const familyId = familyName ? familyIdMap.get(familyName) || null : null;
+          const normalizedFamilyKey = familyName ? toSingular(normalizeText(familyName)) : null;
+          const familyId = normalizedFamilyKey ? familyIdMap.get(normalizedFamilyKey) || null : null;
           
           return {
           product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
@@ -231,21 +298,24 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         return;
       }
 
-      await bulkCreateProducts(productsData);
+      const result = await bulkCreateProducts(productsData);
       await trackCsvUpload(csvData.length, productsData.length);
       
       // Count how many new families were created
       const existingFamilyCount = productFamilies.length;
-      const newFamiliesCreated = Math.max(0, uniqueFamilyNames.size - Array.from(familyIdMap.values()).filter(id => 
+      const newFamiliesCreated = Math.max(0, uniqueFamilyNames.length - Array.from(familyIdMap.values()).filter(id => 
         productFamilies.some(f => f.id === id)
       ).length);
       
-      let successMessage = `Successfully imported ${productsData.length} products`;
+      let successMessage = `Successfully imported ${result.inserted.length} new products`;
+      if (result.skipped > 0) {
+        successMessage += ` (${result.skipped} duplicates skipped)`;
+      }
       if (newFamiliesCreated > 0) {
         successMessage += ` and created ${newFamiliesCreated} new product ${newFamiliesCreated === 1 ? 'family' : 'families'}`;
       }
       
-      toast.success(successMessage);
+      toast.success(successMessage, { duration: 5000 });
       setViewMode("list");
       setCsvData([]);
       setCsvHeaders([]);
@@ -312,7 +382,11 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             </button>
             <div className="flex-1" />
             <span className="text-sm text-gray-600">
-              {products.length} {products.length === 1 ? "product" : "products"}
+              {searchQuery ? (
+                <>Showing {filteredProducts.length} of {products.length} products</>
+              ) : (
+                <>{products.length} {products.length === 1 ? "product" : "products"}</>
+              )}
             </span>
           </div>
         )}

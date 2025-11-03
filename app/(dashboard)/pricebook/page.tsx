@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Search, Plus, Upload, X, Edit, Trash2 } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { Product } from "@/types/database";
@@ -15,11 +15,44 @@ export default function PriceBookPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [showCsvUpload, setShowCsvUpload] = useState(false);
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Improved search filtering with useMemo for performance and consistency
+  const filteredProducts = useMemo(() => {
+    // If no search query, return all products
+    if (!searchQuery || searchQuery.trim() === "") {
+      return products;
+    }
+
+    // Split search query into individual words and normalize
+    // "cat6 cable" becomes ["cat6", "cable"]
+    const searchTerms = searchQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s+/) // Split on whitespace
+      .filter(term => term.length > 0);
+
+    if (searchTerms.length === 0) {
+      return products;
+    }
+    
+    return products.filter((product) => {
+      // Combine all searchable fields into one string for easier matching
+      const searchableText = [
+        product.product_name,
+        product.product_number,
+        product.description,
+        product.product_brand,
+        product.product_type,
+        ...(product.product_tags || [])
+      ]
+        .filter(Boolean) // Remove null/undefined
+        .join(' ') // Join with space
+        .toLowerCase();
+
+      // ALL search terms must be found somewhere in the searchable text
+      // "cat6 cable" will match if BOTH "cat6" AND "cable" appear anywhere
+      return searchTerms.every(term => searchableText.includes(term));
+    });
+  }, [products, searchQuery]);
 
   const handleCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -41,9 +74,19 @@ export default function PriceBookPage() {
               unit: row.unit || "ea",
             }));
 
-          await bulkCreateProducts(productsData);
+          const result = await bulkCreateProducts(productsData);
           await trackCsvUpload(results.data.length, productsData.length);
-          toast.success(`Imported ${productsData.length} products`);
+          
+          // Show detailed import results
+          if (result.skipped > 0) {
+            toast.success(
+              `✅ Imported ${result.inserted.length} new products (${result.skipped} duplicates skipped)`,
+              { duration: 5000 }
+            );
+          } else {
+            toast.success(`✅ Imported ${result.inserted.length} products`);
+          }
+          
           setShowCsvUpload(false);
         } catch (error: any) {
           toast.error(error.message || "Failed to import products");
@@ -65,7 +108,15 @@ export default function PriceBookPage() {
           <div>
             <h1 className="text-3xl font-bold">Price Book</h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1">
-              Manage your products and pricing
+              {searchQuery ? (
+                <>
+                  Showing {filteredProducts.length} of {products.length} products
+                </>
+              ) : (
+                <>
+                  {products.length} products in price book
+                </>
+              )}
             </p>
           </div>
           <div className="flex gap-3">
@@ -224,6 +275,11 @@ export default function PriceBookPage() {
                 <code className="text-sm">
                   product_name, product_number, description, list_price, sales_price, cost_price, unit
                 </code>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 rounded-lg">
+                <p className="text-sm text-blue-800 dark:text-blue-300">
+                  <strong>💡 Duplicate Detection:</strong> Products with matching product_number or product_name will be automatically skipped to prevent duplicates.
+                </p>
               </div>
               <label className="block">
                 <span className="sr-only">Choose CSV file</span>
