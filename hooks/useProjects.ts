@@ -17,9 +17,10 @@ export function useProjects() {
       setLoading(true);
       const { data, error } = await supabase
         .from("projects")
-        .select("*")
+        .select("id, project_name, status, created_at, updated_at")
         .eq("status", "active")
-        .order("updated_at", { ascending: false });
+        .order("updated_at", { ascending: false })
+        .limit(50); // Limit to 50 most recent projects for better performance
 
       if (error) throw error;
       setProjects(data || []);

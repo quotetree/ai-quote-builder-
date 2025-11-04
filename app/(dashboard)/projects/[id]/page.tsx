@@ -17,7 +17,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const { data: project } = await supabase
     .from("projects")
-    .select("*")
+    .select("id, project_name")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();

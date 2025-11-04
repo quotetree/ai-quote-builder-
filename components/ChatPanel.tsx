@@ -16,16 +16,73 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [initializing, setInitializing] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const hasInitialized = useRef(false); // Track if we've already checked this project
+  const currentProjectId = useRef<string | null>(null);
+  const hasLoadedMessages = useRef(false);
   const supabase = createClient();
 
   useEffect(() => {
-    // Reset initialization flag when project changes
-    hasInitialized.current = false;
-    loadMessages();
-  }, [projectId]);
+    let isActive = true;
+    
+    // Only load messages if project has changed or this is the first load
+    if (currentProjectId.current !== projectId) {
+      currentProjectId.current = projectId;
+      hasLoadedMessages.current = false;
+      
+      // Show welcome message IMMEDIATELY in UI (optimistic update)
+      const welcomeMessage: ChatMessage = {
+        id: 'temp-welcome',
+        project_id: projectId,
+        role: 'assistant',
+        content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+        metadata: {},
+        created_at: new Date().toISOString()
+      };
+      setMessages([welcomeMessage]);
+      
+      // Load messages in the background
+      const loadAndSetMessages = async () => {
+        try {
+          const { data, error } = await supabase
+            .from("chat_messages")
+            .select("id, project_id, role, content, metadata, created_at")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: true })
+            .limit(100);
+
+          if (!isActive) return;
+
+          if (error) {
+            console.error('Chat load error:', error);
+            // Keep showing the welcome message even on error
+            // Try to persist it to database in background
+            sendSystemMessageToDb(welcomeMessage.content);
+            return;
+          }
+
+          if (data && data.length > 0) {
+            // Messages exist, replace the temporary welcome with real messages
+            setMessages(data);
+            hasLoadedMessages.current = true;
+          } else {
+            // No messages exist, persist the welcome message to database in background
+            sendSystemMessageToDb(welcomeMessage.content);
+            hasLoadedMessages.current = true;
+          }
+        } catch (error: any) {
+          console.error('Chat load error:', error);
+          // Keep the welcome message visible even on error
+          sendSystemMessageToDb(welcomeMessage.content);
+        }
+      };
+      
+      loadAndSetMessages();
+    }
+    
+    return () => {
+      isActive = false;
+    };
+  }, [projectId, projectName]);
 
   useEffect(() => {
     scrollToBottom();
@@ -35,40 +92,8 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  async function loadMessages() {
-    // Prevent duplicate initialization
-    if (hasInitialized.current) {
-      return;
-    }
-    hasInitialized.current = true;
-
-    try {
-      setInitializing(true);
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-
-      if (!data || data.length === 0) {
-        // Only send welcome message if truly no messages exist
-        await sendSystemMessage(
-          `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`
-        );
-      } else {
-        setMessages(data);
-      }
-    } catch (error: any) {
-      toast.error("Failed to load chat history");
-      hasInitialized.current = false; // Reset on error so it can retry
-    } finally {
-      setInitializing(false);
-    }
-  }
-
-  async function sendSystemMessage(content: string) {
+  async function sendSystemMessageToDb(content: string) {
+    // Persist welcome message to database in background, don't wait or update UI
     const systemMsg: Partial<ChatMessage> = {
       project_id: projectId,
       role: "assistant",
@@ -76,14 +101,20 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
       metadata: {},
     };
 
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .insert(systemMsg)
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert(systemMsg)
+        .select()
+        .single();
 
-    if (!error && data) {
-      setMessages([data]);
+      if (!error && data) {
+        // Replace temp message with real database message
+        setMessages([data]);
+      }
+    } catch (error) {
+      console.error('Failed to persist welcome message:', error);
+      // UI already shows the message, so this is just a background operation
     }
   }
 
@@ -165,17 +196,6 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
       sendMessage();
     }
   };
-
-  if (initializing) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading chat...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full bg-white">
