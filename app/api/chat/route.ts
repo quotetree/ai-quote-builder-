@@ -205,10 +205,34 @@ PRODUCT_DATA_END
 
 **CRITICAL CALCULATION RULES:**
 - Line total = Quantity × Unit Price (ALWAYS calculate correctly)
-- Example: Qty: 5, Price: $999.00 each = $4995.00 (NOT $4.00)
+- Example: Qty: 5, Price: $999.00 each = $4,995.00 (NOT $4.00)
 - Example: Qty: 0.5, Price: $200.00 each = $100.00
 - Use commas for thousands (e.g., $4,995.00)
 - Always show sales_price as the unit price
+
+**LABOR PRICING RULES (CRITICAL):**
+Labor pricing is DYNAMIC - calculate based on how user specifies it:
+
+**Method 1: User specifies HOURS**
+- User says: "20 hours of installation labor"
+- You calculate: 20 hours × hourly_rate = total
+- Format: Qty: 20 hours, Price: $150.00 per hour = $3,000.00
+
+**Method 2: User specifies DOLLAR AMOUNT**
+- User says: "installation labor at $5,000"
+- You use: Qty: 1, Price: $5,000 (flat rate)
+- Format: Qty: 1, Price: $5,000.00 per project = $5,000.00
+
+**How to decide:**
+- If user mentions hours/time → Use Method 1 (calculate hours × rate)
+- If user mentions dollar amount → Use Method 2 (flat rate)
+- If user just says "add labor" with no specifics → Ask clarifying question about hours OR dollar amount
+
+**Examples:**
+✓ "16 hours of data labor" → Search for data labor, use 16 × hourly_rate
+✓ "access control labor at $3,000" → Search for access control labor, use Qty: 1 at $3,000
+✓ "put installation labor at 4000" → Search for installation labor, use Qty: 1 at $4,000
+✓ "I need labor" → Ask: "How many hours do you need, or do you have a specific dollar amount in mind?"
 
 **Rules:**
 - Do NOT show detailed product list in chat conversation
@@ -423,21 +447,31 @@ Remember: You're not just collecting information - you're actively helping build
     
     if (productDataMatch) {
       const productData = productDataMatch[1];
-      // Updated pattern to handle prices with commas (e.g., $4,995.00)
-      const productPattern = /^\d+\.\s+(.+?)\s+-\s+Qty:\s+([\d.]+),\s+Price:\s+\$([0-9,]+\.?\d*)\s+each\s+=\s+\$([0-9,]+\.?\d*)/gm;
+      // Updated pattern with capture groups for units
+      const productPattern = /^\d+\.\s+(.+?)\s+-\s+Qty:\s+([\d.]+)\s*([\w\s]*?),\s+Price:\s+\$([0-9,]+\.?\d*)\s+(?:each|per\s+([\w\s]+?))\s+=\s+\$([0-9,]+\.?\d*)/gm;
       let match;
       
       while ((match = productPattern.exec(productData)) !== null) {
         // Remove commas from price strings before parsing
-        const unitPrice = parseFloat(match[3].replace(/,/g, ''));
-        const lineTotal = parseFloat(match[4].replace(/,/g, ''));
+        const unitPrice = parseFloat(match[4].replace(/,/g, ''));
+        const lineTotal = parseFloat(match[6].replace(/,/g, ''));
+        const quantityUnit = match[3].trim(); // "hours", "boxes", etc.
+        const priceUnit = match[5] ? match[5].trim() : ''; // "hour", "project", etc.
+        
+        // Create description with unit information if it's labor
+        let description = "";
+        if (quantityUnit && priceUnit) {
+          description = `${match[2]} ${quantityUnit} at $${unitPrice.toFixed(2)} per ${priceUnit}`;
+        }
         
         productSuggestions.push({
           product_name: match[1].trim(),
-          description: "",
+          description: description,
           quantity: parseFloat(match[2]),
           unit_price: unitPrice,
-          line_total: lineTotal
+          line_total: lineTotal,
+          quantity_unit: quantityUnit || null,
+          price_unit: priceUnit || null
         });
       }
       

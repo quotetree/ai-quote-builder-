@@ -20,6 +20,8 @@ interface ProductSuggestion {
   line_total: number;
   selected?: boolean;
   id?: string;
+  quantity_unit?: string | null;
+  price_unit?: string | null;
 }
 
 interface QuotePreview {
@@ -619,8 +621,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                             <p className="text-sm text-gray-600 mb-2">{product.description}</p>
                           )}
                           <div className="flex gap-4 text-xs text-gray-500">
-                            <span>Qty: {product.quantity}</span>
-                            <span>Unit Price: ${formatCurrency(product.unit_price)}</span>
+                            <span>Qty: {product.quantity}{product.quantity_unit ? ` ${product.quantity_unit}` : ''}</span>
+                            <span>Unit Price: ${formatCurrency(product.unit_price)}{product.price_unit ? ` per ${product.price_unit}` : ''}</span>
                           </div>
                         </div>
                       ))}
@@ -660,7 +662,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           <div key={index} className="flex justify-between py-2 border-b border-gray-100">
                             <div className="flex-1">
                               <div className="font-medium text-gray-900">{item.product_name}</div>
-                              <div className="text-sm text-gray-600">Qty: {item.quantity} × ${formatCurrency(item.unit_price)}</div>
+                              <div className="text-sm text-gray-600">
+                                Qty: {item.quantity}{item.quantity_unit ? ` ${item.quantity_unit}` : ''} × ${formatCurrency(item.unit_price)}{item.price_unit ? ` per ${item.price_unit}` : ''}
+                              </div>
                             </div>
                             <div className="font-medium text-gray-900">${formatCurrency(item.line_total)}</div>
                           </div>

@@ -219,3 +219,4 @@ Before reporting an issue:
 **Updated Error Handling**: The chat now shows specific error messages instead of generic "Failed to get AI response". You should see the actual problem now!
 
 
+
