@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
 
     currentY += 10;
     doc.setFontSize(13);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Total:", totalsX, currentY);
     doc.text(`$${quote.total_price.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
 

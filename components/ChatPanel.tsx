@@ -1,21 +1,122 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Send, Mic, Plus } from "lucide-react";
+import { Send, Mic, Plus, Sparkles, TrendingUp, Save, CheckCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatMessage } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
+import { parseQuoteFromMessage, containsQuote, formatQuoteSummary, parseModificationCommand } from "@/lib/quoteParser";
+import { buildConversationContext, generateContextSummary } from "@/lib/conversationContext";
 
 interface ChatPanelProps {
   projectId: string;
   projectName: string;
 }
 
+// Helper to detect if message contains a quote
+function isQuoteMessage(content: string): boolean {
+  return content.includes('QUOTE GENERATED') || content.includes('**Line Items:**');
+}
+
+// Helper to parse and format message content
+function formatMessageContent(content: string): {
+  isQuote: boolean;
+  hasRecommendations: boolean;
+  formattedContent: string;
+} {
+  const isQuote = isQuoteMessage(content);
+  const hasRecommendations = content.toLowerCase().includes('recommend') || 
+                             content.toLowerCase().includes('suggest');
+  
+  // Format the content with better structure
+  let formattedContent = content;
+  
+  // Add line breaks for better readability
+  formattedContent = formattedContent.replace(/\n/g, '\n');
+  
+  return { isQuote, hasRecommendations, formattedContent };
+}
+
+// Helper to render formatted content with basic markdown styling
+function renderFormattedContent(content: string) {
+  // Split by lines
+  const lines = content.split('\n');
+  
+  return lines.map((line, index) => {
+    // Headers
+    if (line.startsWith('## ')) {
+      return (
+        <h3 key={index} className="text-lg font-bold mt-3 mb-2 text-gray-900">
+          {line.replace('## ', '')}
+        </h3>
+      );
+    }
+    
+    // Bold text with **
+    if (line.includes('**')) {
+      const parts = line.split(/(\*\*.*?\*\*)/g);
+      return (
+        <p key={index} className="mb-1">
+          {parts.map((part, i) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return (
+                <strong key={i} className="font-semibold text-gray-900">
+                  {part.slice(2, -2)}
+                </strong>
+              );
+            }
+            return <span key={i}>{part}</span>;
+          })}
+        </p>
+      );
+    }
+    
+    // Bullet points
+    if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+      return (
+        <div key={index} className="flex gap-2 ml-2 mb-1">
+          <span className="text-blue-600 font-bold">•</span>
+          <span>{line.replace(/^[\s•\-]+/, '')}</span>
+        </div>
+      );
+    }
+    
+    // Checkmarks
+    if (line.trim().startsWith('✓')) {
+      return (
+        <div key={index} className="flex gap-2 ml-2 mb-1">
+          <span className="text-green-600 font-bold">✓</span>
+          <span>{line.replace(/^[\s✓]+/, '')}</span>
+        </div>
+      );
+    }
+    
+    // Numbered items
+    if (/^\d+\./.test(line.trim())) {
+      return (
+        <div key={index} className="ml-2 mb-1">
+          {line}
+        </div>
+      );
+    }
+    
+    // Table detection (for quotes)
+    if (line.includes('|') && (line.includes('Item') || line.includes('---'))) {
+      return <div key={index} className="font-mono text-sm">{line}</div>;
+    }
+    
+    // Regular line
+    return <div key={index}>{line || '\u00A0'}</div>;
+  });
+}
+
 export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [committedQuotes, setCommittedQuotes] = useState<Set<string>>(new Set());
+  const [committingQuote, setCommittingQuote] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentProjectId = useRef<string | null>(null);
   const hasLoadedMessages = useRef(false);
@@ -118,6 +219,94 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
     }
   }
 
+  async function commitQuoteToLog(messageId: string, messageContent: string) {
+    setCommittingQuote(messageId);
+    
+    try {
+      // Parse the quote from the message
+      const parsedQuote = parseQuoteFromMessage(messageContent, projectName);
+      
+      if (!parsedQuote) {
+        throw new Error("Failed to parse quote data");
+      }
+
+      // Get user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error("User not authenticated");
+      }
+
+      // Generate quote number
+      const { count } = await supabase
+        .from("quotes")
+        .select("*", { count: "exact", head: true })
+        .eq("project_id", projectId);
+      
+      const quoteNumber = `Q-${String((count || 0) + 1).padStart(4, '0')}`;
+
+      // Calculate values
+      const discount_rate = parsedQuote.discount_amount > 0 
+        ? (parsedQuote.discount_amount / parsedQuote.subtotal) * 100 
+        : 0;
+
+      // Create quote in database
+      const { data: quote, error: quoteError } = await supabase
+        .from("quotes")
+        .insert({
+          project_id: projectId,
+          user_id: user.id,
+          quote_number: quoteNumber,
+          quote_name: `${projectName} - ${new Date().toLocaleDateString()}`,
+          version_number: 1,
+          status: "draft",
+          scope_of_work: "Generated from AI chat",
+          subtotal: parsedQuote.subtotal,
+          tax_rate: parsedQuote.tax_rate,
+          tax_amount: parsedQuote.tax_amount,
+          discount_rate,
+          discount_amount: parsedQuote.discount_amount,
+          total_price: parsedQuote.total_price,
+          profit_margin: parsedQuote.profit_margin || 0,
+        })
+        .select()
+        .single();
+
+      if (quoteError) throw quoteError;
+
+      // Create quote items
+      if (quote && parsedQuote.line_items.length > 0) {
+        const quoteItems = parsedQuote.line_items.map((item, index) => ({
+          quote_id: quote.id,
+          product_id: null,
+          product_number: null,
+          product_name: item.product_name,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount_percent: 0,
+          line_total: item.line_total,
+          sort_order: index,
+        }));
+
+        const { error: itemsError } = await supabase
+          .from("quote_items")
+          .insert(quoteItems);
+
+        if (itemsError) throw itemsError;
+      }
+
+      // Mark as committed
+      setCommittedQuotes(prev => new Set(prev).add(messageId));
+      
+      toast.success("Quote committed to Quote Log!");
+    } catch (error: any) {
+      console.error("Error committing quote:", error);
+      toast.error(error.message || "Failed to commit quote");
+    } finally {
+      setCommittingQuote(null);
+    }
+  }
+
   async function sendMessage() {
     if (!input.trim() || loading) return;
 
@@ -148,7 +337,7 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
       // Track analytics
       await trackAIChatMessage(projectId, currentInput.length);
 
-      // Call AI API (placeholder - implement with actual OpenAI integration)
+      // Call AI API
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -159,9 +348,14 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to get AI response");
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        // Show the actual error from the API
+        throw new Error(responseData.error || "Failed to get AI response");
+      }
 
-      const { message: aiResponse } = await response.json();
+      const aiResponse = responseData.message;
 
       // Save AI response
       const assistantMessage: Partial<ChatMessage> = {
@@ -197,33 +391,106 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
     }
   };
 
+  // Build conversation context for insights
+  const conversationContext = buildConversationContext(messages, projectId);
+  const contextSummary = generateContextSummary(conversationContext);
+
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl mx-auto w-full">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[85%] rounded-2xl px-5 py-3 ${
-                message.role === "user"
-                  ? "bg-[#f4f4f4] text-gray-900"
-                  : "bg-white border border-gray-200"
-              }`}
-            >
-              <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</p>
+        {/* Optional: Show context summary for longer conversations */}
+        {messages.length > 5 && conversationContext.lastQuoteGenerated && (
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+            <div className="flex items-center gap-2 text-blue-700 font-medium mb-1">
+              <Sparkles size={14} />
+              <span>Conversation Summary</span>
+            </div>
+            <div className="text-blue-600 text-xs whitespace-pre-line">
+              {contextSummary}
             </div>
           </div>
-        ))}
+        )}
+        
+        {messages.map((message) => {
+          const { isQuote, hasRecommendations, formattedContent } = formatMessageContent(message.content);
+          
+          return (
+            <div
+              key={message.id}
+              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-2xl px-5 py-4 ${
+                  message.role === "user"
+                    ? "bg-[#f4f4f4] text-gray-900"
+                    : isQuote 
+                      ? "bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 shadow-md"
+                      : hasRecommendations
+                        ? "bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-200"
+                        : "bg-white border border-gray-200"
+                }`}
+              >
+                {/* AI Badge for special messages */}
+                {message.role === "assistant" && (isQuote || hasRecommendations) && (
+                  <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-300">
+                    {isQuote ? (
+                      <>
+                        <TrendingUp size={16} className="text-blue-600" />
+                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                          Quote Generated
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} className="text-amber-600" />
+                        <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">
+                          AI Recommendation
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
+                
+                {/* Message content with markdown-like formatting */}
+                <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                  {renderFormattedContent(formattedContent)}
+                </div>
+
+                {/* Commit to Quote Log button for quote messages */}
+                {message.role === "assistant" && isQuote && (
+                  <div className="mt-4 pt-3 border-t border-blue-200">
+                    {committedQuotes.has(message.id) ? (
+                      <div className="flex items-center gap-2 text-green-600 text-sm font-medium">
+                        <CheckCircle size={16} />
+                        <span>Committed to Quote Log</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => commitQuoteToLog(message.id, message.content)}
+                        disabled={committingQuote === message.id}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Save size={16} />
+                        {committingQuote === message.id ? "Committing..." : "Commit to Quote Log"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
         {loading && (
           <div className="flex justify-start">
             <div className="bg-white border border-gray-200 rounded-2xl px-5 py-3">
-              <div className="flex gap-1.5">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+              <div className="flex items-center gap-2">
+                <Sparkles size={16} className="text-blue-500 animate-pulse" />
+                <div className="flex gap-1.5">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+                </div>
               </div>
             </div>
           </div>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { MessageSquare, FolderOpen, FileText, Settings, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import ChatPanel from "./ChatPanel";
+import SplitChatPanel from "./SplitChatPanel";
 import DrivePanel from "./DrivePanel";
 import LogPanel from "./LogPanel";
 import { useProjects } from "@/hooks/useProjects";
@@ -109,7 +109,7 @@ export default function ProjectWorkspace({ projectId, projectName }: ProjectWork
       {/* Panel Content - Keep all mounted to prevent re-initialization */}
       <div className="flex-1 overflow-hidden relative">
         <div className={activeTab === "chat" ? "h-full" : "hidden"}>
-          <ChatPanel projectId={projectId} projectName={projectName} />
+          <SplitChatPanel projectId={projectId} projectName={projectName} />
         </div>
         <div className={activeTab === "drive" ? "h-full" : "hidden"}>
           <DrivePanel projectId={projectId} />
