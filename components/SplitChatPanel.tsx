@@ -445,6 +445,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     const lines = content.split('\n');
     
     return lines.map((line, index) => {
+      // Remove any ### headers that might slip through
+      if (line.trim().startsWith('###')) {
+        const headerText = line.replace(/^#+\s*/, '').trim();
+        return (
+          <div key={index} className="font-bold text-gray-900 mt-2 mb-1">
+            {headerText}
+          </div>
+        );
+      }
+      
       // Checkmarks
       if (line.trim().startsWith('✓')) {
         return (
@@ -462,7 +472,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           <p key={index} className="mb-1">
             {parts.map((part, i) => {
               if (part.startsWith('**') && part.endsWith('**')) {
-                return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>;
+                return <strong key={i} className="font-bold text-gray-900">{part.slice(2, -2)}</strong>;
               }
               return <span key={i}>{part}</span>;
             })}
