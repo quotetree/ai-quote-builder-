@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Send, Mic, Plus, Sparkles, CheckCircle, FileText } from "lucide-react";
+import { Send, Mic, Plus, Sparkles, CheckCircle, FileText, Trash2, Edit2, GripVertical } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatMessage } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
@@ -46,6 +46,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
+  const [editingQuantityIndex, setEditingQuantityIndex] = useState<number | null>(null);
+  const [tempQuantity, setTempQuantity] = useState("");
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -230,6 +234,127 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     } finally {
       setApplyingChanges(false);
     }
+  }
+
+  // Delete a preview product
+  function deletePreviewProduct(index: number) {
+    if (!quotePreview) return;
+    
+    const updatedItems = quotePreview.line_items.filter((_, i) => i !== index);
+    
+    if (updatedItems.length === 0) {
+      setQuotePreview(null);
+      toast.success("Product removed from preview");
+      return;
+    }
+    
+    // Recalculate totals
+    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    const tax_amount = subtotal * quotePreview.tax_rate;
+    const total_price = subtotal + tax_amount - quotePreview.discount_amount;
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      subtotal,
+      tax_amount,
+      total_price
+    });
+    
+    toast.success("Product removed from preview");
+  }
+
+  // Start editing quantity
+  function startEditingQuantity(index: number, currentQuantity: number) {
+    setEditingQuantityIndex(index);
+    setTempQuantity(String(currentQuantity));
+  }
+
+  // Save edited quantity
+  function saveEditedQuantity(index: number) {
+    const newQuantity = parseFloat(tempQuantity);
+    
+    if (isNaN(newQuantity) || newQuantity < 0.01) {
+      toast.error("Please enter a valid quantity");
+      return;
+    }
+    
+    editPreviewProductQuantity(index, newQuantity);
+    setEditingQuantityIndex(null);
+    setTempQuantity("");
+    toast.success("Quantity updated");
+  }
+
+  // Cancel editing quantity
+  function cancelEditingQuantity() {
+    setEditingQuantityIndex(null);
+    setTempQuantity("");
+  }
+
+  // Edit quantity for a preview product
+  function editPreviewProductQuantity(index: number, newQuantity: number) {
+    if (!quotePreview || newQuantity < 0.01) return;
+    
+    const updatedItems = [...quotePreview.line_items];
+    const item = updatedItems[index];
+    
+    // Update quantity and line total
+    item.quantity = newQuantity;
+    item.line_total = item.unit_price * newQuantity;
+    
+    // Recalculate totals
+    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    const tax_amount = subtotal * quotePreview.tax_rate;
+    const total_price = subtotal + tax_amount - quotePreview.discount_amount;
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      subtotal,
+      tax_amount,
+      total_price
+    });
+  }
+
+  // Drag and drop handlers
+  function handleDragStart(index: number) {
+    setDraggedIndex(index);
+  }
+
+  function handleDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault();
+    setDragOverIndex(index);
+  }
+
+  function handleDragLeave() {
+    setDragOverIndex(null);
+  }
+
+  function handleDrop(e: React.DragEvent, dropIndex: number) {
+    e.preventDefault();
+    
+    if (!quotePreview || draggedIndex === null || draggedIndex === dropIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    
+    const updatedItems = [...quotePreview.line_items];
+    const [draggedItem] = updatedItems.splice(draggedIndex, 1);
+    updatedItems.splice(dropIndex, 0, draggedItem);
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems
+    });
+    
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  }
+
+  function handleDragEnd() {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
   }
 
   async function submitQuote() {
@@ -667,16 +792,100 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                       <h3 className="text-lg font-semibold mb-4">Quote Preview</h3>
                       
                       {/* Line Items */}
-                      <div className="space-y-2 mb-6">
+                      <div className="space-y-3 mb-6">
                         {quotePreview.line_items.map((item, index) => (
-                          <div key={index} className="flex justify-between py-2 border-b border-gray-100">
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900">{item.product_name}</div>
-                              <div className="text-sm text-gray-600">
-                                Qty: {item.quantity}{item.quantity_unit ? ` ${item.quantity_unit}` : ''} × ${formatCurrency(item.unit_price)}{item.price_unit ? ` per ${item.price_unit}` : ''}
+                          <div
+                            key={index}
+                            draggable
+                            onDragStart={() => handleDragStart(index)}
+                            onDragOver={(e) => handleDragOver(e, index)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, index)}
+                            onDragEnd={handleDragEnd}
+                            className={`group bg-gray-50 rounded-lg p-4 border-2 transition-all cursor-move ${
+                              draggedIndex === index
+                                ? 'opacity-50 border-blue-400'
+                                : dragOverIndex === index
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            <div className="flex gap-3">
+                              {/* Drag handle */}
+                              <div className="flex items-center cursor-grab active:cursor-grabbing">
+                                <GripVertical size={20} className="text-gray-400 group-hover:text-gray-600 transition-colors" />
+                              </div>
+
+                              {/* Product info */}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 mb-1">{item.product_name}</div>
+                                {editingQuantityIndex === index ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm text-gray-600">Qty:</span>
+                                    <input
+                                      type="number"
+                                      value={tempQuantity}
+                                      onChange={(e) => setTempQuantity(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          saveEditedQuantity(index);
+                                        } else if (e.key === 'Escape') {
+                                          cancelEditingQuantity();
+                                        }
+                                      }}
+                                      className="w-20 px-2 py-1 border border-blue-500 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      autoFocus
+                                      step="0.01"
+                                      min="0.01"
+                                    />
+                                    {item.quantity_unit && <span className="text-sm text-gray-600">{item.quantity_unit}</span>}
+                                    <button
+                                      onClick={() => saveEditedQuantity(index)}
+                                      className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={cancelEditingQuantity}
+                                      className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                                    <span>
+                                      Qty: {item.quantity}{item.quantity_unit ? ` ${item.quantity_unit}` : ''} × ${formatCurrency(item.unit_price)}{item.price_unit ? ` per ${item.price_unit}` : ''}
+                                    </span>
+                                    <button
+                                      onClick={() => startEditingQuantity(index, item.quantity)}
+                                      className="p-1 hover:bg-gray-200 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Edit quantity"
+                                    >
+                                      <Edit2 size={14} className="text-blue-600" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Price and delete */}
+                              <div className="flex items-start gap-3">
+                                <div className="font-medium text-gray-900 text-right">
+                                  ${formatCurrency(item.line_total)}
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Remove "${item.product_name}" from quote?`)) {
+                                      deletePreviewProduct(index);
+                                    }
+                                  }}
+                                  className="p-1.5 hover:bg-red-100 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Delete product"
+                                >
+                                  <Trash2 size={16} className="text-red-600" />
+                                </button>
                               </div>
                             </div>
-                            <div className="font-medium text-gray-900">${formatCurrency(item.line_total)}</div>
                           </div>
                         ))}
                       </div>
