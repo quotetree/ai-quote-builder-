@@ -60,6 +60,37 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface ProductSuggestion {
+  product_name: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  selected?: boolean;
+  id?: string;
+  quantity_unit?: string | null;
+  price_unit?: string | null;
+}
+
+export interface QuotePreview {
+  line_items: ProductSuggestion[];
+  subtotal: number;
+  tax_rate: number;
+  tax_amount: number;
+  discount_amount: number;
+  total_price: number;
+}
+
+export interface ProjectWorkingState {
+  id: string;
+  project_id: string;
+  suggested_products: ProductSuggestion[];
+  quote_preview: QuotePreview | null;
+  show_split_view: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectDocument {
   id: string;
   project_id: string;

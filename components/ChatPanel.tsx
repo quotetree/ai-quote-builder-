@@ -125,63 +125,83 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
   useEffect(() => {
     let isActive = true;
     
-    // Only load messages if project has changed or this is the first load
-    if (currentProjectId.current !== projectId) {
-      currentProjectId.current = projectId;
-      hasLoadedMessages.current = false;
-      
-      // Show welcome message IMMEDIATELY in UI (optimistic update)
-      const welcomeMessage: ChatMessage = {
-        id: 'temp-welcome',
-        project_id: projectId,
-        role: 'assistant',
-        content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
-        metadata: {},
-        created_at: new Date().toISOString()
-      };
-      setMessages([welcomeMessage]);
-      
-      // Load messages in the background
-      const loadAndSetMessages = async () => {
-        try {
-          const { data, error } = await supabase
-            .from("chat_messages")
-            .select("id, project_id, role, content, metadata, created_at")
-            .eq("project_id", projectId)
-            .order("created_at", { ascending: true })
-            .limit(100);
-
-          if (!isActive) return;
-
-          if (error) {
-            console.error('Chat load error:', error);
-            // Keep showing the welcome message even on error
-            // Try to persist it to database in background
-            sendSystemMessageToDb(welcomeMessage.content);
-            return;
-          }
-
-          if (data && data.length > 0) {
-            // Messages exist, replace the temporary welcome with real messages
-            setMessages(data);
-            hasLoadedMessages.current = true;
-          } else {
-            // No messages exist, persist the welcome message to database in background
-            sendSystemMessageToDb(welcomeMessage.content);
-            hasLoadedMessages.current = true;
-          }
-        } catch (error: any) {
-          console.error('Chat load error:', error);
-          // Keep the welcome message visible even on error
-          sendSystemMessageToDb(welcomeMessage.content);
+    // Always load messages when projectId changes - don't rely on ref comparison
+    // This ensures messages load correctly even with client-side navigation
+    const loadMessages = async () => {
+      try {
+        // Check if we've already loaded messages for this project in this effect
+        if (currentProjectId.current === projectId && hasLoadedMessages.current) {
+          console.log('Messages already loaded for this project, skipping');
+          return;
         }
-      };
-      
-      loadAndSetMessages();
-    }
+
+        // Update tracking refs
+        currentProjectId.current = projectId;
+        hasLoadedMessages.current = false;
+        
+        console.log('Loading messages for project:', projectId);
+        
+        // Show welcome message IMMEDIATELY in UI (optimistic update)
+        const welcomeMessage: ChatMessage = {
+          id: 'temp-welcome-' + Date.now(),
+          project_id: projectId,
+          role: 'assistant',
+          content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+          metadata: {},
+          created_at: new Date().toISOString()
+        };
+        setMessages([welcomeMessage]);
+        
+        // Load messages from database
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .select("id, project_id, role, content, metadata, created_at")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true })
+          .limit(100);
+
+        if (!isActive) return;
+
+        if (error) {
+          console.error('Chat load error:', error);
+          // Keep showing the welcome message even on error
+          // Try to persist it to database in background
+          await sendSystemMessageToDb(welcomeMessage.content);
+          hasLoadedMessages.current = true;
+          return;
+        }
+
+        if (data && data.length > 0) {
+          // Messages exist, replace the temporary welcome with real messages
+          console.log('Loaded', data.length, 'messages from database');
+          setMessages(data);
+          hasLoadedMessages.current = true;
+        } else {
+          // No messages exist, persist the welcome message to database in background
+          console.log('No existing messages, persisting welcome message');
+          await sendSystemMessageToDb(welcomeMessage.content);
+          hasLoadedMessages.current = true;
+        }
+      } catch (error: any) {
+        console.error('Chat load error:', error);
+        // Keep the welcome message visible even on error
+        const welcomeMessage: ChatMessage = {
+          id: 'temp-welcome-' + Date.now(),
+          project_id: projectId,
+          role: 'assistant',
+          content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+          metadata: {},
+          created_at: new Date().toISOString()
+        };
+        await sendSystemMessageToDb(welcomeMessage.content);
+      }
+    };
+    
+    loadMessages();
     
     return () => {
       isActive = false;
+      // Don't reset refs in cleanup - they should persist across effect runs
     };
   }, [projectId, projectName]);
 

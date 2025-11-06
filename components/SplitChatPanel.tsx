@@ -3,34 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { Send, Mic, Plus, Sparkles, CheckCircle, FileText, Trash2, Edit2, GripVertical, RotateCcw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { ChatMessage } from "@/types/database";
+import { ChatMessage, ProductSuggestion, QuotePreview } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
 
 interface SplitChatPanelProps {
   projectId: string;
   projectName: string;
-}
-
-interface ProductSuggestion {
-  product_name: string;
-  description: string;
-  quantity: number;
-  unit_price: number;
-  line_total: number;
-  selected?: boolean;
-  id?: string;
-  quantity_unit?: string | null;
-  price_unit?: string | null;
-}
-
-interface QuotePreview {
-  line_items: ProductSuggestion[];
-  subtotal: number;
-  tax_rate: number;
-  tax_amount: number;
-  discount_amount: number;
-  total_price: number;
 }
 
 type TabType = "suggested" | "preview";
@@ -55,67 +34,165 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const currentProjectId = useRef<string | null>(null);
   const hasLoadedMessages = useRef(false);
+  const isClearing = useRef(false); // Track if we're in the middle of clearing
   const supabase = createClient();
+
+  // Load working state from database
+  async function loadWorkingState() {
+    try {
+      const { data, error } = await supabase
+        .from("project_working_state")
+        .select("*")
+        .eq("project_id", projectId)
+        .single();
+
+      if (error) {
+        // If no working state exists, that's fine - user is starting fresh
+        if (error.code !== 'PGRST116') { // PGRST116 = no rows returned
+          console.error('Error loading working state:', error);
+        }
+        return;
+      }
+
+      if (data) {
+        console.log('Loaded working state from database');
+        setSuggestedProducts(data.suggested_products || []);
+        setQuotePreview(data.quote_preview);
+        setShowSplitView(data.show_split_view || false);
+      }
+    } catch (error) {
+      console.error('Failed to load working state:', error);
+    }
+  }
+
+  // Save working state to database
+  async function saveWorkingState() {
+    try {
+      const workingState = {
+        project_id: projectId,
+        suggested_products: suggestedProducts,
+        quote_preview: quotePreview,
+        show_split_view: showSplitView
+      };
+
+      const { error } = await supabase
+        .from("project_working_state")
+        .upsert(workingState, { onConflict: 'project_id' });
+
+      if (error) {
+        console.error('Error saving working state:', error);
+      } else {
+        console.log('Working state saved to database');
+      }
+    } catch (error) {
+      console.error('Failed to save working state:', error);
+    }
+  }
+
+  // Auto-save working state whenever it changes
+  useEffect(() => {
+    // Only save if we have loaded messages (avoid saving during initial load)
+    if (hasLoadedMessages.current && currentProjectId.current === projectId) {
+      const timeoutId = setTimeout(() => {
+        saveWorkingState();
+      }, 500); // Debounce by 500ms to avoid too many saves
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [suggestedProducts, quotePreview, showSplitView]);
 
   useEffect(() => {
     let isActive = true;
     
-    if (currentProjectId.current !== projectId) {
-      currentProjectId.current = projectId;
-      hasLoadedMessages.current = false;
-      
-      // Show welcome message
-      const welcomeMessage: ChatMessage = {
-        id: 'temp-welcome',
-        project_id: projectId,
-        role: 'assistant',
-        content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
-        metadata: {},
-        created_at: new Date().toISOString()
-      };
-      setMessages([welcomeMessage]);
-      setShowSplitView(false);
-      setSuggestedProducts([]);
-      setQuotePreview(null);
-      
-      // Load messages in background
-      const loadMessages = async () => {
-        try {
-          const { data, error } = await supabase
-            .from("chat_messages")
-            .select("*")
-            .eq("project_id", projectId)
-            .order("created_at", { ascending: true })
-            .limit(100);
-
-          if (!isActive) return;
-
-          if (error) {
-            console.error('Chat load error:', error);
-            sendSystemMessageToDb(welcomeMessage.content);
-            return;
-          }
-
-          if (data && data.length > 0) {
-            setMessages(data);
-            // Check if we should show split view based on message count
-            const userMessages = data.filter(m => m.role === 'user');
-            if (userMessages.length > 0) {
-              setShowSplitView(true);
-            }
-            hasLoadedMessages.current = true;
-          } else {
-            sendSystemMessageToDb(welcomeMessage.content);
-            hasLoadedMessages.current = true;
-          }
-        } catch (error: any) {
-          console.error('Chat load error:', error);
-          sendSystemMessageToDb(welcomeMessage.content);
+    // Always load messages and working state when projectId changes
+    const loadProjectData = async () => {
+      try {
+        // Don't load if we're in the middle of clearing
+        if (isClearing.current) {
+          console.log('⏸️ Skipping load - clear operation in progress');
+          return;
         }
-      };
-      
-      loadMessages();
-    }
+
+        // Check if we've already loaded data for this project in this effect
+        const previousProjectId = currentProjectId.current;
+        if (previousProjectId === projectId && hasLoadedMessages.current) {
+          console.log('✓ Project data already loaded, skipping');
+          return;
+        }
+
+        // Update tracking refs
+        currentProjectId.current = projectId;
+        hasLoadedMessages.current = false;
+        
+        console.log('📥 Loading project data for:', projectId);
+        console.log('🔄 Previous project was:', previousProjectId);
+        
+        // Show welcome message immediately (optimistic UI)
+        const welcomeMessage: ChatMessage = {
+          id: 'temp-welcome-' + Date.now(),
+          project_id: projectId,
+          role: 'assistant',
+          content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+          metadata: {},
+          created_at: new Date().toISOString()
+        };
+        setMessages([welcomeMessage]);
+        
+        // Reset state temporarily while loading
+        setShowSplitView(false);
+        setSuggestedProducts([]);
+        setQuotePreview(null);
+        
+        // Small delay to ensure any pending deletes have completed
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Load messages from database (with cache busting)
+        const { data: messagesData, error: messagesError } = await supabase
+          .from("chat_messages")
+          .select("*")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true })
+          .limit(100);
+
+        if (!isActive) return;
+
+        if (messagesError) {
+          console.error('Chat load error:', messagesError);
+          await sendSystemMessageToDb(welcomeMessage.content);
+          hasLoadedMessages.current = true;
+          return;
+        }
+
+        if (messagesData && messagesData.length > 0) {
+          console.log(`📨 Loaded ${messagesData.length} messages from database for project ${projectId}`);
+          console.log('📋 Message IDs:', messagesData.map(m => m.id));
+          console.log('📝 Message previews:', messagesData.map(m => m.content.substring(0, 50) + '...'));
+          setMessages(messagesData);
+          hasLoadedMessages.current = true;
+        } else {
+          console.log('📭 No existing messages, persisting welcome message');
+          await sendSystemMessageToDb(welcomeMessage.content);
+          hasLoadedMessages.current = true;
+        }
+
+        // Load working state (suggested products and preview)
+        await loadWorkingState();
+        
+      } catch (error: any) {
+        console.error('Project data load error:', error);
+        const welcomeMessage: ChatMessage = {
+          id: 'temp-welcome-' + Date.now(),
+          project_id: projectId,
+          role: 'assistant',
+          content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+          metadata: {},
+          created_at: new Date().toISOString()
+        };
+        await sendSystemMessageToDb(welcomeMessage.content);
+      }
+    };
+    
+    loadProjectData();
     
     return () => {
       isActive = false;
@@ -363,13 +440,57 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     }
 
     try {
+      // Set clearing flag to prevent race conditions
+      isClearing.current = true;
+      console.log("🧹 Starting chat clear process...");
+
+      // First, check how many messages exist
+      const { count: beforeCount } = await supabase
+        .from("chat_messages")
+        .select("*", { count: 'exact', head: true })
+        .eq("project_id", projectId);
+
+      console.log(`📊 Found ${beforeCount} messages to delete for project ${projectId}`);
+
       // Clear chat messages from database
       const { error: deleteError } = await supabase
         .from("chat_messages")
         .delete()
         .eq("project_id", projectId);
 
-      if (deleteError) throw deleteError;
+      if (deleteError) {
+        console.error("❌ Error clearing chat:", deleteError);
+        throw deleteError;
+      }
+
+      // Verify deletion worked
+      const { count: afterCount } = await supabase
+        .from("chat_messages")
+        .select("*", { count: 'exact', head: true })
+        .eq("project_id", projectId);
+
+      console.log(`✅ Chat messages deleted. Before: ${beforeCount}, After: ${afterCount}`);
+
+      if (afterCount && afterCount > 0) {
+        console.error(`⚠️ Warning: ${afterCount} messages still exist after delete!`);
+        throw new Error(`Delete failed: ${afterCount} messages remain`);
+      }
+
+      // Clear working state from database
+      const { error: stateError } = await supabase
+        .from("project_working_state")
+        .delete()
+        .eq("project_id", projectId);
+
+      if (stateError) {
+        console.error("Error clearing working state:", stateError);
+        throw stateError;
+      }
+
+      console.log("✅ Working state deleted for project:", projectId);
+
+      // Wait a moment to ensure deletes are committed
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       // Reset all state
       setMessages([]);
@@ -381,7 +502,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       setTempQuantity("");
       setInput("");
       
-      // Show welcome message
+      // Create and persist new welcome message
       const welcomeMessage: ChatMessage = {
         id: 'temp-welcome-' + Date.now(),
         project_id: projectId,
@@ -390,13 +511,46 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         metadata: {},
         created_at: new Date().toISOString()
       };
-      setMessages([welcomeMessage]);
-      await sendSystemMessageToDb(welcomeMessage.content);
+      
+      // Persist welcome message to database
+      const { data: newMsg, error: msgError } = await supabase
+        .from("chat_messages")
+        .insert({
+          project_id: projectId,
+          role: "assistant",
+          content: welcomeMessage.content,
+          metadata: {},
+        })
+        .select()
+        .single();
+
+      if (msgError) {
+        console.error("❌ Failed to create welcome message:", msgError);
+        // Still show it in UI even if DB insert fails
+        setMessages([welcomeMessage]);
+        hasLoadedMessages.current = true;
+      } else {
+        console.log("✅ New welcome message created:", newMsg.id);
+        setMessages([newMsg]);
+        hasLoadedMessages.current = true;
+      }
+
+      // Verify final state
+      const { count: finalCount } = await supabase
+        .from("chat_messages")
+        .select("*", { count: 'exact', head: true })
+        .eq("project_id", projectId);
+
+      console.log(`📋 Final message count: ${finalCount} (should be 1 - the welcome message)`);
       
       toast.success("Chat cleared! Starting fresh.");
     } catch (error: any) {
-      console.error("Error clearing chat:", error);
-      toast.error("Failed to clear chat");
+      console.error("❌ Error clearing chat:", error);
+      toast.error("Failed to clear chat: " + (error.message || "Unknown error"));
+    } finally {
+      // Always reset clearing flag
+      isClearing.current = false;
+      console.log("🏁 Chat clear process complete");
     }
   }
 
@@ -465,31 +619,40 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         if (itemsError) throw itemsError;
       }
 
-      // Clear chat history for this project
-      const { error: deleteError } = await supabase
-        .from("chat_messages")
+      // Clear working state only (keep chat history)
+      const { error: stateError } = await supabase
+        .from("project_working_state")
         .delete()
         .eq("project_id", projectId);
 
-      if (deleteError) console.error("Failed to clear chat:", deleteError);
+      if (stateError) {
+        console.error("Failed to clear working state:", stateError);
+      }
 
-      // Reset state
-      setMessages([]);
+      console.log("✅ Working state cleared (suggested products and preview)");
+
+      // Reset UI state only (messages stay in database)
       setSuggestedProducts([]);
       setQuotePreview(null);
       setShowSplitView(false);
       
-      // Show new welcome message
-      const welcomeMessage: ChatMessage = {
-        id: 'temp-welcome-' + Date.now(),
+      // Add a success message to the chat
+      const successMessage: Partial<ChatMessage> = {
         project_id: projectId,
-        role: 'assistant',
-        content: `Quote ${quoteNumber} has been saved! 🎉\n\nI'm ready to help you create another quote for ${projectName}. What would you like to work on?`,
+        role: "assistant",
+        content: `✅ Quote ${quoteNumber} has been saved to your Quote Log!\n\nThe chat history has been preserved. You can continue working on this project or use "Clear Chat" to start fresh.`,
         metadata: {},
-        created_at: new Date().toISOString()
       };
-      setMessages([welcomeMessage]);
-      await sendSystemMessageToDb(welcomeMessage.content);
+
+      const { data: successMsg, error: msgError } = await supabase
+        .from("chat_messages")
+        .insert(successMessage)
+        .select()
+        .single();
+
+      if (!msgError && successMsg) {
+        setMessages((prev) => [...prev, successMsg]);
+      }
       
       toast.success(`Quote ${quoteNumber} saved successfully!`);
     } catch (error: any) {
@@ -571,6 +734,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         }));
         setSuggestedProducts(productsWithIds);
         setSelectAll(false);
+        // Show the split view when products arrive
+        setShowSplitView(true);
         // Auto-switch to suggested products tab when new products arrive
         setActiveTab("suggested");
       }
@@ -684,12 +849,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                     : "bg-white border border-gray-200"
                 }`}
               >
-                {message.role === "assistant" && loading && (
-                  <div className="flex items-center gap-2 mb-2 text-blue-600 text-xs font-semibold">
-                    <Sparkles size={14} className="animate-pulse" />
-                    <span>Thinking...</span>
-                  </div>
-                )}
                 <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
                   {renderMessageContent(message.content)}
                 </div>
