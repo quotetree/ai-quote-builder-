@@ -815,6 +815,45 @@ ${formattedResults}
       console.log('✅ ====================================================\n');
     }
 
+    // Save products to project_working_state for background task persistence
+    if (productSuggestions.length > 0) {
+      try {
+        // Get current working state
+        const { data: currentState } = await supabase
+          .from("project_working_state")
+          .select("*")
+          .eq("project_id", projectId)
+          .single();
+
+        // Add IDs to products for UI handling
+        const productsWithIds = productSuggestions.map((p: any, idx: number) => ({
+          ...p,
+          id: `${Date.now()}-${idx}`,
+          selected: false
+        }));
+
+        // Update or insert working state with new products
+        const workingState = {
+          project_id: projectId,
+          suggested_products: productsWithIds,
+          quote_preview: currentState?.quote_preview || null,
+          show_split_view: true
+        };
+
+        const { error: stateError } = await supabase
+          .from("project_working_state")
+          .upsert(workingState, { onConflict: 'project_id' });
+
+        if (stateError) {
+          console.error('Failed to save working state:', stateError);
+        } else {
+          console.log('✅ Background task: Saved products to working state');
+        }
+      } catch (error) {
+        console.error('Error saving products to working state:', error);
+      }
+    }
+
     return NextResponse.json({ 
       message: cleanMessage,
       products: productSuggestions,

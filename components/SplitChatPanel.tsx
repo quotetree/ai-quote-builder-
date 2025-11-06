@@ -36,7 +36,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const currentProjectId = useRef<string | null>(null);
   const hasLoadedMessages = useRef(false);
   const isClearing = useRef(false); // Track if we're in the middle of clearing
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const supabase = createClient();
 
   // Load working state from database
@@ -102,6 +102,72 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return () => clearTimeout(timeoutId);
     }
   }, [suggestedProducts, quotePreview, showSplitView]);
+
+  // Poll for new messages (handles background task completion)
+  useEffect(() => {
+    let isActive = true;
+    
+    const pollForNewMessages = async () => {
+      try {
+        // Only poll if we're actively viewing this project and messages have loaded
+        if (!hasLoadedMessages.current || currentProjectId.current !== projectId) {
+          return;
+        }
+
+        // Get the ID of the most recent message we have
+        const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        
+        // Check for messages newer than our last message
+        const query = supabase
+          .from("chat_messages")
+          .select("*")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true });
+        
+        if (lastMessageId) {
+          // Get messages created after our last message
+          query.gt("created_at", messages[messages.length - 1].created_at);
+        }
+        
+        const { data: newMessages, error } = await query;
+
+        if (!isActive || error) return;
+
+        // If we found new messages, add them to the state
+        if (newMessages && newMessages.length > 0) {
+          console.log(`📨 Polling found ${newMessages.length} new message(s)`);
+          setMessages(prev => [...prev, ...newMessages]);
+          
+          // If there's a new assistant message, turn off loading state and reload working state
+          const hasNewAssistantMessage = newMessages.some(m => m.role === 'assistant');
+          if (hasNewAssistantMessage) {
+            if (loading) {
+              setLoading(false);
+            }
+            // Reload working state to get any products that were saved by background task
+            console.log('🔄 Reloading working state after background task completion');
+            await loadWorkingState();
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    // Start polling when component mounts and messages are loaded
+    if (hasLoadedMessages.current && currentProjectId.current === projectId) {
+      // Poll every 2 seconds for responsive updates
+      pollingIntervalRef.current = setInterval(pollForNewMessages, 2000);
+      
+      return () => {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        isActive = false;
+      };
+    }
+  }, [projectId, messages, loading, hasLoadedMessages.current]);
 
   useEffect(() => {
     let isActive = true;
@@ -171,6 +237,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           console.log('📝 Message previews:', messagesData.map(m => m.content.substring(0, 50) + '...'));
           setMessages(messagesData);
           hasLoadedMessages.current = true;
+          
+          // Check if there's an unanswered user message (task still running in background)
+          const lastMessage = messagesData[messagesData.length - 1];
+          if (lastMessage.role === 'user') {
+            console.log('⏳ Detected unanswered user message - task may still be running');
+            setLoading(true); // Show loading indicator
+          }
         } else {
           console.log('📭 No existing messages, persisting welcome message');
           await sendSystemMessageToDb(welcomeMessage.content);
@@ -666,11 +739,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   }
 
   async function stopGeneration() {
-    // Abort the ongoing request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    // Note: We can't abort background requests anymore (they continue even when navigating away)
+    // This function now just removes the last message and restores the input
     
     // Remove the last user message from the database and UI
     const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
@@ -701,7 +771,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
     }
     
-    toast.success("Generation stopped - you can edit and resend");
+    toast.success("Message removed - you can edit and resend");
   }
 
   async function sendMessage() {
@@ -730,9 +800,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       setShowSplitView(true);
     }
 
-    // Create new AbortController for this request
-    abortControllerRef.current = new AbortController();
-
     try {
       // Save user message
       const { data: userMsg, error: userError } = await supabase
@@ -749,7 +816,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       // Track analytics
       await trackAIChatMessage(projectId, currentInput.length);
 
-      // Call AI API with abort signal
+      // Call AI API (without abort signal - allows background continuation)
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -758,7 +825,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           message: currentInput,
           history: messages.slice(-10),
         }),
-        signal: abortControllerRef.current.signal,
       });
 
       const responseData = await response.json();
@@ -805,16 +871,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setMessages((prev) => [...prev, aiMsg]);
       }
     } catch (error: any) {
-      // Don't show error if request was aborted by user
-      if (error.name === 'AbortError') {
-        console.log('Request was cancelled by user');
-        return;
-      }
       toast.error(error.message || "Failed to send message");
       setInput(currentInput);
     } finally {
       setLoading(false);
-      abortControllerRef.current = null;
     }
   }
 
