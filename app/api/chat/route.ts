@@ -413,7 +413,9 @@ Your response MUST be structured in TWO parts:
 Keep this CLEAN and SIMPLE. Format exactly like this:
 
 **Work Summary:**
-✓ [What you found/understood]
+✓ [First item you found/understood/did]
+✓ [Second item]
+✓ [Third item]
 
 **Next Steps:**
 [Simple question asking if this is correct or if they need anything else]
@@ -422,6 +424,8 @@ Keep this CLEAN and SIMPLE. Format exactly like this:
 
 **IMPORTANT RULES for chat responses:**
 - Use **bold** for section headers (Work Summary, Next Steps)
+- Format Work Summary as a LIST with checkmarks (✓) when you have multiple items
+- If only one simple thing happened, a single sentence is fine
 - Do NOT use ### or markdown headers
 - Do NOT list products in the chat
 - Do NOT show prices or quantities in the chat
@@ -449,8 +453,12 @@ Next Steps: Does this work?
 [END - NO PRODUCT_DATA = BROKEN]
 
 **RIGHT (do this):**
-Work Summary: ✓ Added 5-year license
-Next Steps: Does this work?
+**Work Summary:**
+✓ Added 5-year license
+
+**Next Steps:**
+Does this work?
+
 PRODUCT_DATA_START
 1. Verkada 5-Year License - Qty: 1, Price: $999.00 each = $999.00
 PRODUCT_DATA_END
@@ -556,7 +564,8 @@ User: "I need a 5-year license instead of 1-year, and Cat6 riser instead of regu
 
 Your response:
 **Work Summary:**
-✓ Updated to 5-Year License and Cat6 Riser Cable
+✓ Updated to 5-Year License
+✓ Added Cat6 Riser Cable
 
 **Next Steps:**
 Are these the correct products?

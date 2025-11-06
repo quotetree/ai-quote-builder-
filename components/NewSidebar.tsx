@@ -37,6 +37,19 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
     fetchProjects();
   }, [pathname]);
 
+  // Listen for project update events
+  useEffect(() => {
+    const handleProjectUpdate = () => {
+      fetchProjects();
+    };
+    
+    window.addEventListener('projectUpdated', handleProjectUpdate);
+    
+    return () => {
+      window.removeEventListener('projectUpdated', handleProjectUpdate);
+    };
+  }, []);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push("/");

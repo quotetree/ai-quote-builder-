@@ -29,12 +29,14 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [tempQuantity, setTempQuantity] = useState("");
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [lastSentMessage, setLastSentMessage] = useState("");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const currentProjectId = useRef<string | null>(null);
   const hasLoadedMessages = useRef(false);
   const isClearing = useRef(false); // Track if we're in the middle of clearing
+  const abortControllerRef = useRef<AbortController | null>(null);
   const supabase = createClient();
 
   // Load working state from database
@@ -663,6 +665,45 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     }
   }
 
+  async function stopGeneration() {
+    // Abort the ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Remove the last user message from the database and UI
+    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUserMessage) {
+      try {
+        // Delete from database
+        await supabase
+          .from("chat_messages")
+          .delete()
+          .eq("id", lastUserMessage.id);
+        
+        // Remove from UI
+        setMessages(prev => prev.filter(m => m.id !== lastUserMessage.id));
+      } catch (error) {
+        console.error('Error removing message:', error);
+      }
+    }
+    
+    // Restore the last sent message to the input
+    setInput(lastSentMessage);
+    setLoading(false);
+    
+    // Focus the input
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+      // Auto-resize the textarea
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+    
+    toast.success("Generation stopped - you can edit and resend");
+  }
+
   async function sendMessage() {
     if (!input.trim() || loading) return;
 
@@ -675,6 +716,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
     setLoading(true);
     const currentInput = input;
+    setLastSentMessage(currentInput);
     setInput("");
     
     // Reset textarea height to single line
@@ -687,6 +729,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     if (isFirstMessage) {
       setShowSplitView(true);
     }
+
+    // Create new AbortController for this request
+    abortControllerRef.current = new AbortController();
 
     try {
       // Save user message
@@ -704,7 +749,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       // Track analytics
       await trackAIChatMessage(projectId, currentInput.length);
 
-      // Call AI API
+      // Call AI API with abort signal
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -713,6 +758,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           message: currentInput,
           history: messages.slice(-10),
         }),
+        signal: abortControllerRef.current.signal,
       });
 
       const responseData = await response.json();
@@ -759,10 +805,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setMessages((prev) => [...prev, aiMsg]);
       }
     } catch (error: any) {
+      // Don't show error if request was aborted by user
+      if (error.name === 'AbortError') {
+        console.log('Request was cancelled by user');
+        return;
+      }
       toast.error(error.message || "Failed to send message");
       setInput(currentInput);
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   }
 
@@ -856,7 +908,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
             </div>
           ))}
           {loading && (
-            <div className="flex justify-start">
+            <div className="flex justify-start items-start gap-3">
               <div className="bg-white border border-gray-200 rounded-2xl px-5 py-3">
                 <div className="flex items-center gap-2">
                   <Sparkles size={16} className="text-blue-500 animate-pulse" />
@@ -867,6 +919,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                   </div>
                 </div>
               </div>
+              <button
+                onClick={stopGeneration}
+                className="mt-1 p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                title="Stop generating"
+              >
+                <div className="w-3 h-3 bg-gray-700 rounded-sm"></div>
+              </button>
             </div>
           )}
           <div ref={messagesEndRef} />

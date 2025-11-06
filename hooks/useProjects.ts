@@ -57,6 +57,26 @@ export function useProjects() {
     }
   }
 
+  async function updateProject(id: string, name: string) {
+    try {
+      const { data, error } = await supabase
+        .from("projects")
+        .update({ project_name: name })
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setProjects(projects.map((p) => (p.id === id ? data : p)));
+      }
+      return data;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    }
+  }
+
   async function deleteProject(id: string) {
     try {
       const { error } = await supabase
@@ -78,6 +98,7 @@ export function useProjects() {
     error,
     fetchProjects,
     createProject,
+    updateProject,
     deleteProject,
   };
 }
