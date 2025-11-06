@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Send, Mic, Plus, Sparkles, CheckCircle, FileText, Trash2, Edit2, GripVertical } from "lucide-react";
+import { Send, Mic, Plus, Sparkles, CheckCircle, FileText, Trash2, Edit2, GripVertical, RotateCcw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatMessage } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
@@ -357,6 +357,49 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     setDragOverIndex(null);
   }
 
+  async function clearChat() {
+    if (!confirm("Are you sure you want to clear the chat and start over? This will remove all messages and reset the quote preview.")) {
+      return;
+    }
+
+    try {
+      // Clear chat messages from database
+      const { error: deleteError } = await supabase
+        .from("chat_messages")
+        .delete()
+        .eq("project_id", projectId);
+
+      if (deleteError) throw deleteError;
+
+      // Reset all state
+      setMessages([]);
+      setSuggestedProducts([]);
+      setQuotePreview(null);
+      setShowSplitView(false);
+      setSelectAll(false);
+      setEditingQuantityIndex(null);
+      setTempQuantity("");
+      setInput("");
+      
+      // Show welcome message
+      const welcomeMessage: ChatMessage = {
+        id: 'temp-welcome-' + Date.now(),
+        project_id: projectId,
+        role: 'assistant',
+        content: `Welcome to the ${projectName} project! I'm here to help you create a professional quote.\n\nTo get started, please describe the scope of work for this project. What services or products does the client need?`,
+        metadata: {},
+        created_at: new Date().toISOString()
+      };
+      setMessages([welcomeMessage]);
+      await sendSystemMessageToDb(welcomeMessage.content);
+      
+      toast.success("Chat cleared! Starting fresh.");
+    } catch (error: any) {
+      console.error("Error clearing chat:", error);
+      toast.error("Failed to clear chat");
+    }
+  }
+
   async function submitQuote() {
     if (!quotePreview) {
       toast.error("Please apply changes first");
@@ -613,6 +656,21 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     <div className="flex h-full bg-white">
       {/* Left Side - Chat */}
       <div className={`flex flex-col bg-white transition-all duration-300 ${showSplitView ? 'w-1/2 border-r border-gray-200' : 'w-full'}`}>
+        {/* Chat Header with Clear Button */}
+        {messages.length > 1 && (
+          <div className="border-b border-gray-100 px-6 py-3 bg-gray-50/50 flex justify-between items-center">
+            <span className="text-sm text-gray-600">{messages.filter(m => m.role === 'user').length} message{messages.filter(m => m.role === 'user').length !== 1 ? 's' : ''}</span>
+            <button
+              onClick={clearChat}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Clear chat and start over"
+            >
+              <RotateCcw size={16} />
+              <span>Clear Chat</span>
+            </button>
+          </div>
+        )}
+        
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map((message) => (
