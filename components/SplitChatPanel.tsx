@@ -658,7 +658,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       <div className={`flex flex-col bg-white transition-all duration-300 ${showSplitView ? 'w-1/2 border-r border-gray-200' : 'w-full'}`}>
         {/* Chat Header with Clear Button */}
         {messages.length > 1 && (
-          <div className="border-b border-gray-100 px-6 py-3 bg-gray-50/50 flex justify-end items-center">
+          <div className="border-b border-gray-200 px-4 py-3 bg-white flex justify-end items-center">
             <button
               onClick={clearChat}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
