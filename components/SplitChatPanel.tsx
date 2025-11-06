@@ -661,7 +661,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           <div className="border-b border-gray-200 bg-white flex justify-end">
             <button
               onClick={clearChat}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-700 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-700 hover:text-red-600 hover:bg-red-50 border-b-2 border-transparent rounded-lg transition-colors"
               title="Clear chat and start over"
             >
               <RotateCcw size={16} />
