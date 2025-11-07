@@ -27,6 +27,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [selectAll, setSelectAll] = useState(false);
   const [editingQuantityIndex, setEditingQuantityIndex] = useState<number | null>(null);
   const [tempQuantity, setTempQuantity] = useState("");
+  const [editingDiscountIndex, setEditingDiscountIndex] = useState<number | null>(null);
+  const [tempDiscount, setTempDiscount] = useState("");
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState("");
@@ -441,6 +443,58 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   function cancelEditingQuantity() {
     setEditingQuantityIndex(null);
     setTempQuantity("");
+  }
+
+  // Start editing discount
+  function startEditingDiscount(index: number, currentDiscount: number) {
+    setEditingDiscountIndex(index);
+    setTempDiscount(String((currentDiscount || 0) * 100)); // Convert to percentage
+  }
+
+  // Save edited discount
+  function saveEditedDiscount(index: number) {
+    const newDiscountPercent = parseFloat(tempDiscount);
+    
+    if (isNaN(newDiscountPercent) || newDiscountPercent < 0 || newDiscountPercent > 100) {
+      toast.error("Please enter a valid discount (0-100%)");
+      return;
+    }
+    
+    editPreviewProductDiscount(index, newDiscountPercent / 100); // Convert to decimal
+    setEditingDiscountIndex(null);
+    setTempDiscount("");
+    toast.success("Discount updated");
+  }
+
+  // Cancel editing discount
+  function cancelEditingDiscount() {
+    setEditingDiscountIndex(null);
+    setTempDiscount("");
+  }
+
+  // Edit discount for a preview product
+  function editPreviewProductDiscount(index: number, discountDecimal: number) {
+    if (!quotePreview) return;
+    
+    const updatedItems = [...quotePreview.line_items];
+    updatedItems[index].discount_percent = discountDecimal;
+    
+    // Recalculate line total with discount
+    const originalTotal = updatedItems[index].unit_price * updatedItems[index].quantity;
+    updatedItems[index].line_total = originalTotal * (1 - discountDecimal);
+    
+    // Recalculate totals
+    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    const taxAmount = subtotal * quotePreview.tax_rate;
+    const totalPrice = subtotal + taxAmount - (quotePreview.discount_amount || 0);
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      subtotal,
+      tax_amount: taxAmount,
+      total_price: totalPrice
+    });
   }
 
   // Edit quantity for a preview product
@@ -1198,6 +1252,56 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                       title="Edit quantity"
                                     >
                                       <Edit2 size={14} className="text-blue-600" />
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Discount Field */}
+                                {editingDiscountIndex === index ? (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs text-gray-600">Discount:</span>
+                                    <input
+                                      type="number"
+                                      value={tempDiscount}
+                                      onChange={(e) => setTempDiscount(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          saveEditedDiscount(index);
+                                        } else if (e.key === 'Escape') {
+                                          cancelEditingDiscount();
+                                        }
+                                      }}
+                                      className="w-16 px-2 py-1 border border-blue-500 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      autoFocus
+                                      step="0.1"
+                                      min="0"
+                                      max="100"
+                                    />
+                                    <span className="text-xs text-gray-600">%</span>
+                                    <button
+                                      onClick={() => saveEditedDiscount(index)}
+                                      className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={cancelEditingDiscount}
+                                      className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-xs text-gray-600 mt-1">
+                                    <span>
+                                      Discount: {item.discount_percent ? `${(item.discount_percent * 100).toFixed(1)}%` : '0%'}
+                                    </span>
+                                    <button
+                                      onClick={() => startEditingDiscount(index, item.discount_percent || 0)}
+                                      className="p-1 hover:bg-gray-200 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Edit discount"
+                                    >
+                                      <Edit2 size={12} className="text-blue-600" />
                                     </button>
                                   </div>
                                 )}

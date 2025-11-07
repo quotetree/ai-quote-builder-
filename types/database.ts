@@ -70,6 +70,7 @@ export interface ProductSuggestion {
   id?: string;
   quantity_unit?: string | null;
   price_unit?: string | null;
+  discount_percent?: number; // Percentage as decimal (0.10 = 10%)
 }
 
 export interface QuotePreview {
