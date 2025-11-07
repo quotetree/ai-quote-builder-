@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Request aborted" }, { status: 499 });
     }
 
-    const { projectId, message, history, runId } = await req.json();
+    const { projectId, message, history, runId, poolId, contextId, currentState, clearContext } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json(
@@ -257,7 +257,8 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    console.log(`🚀 Starting chat processing - Project: ${projectId}, RunID: ${runId || 'none'}`);
+    console.log(`🏊 pool:start { poolId: "${poolId || 'none'}", runId: "${runId || 'none'}", contextId: "${contextId || 'none'}", projectId: "${projectId}" }`);
+    console.log(`🔒 context:isolated { contextId: "${contextId}", clearContext: ${clearContext}, hasCurrentState: ${!!currentState} }`);
     
     // Set up abort listener
     let aborted = false;
@@ -665,15 +666,53 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
     // All responses should be concise now - no quote generation in chat
     const isComplexRequest = message.length > 200; // Longer user messages might need more tokens
     
+    // CRITICAL: Build context isolation instructions
+    let contextInstructions = `\n\n## 🔒 CONTEXT ISOLATION - READ THIS FIRST\n\n`;
+    contextInstructions += `**SESSION ID:** ${contextId || 'none'}\n`;
+    contextInstructions += `**CLEAR CONTEXT MODE:** ${clearContext ? 'ENABLED - Ignore all previous session memory' : 'DISABLED'}\n\n`;
+    
+    if (currentState) {
+      contextInstructions += `**📊 CURRENT WORKING STATE (ONLY SOURCE OF TRUTH):**\n`;
+      
+      if (currentState.hasExistingQuote && currentState.quotePreview?.line_items) {
+        contextInstructions += `\n**Current Quote Preview (${currentState.quotePreview.line_items.length} items):**\n`;
+        currentState.quotePreview.line_items.forEach((item: any, idx: number) => {
+          contextInstructions += `${idx + 1}. ${item.product_name} - Qty: ${item.quantity}, Price: $${item.line_total}\n`;
+        });
+      } else {
+        contextInstructions += `**Current Quote Preview:** EMPTY (no items yet)\n`;
+      }
+      
+      if (currentState.hasExistingProducts && currentState.suggestedProducts?.length > 0) {
+        contextInstructions += `\n**Suggested Products Pool (current session):** ${currentState.suggestedProducts.length} products\n`;
+      } else {
+        contextInstructions += `**Suggested Products Pool:** EMPTY\n`;
+      }
+      
+      contextInstructions += `\n**⚠️ CRITICAL RULES:**\n`;
+      contextInstructions += `1. The above is the ONLY valid source of truth for this quote\n`;
+      contextInstructions += `2. DO NOT recall, reference, or reuse ANY products from previous messages/sessions\n`;
+      contextInstructions += `3. If user says "add X", add ONLY X (not products from chat history)\n`;
+      contextInstructions += `4. If user says "replace Y", remove the specified item and add ONLY what they request\n`;
+      contextInstructions += `5. Each message is a FRESH operation on the CURRENT STATE shown above\n`;
+      contextInstructions += `6. NEVER merge old suggestions with new - each search is independent\n\n`;
+    }
+    
+    // Enhanced system prompt with context isolation
+    const enhancedSystemPrompt = systemPrompt + contextInstructions;
+    
     // Build messages array - keep very minimal history (just last exchange) to prevent AI from re-suggesting old products
     const messages: any[] = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: enhancedSystemPrompt },
       ...history.slice(-2).map((msg: any) => ({
         role: msg.role,
         content: msg.content,
       })),
       { role: "user", content: message },
     ];
+    
+    // Log message construction for debugging
+    console.log(`🔒 context:messages { systemPromptLength: ${enhancedSystemPrompt.length}, historyMessages: ${history.slice(-2).length}, currentStateProvided: ${!!currentState} }`);
 
     // Check abort before expensive OpenAI call
     if (aborted || signal.aborted) {
@@ -834,6 +873,32 @@ ${formattedResults}
         console.log(`${idx + 1}. ${p.product_name} - $${p.unit_price} each`);
       });
       
+      // CRITICAL: Check for potential context reuse
+      if (currentState) {
+        // Check if any suggested products were already in the current quote
+        const existingProductNames = currentState.quotePreview?.line_items?.map((item: any) => 
+          item.product_name?.toLowerCase().trim()
+        ) || [];
+        
+        productSuggestions.forEach(p => {
+          const productNameLower = p.product_name.toLowerCase().trim();
+          if (existingProductNames.includes(productNameLower)) {
+            console.warn(`⚠️ attemptedContextReuse: Product "${p.product_name}" already exists in current quote. ContextId: ${contextId}. This may indicate the AI is reusing old context instead of following current instruction.`);
+          }
+        });
+        
+        // Check if the number of products seems excessive compared to the user's request
+        const userMessageWords = message.toLowerCase().split(/\s+/);
+        const hasQuantityInMessage = userMessageWords.some(w => /^\d+$/.test(w));
+        const requestedQuantity = hasQuantityInMessage 
+          ? parseInt(userMessageWords.find(w => /^\d+$/.test(w)) || '0')
+          : 1;
+        
+        if (productSuggestions.length > requestedQuantity * 2 && requestedQuantity > 0) {
+          console.warn(`⚠️ attemptedContextReuse: AI suggested ${productSuggestions.length} products but user only requested ~${requestedQuantity}. ContextId: ${contextId}. Possible context contamination.`);
+        }
+      }
+      
       // Check for common mismatches
       productSuggestions.forEach(p => {
         if (cleanMessage.toLowerCase().includes('access control') && p.product_name.toLowerCase().includes('io controller') && !p.product_name.toLowerCase().includes('access')) {
@@ -868,19 +933,34 @@ ${formattedResults}
           .eq("project_id", projectId)
           .single();
 
-        // Add IDs to products for UI handling
-        const productsWithIds = productSuggestions.map((p: any, idx: number) => ({
+        // CRITICAL: Tag products with poolId for isolation and add canonical keys
+        const productsWithPoolAndIds = productSuggestions.map((p: any, idx: number) => ({
           ...p,
-          id: `${Date.now()}-${idx}`,
-          selected: false
+          id: `${poolId || Date.now()}-${idx}`,
+          poolId: poolId, // Tag with current pool
+          selected: false,
+          // Canonical key for deduplication
+          canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `${idx}`
         }));
+
+        // Deduplicate products by canonical key before saving
+        const seen = new Set();
+        const dedupedProducts = productsWithPoolAndIds.filter((p: any) => {
+          if (seen.has(p.canonicalKey)) {
+            console.log(`🏊 pool:dedupe { poolId: "${poolId}", dropped: ["${p.product_name}"], reason: "duplicate before save" }`);
+            return false;
+          }
+          seen.add(p.canonicalKey);
+          return true;
+        });
 
         // Update or insert working state with new products
         const workingState = {
           project_id: projectId,
-          suggested_products: productsWithIds,
+          suggested_products: dedupedProducts,
           quote_preview: currentState?.quote_preview || null,
-          show_split_view: true
+          show_split_view: true,
+          current_pool_id: poolId // Store current poolId for tracking
         };
 
         const { error: stateError } = await supabase
@@ -890,7 +970,7 @@ ${formattedResults}
         if (stateError) {
           console.error('Failed to save working state:', stateError);
         } else {
-          console.log(`✅ Saved products to working state - Project: ${projectId}, RunID: ${runId || 'none'}`);
+          console.log(`🏊 pool:saved { poolId: "${poolId}", productCount: ${dedupedProducts.length}, projectId: "${projectId}" }`);
         }
       } catch (error) {
         console.error('Error saving products to working state:', error);
@@ -900,13 +980,14 @@ ${formattedResults}
     // Clean up abort listener
     signal.removeEventListener('abort', abortHandler);
 
-    console.log(`✅ Chat processing complete - Project: ${projectId}, RunID: ${runId || 'none'}`);
+    console.log(`🏊 pool:complete { poolId: "${poolId || 'none'}", runId: "${runId || 'none'}", productCount: ${productSuggestions.length} }`);
 
     return NextResponse.json({ 
       message: cleanMessage,
       products: productSuggestions,
       hasProducts: productSuggestions.length > 0,
-      runId: runId // Return runId for validation
+      runId: runId, // Return runId for validation
+      poolId: poolId // Return poolId for pool isolation
     });
   } catch (error: any) {
     console.error("Chat API error:", error);

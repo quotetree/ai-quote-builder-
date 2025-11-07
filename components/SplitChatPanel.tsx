@@ -55,6 +55,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const stoppedMessageTimestamp = useRef<string | null>(null); // Track when we stopped a message
   const orphanCleanupIntervalRef = useRef<NodeJS.Timeout | null>(null); // Global cleanup interval
   const currentRunIdRef = useRef<string | null>(null); // Track current run ID for validation
+  const currentPoolIdRef = useRef<string | null>(null); // Track current pool ID for product isolation
   const supabase = createClient();
 
   // Global orphan cleanup that survives component lifecycle
@@ -141,9 +142,25 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       if (data) {
         console.log('Loaded working state from database');
-        setSuggestedProducts(data.suggested_products || []);
+        
+        // CRITICAL: Context Guard - DO NOT load old suggested products
+        // Suggested products are ephemeral and only valid for the turn they were created
+        // Loading old suggestions causes state bleed
+        // Only the quote preview should persist across sessions
+        const storedPoolId = data.current_pool_id;
+        const suggestedProducts = data.suggested_products || [];
+        
+        if (suggestedProducts.length > 0 && storedPoolId) {
+          console.warn(`🚫 Context Guard: Blocking ${suggestedProducts.length} stale products from poolId "${storedPoolId}". Suggestions are ephemeral and don't persist across sessions.`);
+          console.log(`🧹 suggest:cleared { projectId: "${projectId}", reason: "stale from previous session", stalePoolId: "${storedPoolId}" }`);
+        }
+        
+        // DO NOT set suggested products - they should start fresh each session
+        // Only quote preview persists
+        setSuggestedProducts([]); // Always start with empty suggestions
         setQuotePreview(data.quote_preview);
         setShowSplitView(data.show_split_view || false);
+        
         return data;
       }
       return null;
@@ -462,8 +479,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     return () => {
       isActive = false;
-      // Invalidate runId when switching projects
+      // Invalidate runId and poolId when switching projects (prevent pool bleed)
       currentRunIdRef.current = null;
+      currentPoolIdRef.current = null;
       // Abort any ongoing AI requests when switching projects
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -551,21 +569,40 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
     setApplyingChanges(true);
     try {
+      const selectedPoolId = selectedProducts[0]?.poolId || currentPoolIdRef.current;
+      
       // Get existing preview items or start fresh
       const existingItems = quotePreview?.line_items || [];
       
-      // Add selected products to existing items
+      // CRITICAL: Deterministic replacement with deduplication
+      // When adding products to quote preview, deduplicate by canonical key
       const allItems = [...existingItems, ...selectedProducts];
       
+      // Deduplicate by canonical key (product name)
+      const seen = new Map();
+      const dedupedItems = [];
+      const droppedDuplicates = [];
+      
+      for (const item of allItems) {
+        const canonicalKey = item.canonicalKey || item.product_name?.toLowerCase().trim();
+        if (seen.has(canonicalKey)) {
+          droppedDuplicates.push(item.product_name);
+          console.log(`🏊 pool:dedupe { poolId: "${selectedPoolId}", dropped: ["${item.product_name}"], reason: "duplicate in quote preview" }`);
+        } else {
+          seen.set(canonicalKey, true);
+          dedupedItems.push(item);
+        }
+      }
+      
       // Calculate totals
-      const subtotal = allItems.reduce((sum, item) => sum + item.line_total, 0);
+      const subtotal = dedupedItems.reduce((sum, item) => sum + item.line_total, 0);
       const tax_rate = quotePreview?.tax_rate || 0;
       const tax_amount = subtotal * tax_rate;
       const discount_amount = quotePreview?.discount_amount || 0;
       const total_price = subtotal + tax_amount - discount_amount;
 
       const preview: QuotePreview = {
-        line_items: allItems,
+        line_items: dedupedItems,
         subtotal,
         tax_rate,
         tax_amount,
@@ -575,12 +612,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       setQuotePreview(preview);
       
+      // Log the replacement operation
+      const selectedNames = selectedProducts.map(p => p.product_name);
+      console.log(`🏊 pool:replace { poolId: "${selectedPoolId}", added: ${JSON.stringify(selectedNames)}, dedupedCount: ${droppedDuplicates.length} }`);
+      
       // Remove selected products from suggested list, keep unselected ones
       setSuggestedProducts(prev => prev.filter(p => !p.selected));
       setSelectAll(false);
       
       setActiveTab("preview");
-      toast.success(`Added ${selectedProducts.length} product${selectedProducts.length > 1 ? 's' : ''} to quote!`);
+      const successMsg = droppedDuplicates.length > 0 
+        ? `Added ${selectedProducts.length} product(s) (${droppedDuplicates.length} duplicate(s) removed)`
+        : `Added ${selectedProducts.length} product${selectedProducts.length > 1 ? 's' : ''} to quote!`;
+      toast.success(successMsg);
     } catch (error) {
       toast.error("Failed to update preview");
     } finally {
@@ -1079,10 +1123,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   }
 
   async function stopGeneration() {
-    // Invalidate current runId so any responses are ignored
+    // Invalidate current runId and poolId so any responses are ignored
     const oldRunId = currentRunIdRef.current;
+    const oldPoolId = currentPoolIdRef.current;
     currentRunIdRef.current = null;
-    console.log(`🛑 Invalidated runId: ${oldRunId}`);
+    currentPoolIdRef.current = null;
+    console.log(`🛑 Invalidated runId: ${oldRunId}, poolId: ${oldPoolId}`);
     
     // Abort the current fetch request if it's running
     if (abortControllerRef.current) {
@@ -1188,7 +1234,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     // Generate unique runId for this request
     const runId = `${projectId}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     currentRunIdRef.current = runId;
-    console.log(`🚀 Starting new run: ${runId}`);
+    
+    // Generate unique poolId for this search/pool - ensures complete isolation
+    const poolId = `pool-${projectId}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    currentPoolIdRef.current = poolId;
+    
+    // Generate contextId for this turn (session isolation)
+    const contextId = `ctx-${poolId}`;
+    
+    console.log(`🎯 === NEW TURN START === { projectId: "${projectId}", contextId: "${contextId}", poolId: "${poolId}", runId: "${runId}" }`);
+    console.log(`🎯 Turn initial state: { suggestedProducts: ${suggestedProducts.length}, quotePreview: ${quotePreview?.line_items?.length || 0} items }`);
+    console.log(`🏊 pool:start { poolId: "${poolId}", runId: "${runId}", query: "${currentInput.substring(0, 50)}..." }`);
 
     // Create abort controller for this request
     const abortController = new AbortController();
@@ -1210,15 +1266,53 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       // Track analytics
       await trackAIChatMessage(projectId, currentInput.length);
 
-      // Call AI API with abort signal and runId
+      // CRITICAL: Strip product suggestions from chat history to prevent context bleed
+      // The AI should ONLY work with current working state, not old chat memory
+      const sanitizedHistory = messages.slice(-10).map(msg => {
+        // Keep only the conversational text, remove any product data
+        let content = msg.content;
+        
+        // Remove product lists from assistant messages (lines starting with numbers or bullets)
+        if (msg.role === 'assistant') {
+          // Remove structured product lists but keep conversational responses
+          const lines = content.split('\n');
+          const cleanedLines = lines.filter(line => {
+            const trimmed = line.trim();
+            // Filter out lines that look like product listings
+            return !trimmed.match(/^\d+\.|^[-•*]\s|^Product:|^Item:/i);
+          });
+          content = cleanedLines.join('\n').trim();
+        }
+        
+        return {
+          role: msg.role,
+          content: content || 'Product search completed.'
+        };
+      });
+      
+      // Pass ONLY current working state as source of truth
+      const currentWorkingState = {
+        suggestedProducts: suggestedProducts.filter(p => p.poolId === poolId), // Only current pool products
+        quotePreview: quotePreview,
+        hasExistingProducts: suggestedProducts.length > 0,
+        hasExistingQuote: quotePreview?.line_items?.length > 0
+      };
+
+      console.log(`🔒 context:isolated { contextId: "${contextId}", workingProducts: ${currentWorkingState.suggestedProducts.length}, quoteLines: ${currentWorkingState.hasExistingQuote ? quotePreview.line_items.length : 0} }`);
+
+      // Call AI API with abort signal, runId, and poolId
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
           message: currentInput,
-          history: messages.slice(-10),
+          history: sanitizedHistory, // Sanitized history without product data
           runId, // Send runId for validation
+          poolId, // Send poolId for product isolation
+          contextId, // Session isolation
+          currentState: currentWorkingState, // ONLY source of truth for products
+          clearContext: true, // Instruct AI to not use memory from previous sessions
         }),
         signal: abortController.signal,
       });
@@ -1229,36 +1323,90 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         throw new Error(responseData.error || "Failed to get AI response");
       }
 
-      // CRITICAL: Validate response matches current run and project
+      // CRITICAL: Validate response matches current run, pool, and project (pool bleed protection)
       if (responseData.runId !== currentRunIdRef.current) {
-        console.warn(`⚠️ Ignoring response from old run. Expected: ${currentRunIdRef.current}, Got: ${responseData.runId}`);
+        console.warn(`⚠️ 🏊 pool:blockedHistoryMerge { reason: "runId mismatch", expected: "${currentRunIdRef.current}", got: "${responseData.runId}" }`);
         return; // Silently ignore - this is from an old/stopped run
       }
       
+      if (responseData.poolId !== currentPoolIdRef.current) {
+        console.warn(`⚠️ 🏊 pool:blockedHistoryMerge { reason: "poolId mismatch", expected: "${currentPoolIdRef.current}", got: "${responseData.poolId}" }`);
+        return; // Silently ignore - this is from a different pool
+      }
+      
       if (currentProjectId.current !== projectId) {
-        console.warn(`⚠️ Ignoring response from old project. Expected: ${projectId}, Current: ${currentProjectId.current}`);
+        console.warn(`⚠️ 🏊 pool:blockedHistoryMerge { reason: "projectId mismatch", expected: "${projectId}", got: "${currentProjectId.current}" }`);
         return; // Silently ignore - user switched projects
       }
       
-      console.log(`✅ Response validated for run: ${runId}`);
+      console.log(`✅ Response validated for run: ${runId}, pool: ${poolId}`);
 
       const aiResponse = responseData.message;
       const products = responseData.products || [];
 
-      // If AI suggested products, REPLACE the suggested products list (new chat = fresh start)
+      // CRITICAL: If AI suggested products, REPLACE the suggested products list completely
+      // This is a fresh pool - NO products from previous pools should remain
       if (products.length > 0) {
-        // Add unique IDs and default selected state to products
-        const productsWithIds = products.map((p: any, idx: number) => ({
+        console.log(`🎯 suggest:start { projectId: "${projectId}", contextId: "${contextId}", poolId: "${poolId}", count: ${products.length} }`);
+        console.log(`🏊 pool:products { poolId: "${poolId}", count: ${products.length}, products: [${products.map((p: any) => p.product_name).join(', ')}] }`);
+        
+        // Tag products with current poolId and contextId for isolation
+        const productsWithIdsAndPool = products.map((p: any, idx: number) => ({
           ...p,
-          id: `${Date.now()}-${idx}`,
-          selected: false
+          id: `${poolId}-${idx}`, // Include poolId in ID for uniqueness
+          poolId: poolId, // Tag with current pool
+          contextId: contextId, // Tag with current context for strict isolation
+          selected: false,
+          // Canonical key for deduplication (use product_name as key)
+          canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `${idx}`
         }));
-        setSuggestedProducts(productsWithIds);
+        
+        // Deduplicate by canonical key
+        const seen = new Set();
+        const droppedDuplicates: string[] = [];
+        const deduped = productsWithIdsAndPool.filter((p: any) => {
+          if (seen.has(p.canonicalKey)) {
+            droppedDuplicates.push(p.product_name);
+            console.log(`🏊 dedupe:dropped { contextId: "${contextId}", ids: ["${p.id}"], product: "${p.product_name}", reason: "duplicate" }`);
+            return false;
+          }
+          seen.add(p.canonicalKey);
+          return true;
+        });
+        
+        // Additional guard: Filter out products already in quote preview (prevent re-suggesting)
+        const quoteProductKeys = new Set(
+          quotePreview?.line_items?.map((item: any) => 
+            item.canonicalKey || item.product_name?.toLowerCase().trim()
+          ) || []
+        );
+        
+        const finalProducts = deduped.filter((p: any) => {
+          if (quoteProductKeys.has(p.canonicalKey)) {
+            console.log(`🚫 blockedHistoryMerge { fromContext: "quote_preview", intoContext: "${contextId}", product: "${p.product_name}", reason: "already in quote" }`);
+            droppedDuplicates.push(p.product_name);
+            return false;
+          }
+          return true;
+        });
+        
+        // ATOMIC REPLACEMENT: Clear ALL previous products and set ONLY current context products
+        // This is STATELESS - no carry-over from previous turns
+        const oldCount = suggestedProducts.length;
+        setSuggestedProducts(finalProducts);
         setSelectAll(false);
+        
+        console.log(`🎯 suggest:render { contextId: "${contextId}", count: ${finalProducts.length}, dropped: ${droppedDuplicates.length} }`);
+        console.log(`🏊 pool:replaced { poolId: "${poolId}", oldCount: ${oldCount}, newCount: ${finalProducts.length} }`);
+        
         // Show the split view when products arrive
         setShowSplitView(true);
         // Auto-switch to suggested products tab when new products arrive
         setActiveTab("suggested");
+      } else {
+        // No products in this turn - clear suggestions
+        console.log(`🎯 suggest:render { contextId: "${contextId}", count: 0, reason: "no products in response" }`);
+        setSuggestedProducts([]);
       }
 
       // Save AI response
