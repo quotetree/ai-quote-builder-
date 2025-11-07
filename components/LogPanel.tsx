@@ -20,6 +20,23 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     }
   }, [projectId]);
 
+  // Listen for quote creation events to refresh the log automatically
+  useEffect(() => {
+    const handleQuoteCreated = (event: CustomEvent) => {
+      // Only refresh if the quote was created for this project
+      if (event.detail.projectId === projectId) {
+        console.log('New quote created, refreshing quote log...');
+        fetchQuotes(projectId);
+      }
+    };
+
+    window.addEventListener('quoteCreated' as any, handleQuoteCreated);
+    
+    return () => {
+      window.removeEventListener('quoteCreated' as any, handleQuoteCreated);
+    };
+  }, [projectId, fetchQuotes]);
+
   const getStatusColor = (status: Quote['status']) => {
     switch (status) {
       case "approved":

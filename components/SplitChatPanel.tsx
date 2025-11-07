@@ -51,7 +51,76 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const hasLoadedMessages = useRef(false);
   const isClearing = useRef(false); // Track if we're in the middle of clearing
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null); // Track current fetch request
+  const stoppedMessageTimestamp = useRef<string | null>(null); // Track when we stopped a message
+  const orphanCleanupIntervalRef = useRef<NodeJS.Timeout | null>(null); // Global cleanup interval
+  const currentRunIdRef = useRef<string | null>(null); // Track current run ID for validation
   const supabase = createClient();
+
+  // Global orphan cleanup that survives component lifecycle
+  useEffect(() => {
+    // Start a global interval that checks for orphaned messages every 3 seconds
+    // This survives component unmounting
+    if (!orphanCleanupIntervalRef.current) {
+      console.log('🚀 Starting global orphan cleanup interval');
+      
+      orphanCleanupIntervalRef.current = setInterval(async () => {
+        try {
+          const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+          
+          // Check each project that has a stopped message
+          for (const [projId, timestamp] of Object.entries(stoppedMessages)) {
+            console.log(`🔍 Global cleanup checking project ${projId} for orphans after ${timestamp}`);
+            
+            const { data: orphanedMessages } = await supabase
+              .from("chat_messages")
+              .select("id, role, created_at")
+              .eq("project_id", projId)
+              .gt("created_at", timestamp as string);
+            
+            if (orphanedMessages && orphanedMessages.length > 0) {
+              console.log(`🧹 Global cleanup found ${orphanedMessages.length} orphaned messages in project ${projId}, deleting...`);
+              
+              const orphanedIds = orphanedMessages.map(m => m.id);
+              
+              // Delete orphaned messages
+              await supabase
+                .from("chat_messages")
+                .delete()
+                .in("id", orphanedIds);
+              
+              // Delete working state
+              await supabase
+                .from("project_working_state")
+                .delete()
+                .eq("project_id", projId);
+              
+              // Update UI if we're currently viewing this project
+              if (currentProjectId.current === projId) {
+                setMessages(prev => prev.filter(m => !orphanedIds.includes(m.id)));
+                setSuggestedProducts([]);
+                setQuotePreview(null);
+              }
+              
+              console.log(`✅ Global cleanup deleted ${orphanedMessages.length} orphaned messages`);
+              
+              // Remove from localStorage after successful cleanup
+              const updatedStopped = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+              delete updatedStopped[projId];
+              localStorage.setItem('stoppedMessages', JSON.stringify(updatedStopped));
+            }
+          }
+        } catch (error) {
+          console.error('Global cleanup error:', error);
+        }
+      }, 3000); // Check every 3 seconds
+    }
+    
+    return () => {
+      // Don't clear the interval on unmount - we want it to keep running globally
+      // It will only be cleared when the entire app unmounts
+    };
+  }, []); // Empty dependency array - run once on mount
 
   // Load working state from database
   async function loadWorkingState() {
@@ -67,7 +136,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         if (error.code !== 'PGRST116') { // PGRST116 = no rows returned
           console.error('Error loading working state:', error);
         }
-        return;
+        return null;
       }
 
       if (data) {
@@ -75,9 +144,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setSuggestedProducts(data.suggested_products || []);
         setQuotePreview(data.quote_preview);
         setShowSplitView(data.show_split_view || false);
+        return data;
       }
+      return null;
     } catch (error) {
       console.error('Failed to load working state:', error);
+      return null;
     }
   }
 
@@ -209,6 +281,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         console.log('📥 Loading project data for:', projectId);
         console.log('🔄 Previous project was:', previousProjectId);
         
+        // Reset loading state when switching projects
+        setLoading(false);
+        
         // Show welcome message immediately (optimistic UI)
         const welcomeMessage: ChatMessage = {
           id: 'temp-welcome-' + Date.now(),
@@ -249,14 +324,110 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           console.log(`📨 Loaded ${messagesData.length} messages from database for project ${projectId}`);
           console.log('📋 Message IDs:', messagesData.map(m => m.id));
           console.log('📝 Message previews:', messagesData.map(m => m.content.substring(0, 50) + '...'));
-          setMessages(messagesData);
+          
+          // Aggressive cleanup: Check for orphaned messages from stopped generations
+          const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+          const stoppedTimestamp = stoppedMessages[projectId];
+          
+          let filteredMessages = messagesData;
+          
+          if (stoppedTimestamp) {
+            console.log('🔍 Found stopped message timestamp, checking for orphans...', stoppedTimestamp);
+            
+            // Find any messages created after the stopped timestamp
+            const orphanedMessages = messagesData.filter(m => m.created_at > stoppedTimestamp);
+            
+            if (orphanedMessages.length > 0) {
+              console.log(`🧹 Found ${orphanedMessages.length} orphaned message(s), deleting...`);
+              
+              // Delete from database
+              const orphanedIds = orphanedMessages.map(m => m.id);
+              await supabase
+                .from("chat_messages")
+                .delete()
+                .in("id", orphanedIds);
+              
+              // Filter out orphaned messages from the loaded data
+              filteredMessages = messagesData.filter(m => !orphanedIds.includes(m.id));
+              
+              // Also clear working state (suggested products) from the stopped generation
+              await supabase
+                .from("project_working_state")
+                .delete()
+                .eq("project_id", projectId);
+              
+              console.log('✅ Orphaned messages and working state cleaned up');
+            }
+            
+            // Clear the stopped timestamp from localStorage ONLY after cleanup
+            delete stoppedMessages[projectId];
+            localStorage.setItem('stoppedMessages', JSON.stringify(stoppedMessages));
+            stoppedMessageTimestamp.current = null;
+          }
+          
+          // Additional safety check: Look for conversation anomalies even without localStorage
+          // Check if last message is a user message with recent messages after it
+          if (filteredMessages.length > 0) {
+            const lastMessage = filteredMessages[filteredMessages.length - 1];
+            
+            // If last message is from user, check for any messages created after it
+            if (lastMessage.role === 'user') {
+              console.log('🔍 Last message is from user, checking for orphaned responses...');
+              
+              const { data: potentialOrphans } = await supabase
+                .from("chat_messages")
+                .select("id, role, created_at")
+                .eq("project_id", projectId)
+                .gt("created_at", lastMessage.created_at);
+              
+              if (potentialOrphans && potentialOrphans.length > 0) {
+                console.log(`🧹 Found ${potentialOrphans.length} messages after last user message, deleting as orphans...`);
+                
+                const orphanIds = potentialOrphans.map(m => m.id);
+                await supabase
+                  .from("chat_messages")
+                  .delete()
+                  .in("id", orphanIds);
+                
+                await supabase
+                  .from("project_working_state")
+                  .delete()
+                  .eq("project_id", projectId);
+                
+                // Store timestamp for global cleanup
+                const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+                stoppedMessages[projectId] = lastMessage.created_at;
+                localStorage.setItem('stoppedMessages', JSON.stringify(stoppedMessages));
+                
+                console.log('✅ Orphaned messages after user message deleted');
+              }
+            }
+            
+            // Check for conversation anomalies (consecutive user messages)
+            for (let i = 1; i < filteredMessages.length; i++) {
+              if (filteredMessages[i].role === 'user' && filteredMessages[i-1].role === 'user') {
+                console.warn('⚠️ Detected conversation anomaly: consecutive user messages');
+                // Keep the earlier user message timestamp in localStorage for monitoring
+                const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+                stoppedMessages[projectId] = filteredMessages[i-1].created_at;
+                localStorage.setItem('stoppedMessages', JSON.stringify(stoppedMessages));
+                break;
+              }
+            }
+          }
+          
+          setMessages(filteredMessages);
           hasLoadedMessages.current = true;
           
           // Check if there's an unanswered user message (task still running in background)
-          const lastMessage = messagesData[messagesData.length - 1];
-          if (lastMessage.role === 'user') {
+          const lastMessage = filteredMessages[filteredMessages.length - 1];
+          if (lastMessage && lastMessage.role === 'user') {
             console.log('⏳ Detected unanswered user message - task may still be running');
-            setLoading(true); // Show loading indicator
+            // We'll check the working state next to see if task completed
+            setLoading(true); // Show loading indicator (may be turned off if products exist)
+          } else {
+            console.log('✓ Last message is from assistant - task completed');
+            setLoading(false); // Ensure loading is off
           }
         } else {
           console.log('📭 No existing messages, persisting welcome message');
@@ -265,7 +436,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         }
 
         // Load working state (suggested products and preview)
-        await loadWorkingState();
+        const workingStateData = await loadWorkingState();
+        
+        // If working state has products, the background task completed - turn off loading
+        if (workingStateData?.suggested_products && workingStateData.suggested_products.length > 0) {
+          console.log('✅ Working state has products - background task completed');
+          setLoading(false);
+        }
         
       } catch (error: any) {
         console.error('Project data load error:', error);
@@ -285,6 +462,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     return () => {
       isActive = false;
+      // Invalidate runId when switching projects
+      currentRunIdRef.current = null;
+      // Abort any ongoing AI requests when switching projects
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      // Reset loading state when switching away from this project
+      setLoading(false);
     };
   }, [projectId, projectName]);
 
@@ -761,6 +947,14 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       console.log(`📋 Final message count: ${finalCount} (should be 1 - the welcome message)`);
       
+      // Clear any stopped message timestamps for this project
+      const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+      if (stoppedMessages[projectId]) {
+        delete stoppedMessages[projectId];
+        localStorage.setItem('stoppedMessages', JSON.stringify(stoppedMessages));
+        console.log('🧹 Cleared stopped message timestamp');
+      }
+      
       toast.success("Chat cleared! Starting fresh.");
     } catch (error: any) {
       console.error("❌ Error clearing chat:", error);
@@ -872,6 +1066,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setMessages((prev) => [...prev, successMsg]);
       }
       
+      // Dispatch custom event to notify LogPanel to refresh quotes
+      window.dispatchEvent(new CustomEvent('quoteCreated', { detail: { projectId, quoteId: quote.id } }));
+      
       toast.success(`Quote ${quoteNumber} saved successfully!`);
     } catch (error: any) {
       console.error("Error submitting quote:", error);
@@ -882,13 +1079,36 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   }
 
   async function stopGeneration() {
-    // Note: We can't abort background requests anymore (they continue even when navigating away)
-    // This function now just removes the last message and restores the input
+    // Invalidate current runId so any responses are ignored
+    const oldRunId = currentRunIdRef.current;
+    currentRunIdRef.current = null;
+    console.log(`🛑 Invalidated runId: ${oldRunId}`);
+    
+    // Abort the current fetch request if it's running
+    if (abortControllerRef.current) {
+      console.log('🛑 Aborting current AI request...');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     
     // Remove the last user message from the database and UI
     const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+    const lastUserMessageTimestamp = lastUserMessage?.created_at;
+    
     if (lastUserMessage) {
       try {
+        console.log('🗑️ Deleting user message:', lastUserMessage.id);
+        
+        // Store the timestamp in localStorage so we can clean up orphaned messages later
+        // (Backend might still write messages after we navigate away)
+        if (lastUserMessageTimestamp) {
+          const stoppedMessages = JSON.parse(localStorage.getItem('stoppedMessages') || '{}');
+          stoppedMessages[projectId] = lastUserMessageTimestamp;
+          localStorage.setItem('stoppedMessages', JSON.stringify(stoppedMessages));
+          stoppedMessageTimestamp.current = lastUserMessageTimestamp;
+          console.log('📝 Stored stopped message timestamp for future cleanup');
+        }
+        
         // Delete from database
         await supabase
           .from("chat_messages")
@@ -900,6 +1120,28 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       } catch (error) {
         console.error('Error removing message:', error);
       }
+    }
+    
+    // The global cleanup interval will handle orphaned messages
+    // No need for component-specific polling that gets interrupted
+    console.log('✅ Stop complete - global cleanup will handle any orphaned messages');
+    
+    // Clear suggested products and working state immediately
+    try {
+      console.log('🧹 Clearing working state from stopped generation...');
+      
+      // Clear suggested products from UI
+      setSuggestedProducts([]);
+      
+      // Delete entire working state to ensure clean slate
+      await supabase
+        .from("project_working_state")
+        .delete()
+        .eq("project_id", projectId);
+      
+      console.log('✅ Working state cleared');
+    } catch (error) {
+      console.error('Error clearing working state:', error);
     }
     
     // Restore the last sent message to the input
@@ -914,7 +1156,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
     }
     
-    toast.success("Message removed - you can edit and resend");
+    toast.success("Generation stopped - you can edit and resend");
   }
 
   async function sendMessage() {
@@ -943,6 +1185,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       setShowSplitView(true);
     }
 
+    // Generate unique runId for this request
+    const runId = `${projectId}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    currentRunIdRef.current = runId;
+    console.log(`🚀 Starting new run: ${runId}`);
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       // Save user message
       const { data: userMsg, error: userError } = await supabase
@@ -959,7 +1210,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       // Track analytics
       await trackAIChatMessage(projectId, currentInput.length);
 
-      // Call AI API (without abort signal - allows background continuation)
+      // Call AI API with abort signal and runId
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -967,7 +1218,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           projectId,
           message: currentInput,
           history: messages.slice(-10),
+          runId, // Send runId for validation
         }),
+        signal: abortController.signal,
       });
 
       const responseData = await response.json();
@@ -975,6 +1228,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       if (!response.ok) {
         throw new Error(responseData.error || "Failed to get AI response");
       }
+
+      // CRITICAL: Validate response matches current run and project
+      if (responseData.runId !== currentRunIdRef.current) {
+        console.warn(`⚠️ Ignoring response from old run. Expected: ${currentRunIdRef.current}, Got: ${responseData.runId}`);
+        return; // Silently ignore - this is from an old/stopped run
+      }
+      
+      if (currentProjectId.current !== projectId) {
+        console.warn(`⚠️ Ignoring response from old project. Expected: ${projectId}, Current: ${currentProjectId.current}`);
+        return; // Silently ignore - user switched projects
+      }
+      
+      console.log(`✅ Response validated for run: ${runId}`);
 
       const aiResponse = responseData.message;
       const products = responseData.products || [];
@@ -1014,9 +1280,18 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setMessages((prev) => [...prev, aiMsg]);
       }
     } catch (error: any) {
-      toast.error(error.message || "Failed to send message");
-      setInput(currentInput);
+      // Don't show error toast if the request was aborted (user clicked stop)
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted by user');
+      } else {
+        toast.error(error.message || "Failed to send message");
+        setInput(currentInput);
+      }
     } finally {
+      // Clean up abort controller reference
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setLoading(false);
     }
   }

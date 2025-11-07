@@ -318,6 +318,9 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
       // Mark as committed
       setCommittedQuotes(prev => new Set(prev).add(messageId));
       
+      // Dispatch custom event to notify LogPanel to refresh quotes
+      window.dispatchEvent(new CustomEvent('quoteCreated', { detail: { projectId, quoteId: quote.id } }));
+      
       toast.success("Quote committed to Quote Log!");
     } catch (error: any) {
       console.error("Error committing quote:", error);

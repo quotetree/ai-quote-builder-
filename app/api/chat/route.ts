@@ -238,8 +238,17 @@ function analyzeConversationContext(history: any[]): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Check if request was aborted
+  const signal = req.signal;
+  
   try {
-    const { projectId, message, history } = await req.json();
+    // Early abort check
+    if (signal.aborted) {
+      console.log('🛑 Request already aborted, not processing');
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
+
+    const { projectId, message, history, runId } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json(
@@ -247,6 +256,16 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    
+    console.log(`🚀 Starting chat processing - Project: ${projectId}, RunID: ${runId || 'none'}`);
+    
+    // Set up abort listener
+    let aborted = false;
+    const abortHandler = () => {
+      aborted = true;
+      console.log(`🛑 Request aborted mid-processing - Project: ${projectId}, RunID: ${runId || 'none'}`);
+    };
+    signal.addEventListener('abort', abortHandler);
 
     // Verify authentication
     const supabase = await createClient();
@@ -656,6 +675,12 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
       { role: "user", content: message },
     ];
 
+    // Check abort before expensive OpenAI call
+    if (aborted || signal.aborted) {
+      console.log('🛑 Aborted before OpenAI call');
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
+
     // Initial call with function calling
     let completion = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -667,6 +692,12 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
       presence_penalty: 0.6,
       frequency_penalty: 0.5,
     });
+    
+    // Check abort after OpenAI call
+    if (aborted || signal.aborted) {
+      console.log('🛑 Aborted after OpenAI call - NOT saving results');
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
 
     let responseMessage = completion.choices[0].message;
 
@@ -815,9 +846,21 @@ ${formattedResults}
       console.log('✅ ====================================================\n');
     }
 
+    // CRITICAL: Check abort before saving to database
+    if (aborted || signal.aborted) {
+      console.log('🛑 Aborted before database write - NOT saving products or state');
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
+
     // Save products to project_working_state for background task persistence
     if (productSuggestions.length > 0) {
       try {
+        // Final abort check before database write
+        if (aborted || signal.aborted) {
+          console.log('🛑 Aborted right before database write - SKIPPING');
+          return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+        }
+
         // Get current working state
         const { data: currentState } = await supabase
           .from("project_working_state")
@@ -847,17 +890,23 @@ ${formattedResults}
         if (stateError) {
           console.error('Failed to save working state:', stateError);
         } else {
-          console.log('✅ Background task: Saved products to working state');
+          console.log(`✅ Saved products to working state - Project: ${projectId}, RunID: ${runId || 'none'}`);
         }
       } catch (error) {
         console.error('Error saving products to working state:', error);
       }
     }
 
+    // Clean up abort listener
+    signal.removeEventListener('abort', abortHandler);
+
+    console.log(`✅ Chat processing complete - Project: ${projectId}, RunID: ${runId || 'none'}`);
+
     return NextResponse.json({ 
       message: cleanMessage,
       products: productSuggestions,
-      hasProducts: productSuggestions.length > 0
+      hasProducts: productSuggestions.length > 0,
+      runId: runId // Return runId for validation
     });
   } catch (error: any) {
     console.error("Chat API error:", error);
