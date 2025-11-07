@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Send, Mic, Plus, Sparkles, CheckCircle, FileText, Trash2, Edit2, GripVertical, RotateCcw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { ChatMessage, ProductSuggestion, QuotePreview } from "@/types/database";
+import { ChatMessage, ProductSuggestion, QuotePreview, ChargeConfig } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
 
@@ -29,6 +29,18 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [tempQuantity, setTempQuantity] = useState("");
   const [editingDiscountIndex, setEditingDiscountIndex] = useState<number | null>(null);
   const [tempDiscount, setTempDiscount] = useState("");
+  const [showChargeConfig, setShowChargeConfig] = useState(false);
+  const [currentCharge, setCurrentCharge] = useState<{
+    name: string;
+    rate: string;
+    appliesTo: 'all' | 'exclude_products';
+    selectedProducts: string[];
+  }>({
+    name: 'Sales Tax',
+    rate: '',
+    appliesTo: 'all',
+    selectedProducts: []
+  });
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState("");
@@ -495,6 +507,83 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       tax_amount: taxAmount,
       total_price: totalPrice
     });
+  }
+
+  // Calculate charge preview
+  function calculateChargePreview() {
+    if (!quotePreview) return { count: 0, total: 0 };
+    
+    const applicableItems = quotePreview.line_items.filter(item => {
+      if (currentCharge.appliesTo === 'all') {
+        return true;
+      } else if (currentCharge.appliesTo === 'exclude_products') {
+        return !currentCharge.selectedProducts.includes(item.product_name);
+      }
+      return false;
+    });
+    
+    const total = applicableItems.reduce((sum, item) => sum + item.line_total, 0);
+    return { count: applicableItems.length, total };
+  }
+
+  // Add charge to quote
+  function addChargeToQuote() {
+    if (!quotePreview) return;
+    
+    const rateDecimal = parseFloat(currentCharge.rate) / 100;
+    if (isNaN(rateDecimal) || rateDecimal < 0) {
+      toast.error("Please enter a valid percentage");
+      return;
+    }
+    
+    const preview = calculateChargePreview();
+    const chargeAmount = preview.total * rateDecimal;
+    
+    const newCharge: ChargeConfig = {
+      id: `charge-${Date.now()}`,
+      name: currentCharge.name,
+      rate: rateDecimal,
+      applies_to: currentCharge.appliesTo,
+      excluded_products: currentCharge.selectedProducts.length > 0 ? currentCharge.selectedProducts : undefined,
+      calculated_amount: chargeAmount,
+      applies_to_count: preview.count,
+      applies_to_total: preview.total
+    };
+    
+    const charges = [...(quotePreview.charges || []), newCharge];
+    const totalCharges = charges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    setQuotePreview({
+      ...quotePreview,
+      charges,
+      total_price: quotePreview.subtotal + totalCharges - (quotePreview.discount_amount || 0)
+    });
+    
+    // Reset form
+    setCurrentCharge({
+      name: 'Sales Tax',
+      rate: '',
+      appliesTo: 'all',
+      selectedProducts: []
+    });
+    setShowChargeConfig(false);
+    toast.success("Charge added");
+  }
+
+  // Remove charge
+  function removeCharge(chargeId: string) {
+    if (!quotePreview) return;
+    
+    const charges = (quotePreview.charges || []).filter(c => c.id !== chargeId);
+    const totalCharges = charges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    setQuotePreview({
+      ...quotePreview,
+      charges,
+      total_price: quotePreview.subtotal + totalCharges - (quotePreview.discount_amount || 0)
+    });
+    
+    toast.success("Charge removed");
   }
 
   // Edit quantity for a preview product
@@ -1335,12 +1424,46 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           <span className="text-gray-600">Subtotal:</span>
                           <span className="font-medium">${formatCurrency(quotePreview.subtotal)}</span>
                         </div>
-                        {quotePreview.tax_amount > 0 && (
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Tax ({(quotePreview.tax_rate * 100).toFixed(1)}%):</span>
-                            <span className="font-medium">${formatCurrency(quotePreview.tax_amount)}</span>
+                        
+                        {/* Charges Section */}
+                        {(quotePreview.charges && quotePreview.charges.length > 0) && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Charges</div>
+                            {quotePreview.charges.map((charge) => (
+                              <div key={charge.id} className="group flex items-start justify-between text-sm hover:bg-gray-50 p-2 rounded -mx-2">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-gray-700">{charge.name} ({(charge.rate * 100).toFixed(1)}% of ${formatCurrency(charge.applies_to_total || 0)}):</span>
+                                    <button
+                                      onClick={() => removeCharge(charge.id)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                                      title="Remove charge"
+                                    >
+                                      <Trash2 size={12} className="text-red-600" />
+                                    </button>
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-0.5">
+                                    {charge.applies_to === 'all' && `Includes: all ${charge.applies_to_count || 0} items`}
+                                    {charge.applies_to === 'exclude_products' && charge.excluded_products && charge.excluded_products.length > 0 && (
+                                      `Excludes: ${charge.excluded_products.join(', ')}`
+                                    )}
+                                  </div>
+                                </div>
+                                <span className="font-medium">${formatCurrency(charge.calculated_amount || 0)}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
+                        
+                        {/* Add Charge Button */}
+                        <button
+                          onClick={() => setShowChargeConfig(true)}
+                          className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium py-1"
+                        >
+                          <Plus size={14} />
+                          Add Tax/Charge
+                        </button>
+                        
                         {quotePreview.discount_amount > 0 && (
                           <div className="flex justify-between text-sm text-green-600">
                             <span>Discount:</span>
@@ -1366,6 +1489,133 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      
+      {/* Charge Configuration Modal */}
+      {showChargeConfig && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowChargeConfig(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Add Tax/Charge</h3>
+                <button onClick={() => setShowChargeConfig(false)} className="text-gray-400 hover:text-gray-600">
+                  ×
+                </button>
+              </div>
+              
+              {/* Charge Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Charge Name</label>
+                <input
+                  type="text"
+                  value={currentCharge.name}
+                  onChange={(e) => setCurrentCharge({...currentCharge, name: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g., Sales Tax"
+                />
+              </div>
+              
+              {/* Percentage */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Percentage (%)</label>
+                <input
+                  type="number"
+                  value={currentCharge.rate}
+                  onChange={(e) => setCurrentCharge({...currentCharge, rate: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g., 9.5"
+                  step="0.1"
+                  min="0"
+                />
+              </div>
+              
+              {/* Applies To */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Applies To</label>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentCharge.appliesTo === 'all'}
+                      onChange={() => setCurrentCharge({...currentCharge, appliesTo: 'all', selectedProducts: []})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">All items</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentCharge.appliesTo === 'exclude_products'}
+                      onChange={() => setCurrentCharge({...currentCharge, appliesTo: 'exclude_products'})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Exclude...</span>
+                  </label>
+                </div>
+              </div>
+              
+              {/* Product Selection */}
+              {currentCharge.appliesTo === 'exclude_products' && quotePreview && (
+                <div className="pl-6 space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded p-2">
+                  {quotePreview.line_items.map((item, index) => (
+                    <label key={index} className="flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={currentCharge.selectedProducts.includes(item.product_name)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setCurrentCharge({
+                              ...currentCharge,
+                              selectedProducts: [...currentCharge.selectedProducts, item.product_name]
+                            });
+                          } else {
+                            setCurrentCharge({
+                              ...currentCharge,
+                              selectedProducts: currentCharge.selectedProducts.filter(p => p !== item.product_name)
+                            });
+                          }
+                        }}
+                        className="mr-2 mt-0.5"
+                      />
+                      <div className="flex-1">
+                        <span className="text-sm">{item.product_name}</span>
+                        <span className="text-xs text-gray-500 ml-2">(${formatCurrency(item.line_total)})</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+              
+              {/* Preview */}
+              {currentCharge.rate && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="text-sm text-blue-900">
+                    <strong>Preview:</strong> Applies to {calculateChargePreview().count} items totaling ${formatCurrency(calculateChargePreview().total)}
+                  </div>
+                  <div className="text-xs text-blue-700 mt-1">
+                    Charge amount: ${formatCurrency(calculateChargePreview().total * (parseFloat(currentCharge.rate) / 100 || 0))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowChargeConfig(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addChargeToQuote}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                >
+                  Add Charge
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

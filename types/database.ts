@@ -73,6 +73,17 @@ export interface ProductSuggestion {
   discount_percent?: number; // Percentage as decimal (0.10 = 10%)
 }
 
+export interface ChargeConfig {
+  id: string;
+  name: string;
+  rate: number; // Decimal (0.095 = 9.5%)
+  applies_to: 'all' | 'exclude_products';
+  excluded_products?: string[]; // Product names to exclude
+  calculated_amount?: number;
+  applies_to_count?: number;
+  applies_to_total?: number;
+}
+
 export interface QuotePreview {
   line_items: ProductSuggestion[];
   subtotal: number;
@@ -80,6 +91,7 @@ export interface QuotePreview {
   tax_amount: number;
   discount_amount: number;
   total_price: number;
+  charges?: ChargeConfig[];
 }
 
 export interface ProjectWorkingState {
