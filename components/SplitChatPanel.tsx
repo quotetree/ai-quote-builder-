@@ -1193,7 +1193,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const quoteNumber = `Q-${String((count || 0) + 1).padStart(4, '0')}`;
 
       // Create quote
-      const { data: quote, error: quoteError } = await supabase
+      const { data: quote, error: quoteError} = await supabase
         .from("quotes")
         .insert({
           project_id: projectId,
@@ -1210,9 +1210,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           discount_amount: quotePreview.discount_amount,
           total_price: quotePreview.total_price,
           profit_margin: 0,
+          charges: quotePreview.charges || [], // Save charges with quote
         })
         .select()
         .single();
+      
+      console.log('[Submit] Saved quote with charges:', {
+        quoteId: quote?.id,
+        chargeCount: quotePreview.charges?.length || 0,
+        charges: quotePreview.charges
+      });
 
       if (quoteError) throw quoteError;
 
@@ -2205,11 +2212,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                         </div>
                         
                         {/* Charges Section */}
+                        {(() => {
+                          console.log('[Preview] Rendering charges:', {
+                            hasCharges: !!quotePreview.charges,
+                            chargeCount: quotePreview.charges?.length || 0,
+                            charges: quotePreview.charges
+                          });
+                          return null;
+                        })()}
                         {(quotePreview.charges && quotePreview.charges.length > 0) && (
                           <div className="space-y-1.5 pt-2">
                             <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Charges</div>
-                            {quotePreview.charges.map((charge) => (
-                              <div key={charge.id} className="group flex items-start justify-between text-sm hover:bg-gray-50 p-2 rounded -mx-2">
+                            {quotePreview.charges.map((charge, chargeIndex) => (
+                              <div key={charge.id || `charge-${chargeIndex}`} className="group flex items-start justify-between text-sm hover:bg-gray-50 p-2 rounded -mx-2">
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2">
                                     <span className="text-gray-700">{charge.name} ({(charge.rate * 100).toFixed(1)}% of ${formatCurrency(charge.applies_to_total || 0)}):</span>

@@ -141,6 +141,7 @@ export interface Quote {
   created_at: string;
   updated_at: string;
   items?: QuoteItem[];
+  charges?: ChargeConfig[]; // Tax/fee configurations
   // Edit session fields
   parent_quote_id: string | null;
   edit_session_id: string | null;

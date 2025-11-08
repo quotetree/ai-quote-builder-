@@ -122,6 +122,15 @@ export async function startEditSession(
       }
     }
 
+    // Load charges from the quote itself (not working state)
+    const charges = quote.charges || [];
+    
+    console.log('[EditSession] Loaded charges from quote:', {
+      quoteId: quote.id,
+      chargeCount: charges.length,
+      charges: charges.map((c: any) => ({ name: c.name, rate: c.rate, amount: c.calculated_amount }))
+    });
+
     // Create snapshot of current state
     const snapshot: QuoteSnapshot = {
       quote: {
@@ -129,12 +138,13 @@ export async function startEditSession(
         items: undefined // Remove items from quote object
       } as Quote,
       items: (quote.items || []) as QuoteItem[],
-      charges: [] // Will be populated from working state if exists
+      charges: charges
     };
     
     console.log('[EditSession] Snapshot created:', {
       quoteId: quote.id,
       itemCount: snapshot.items.length,
+      chargeCount: snapshot.charges?.length || 0,
       items: snapshot.items.map(i => ({ name: i.product_name, qty: i.quantity }))
     });
 
@@ -219,7 +229,9 @@ export async function rehydrateEditSession(
     console.log('[EditSession] Rehydrating snapshot:', {
       sessionId,
       itemCount: snapshot.items?.length || 0,
-      items: snapshot.items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || []
+      chargeCount: snapshot.charges?.length || 0,
+      items: snapshot.items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || [],
+      charges: snapshot.charges?.map((c: any) => ({ name: c.name, amount: c.calculated_amount })) || []
     });
 
     // Convert quote items to suggested products format
@@ -247,7 +259,9 @@ export async function rehydrateEditSession(
     
     console.log('[EditSession] Quote preview created:', {
       lineItemCount: quotePreview.line_items.length,
+      chargeCount: quotePreview.charges?.length || 0,
       lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity })),
+      charges: quotePreview.charges?.map(c => ({ name: c.name, amount: c.calculated_amount })) || [],
       total: quotePreview.total_price
     });
 
@@ -579,6 +593,7 @@ export async function submitEditedQuote(
         discount_amount: modifiedQuote.discount_amount,
         total_price: modifiedQuote.total_price,
         profit_margin: modifiedQuote.profit_margin,
+        charges: modifiedQuote.charges || [], // Save charges with quote
         change_notes: changeNotes || null,
         diff_summary: diff,
         author_id: user.id,
@@ -589,6 +604,12 @@ export async function submitEditedQuote(
       .eq("id", session.quote_id)
       .select()
       .single();
+    
+    console.log('[Submit] Updated quote with charges:', {
+      quoteId: session.quote_id,
+      newVersion,
+      chargeCount: modifiedQuote.charges?.length || 0
+    });
 
     if (updateError) {
       console.error('[EditSession] Error updating quote:', updateError);
