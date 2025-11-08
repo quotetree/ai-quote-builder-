@@ -102,6 +102,12 @@ export interface ProjectWorkingState {
   show_split_view: boolean;
   created_at: string;
   updated_at: string;
+  // Edit session fields
+  current_edit_session_id: string | null;
+  current_quote_id: string | null;
+  edit_mode: boolean;
+  current_pool_id: string | null;
+  edit_started_at: string | null;
 }
 
 export interface ProjectDocument {
@@ -135,6 +141,13 @@ export interface Quote {
   created_at: string;
   updated_at: string;
   items?: QuoteItem[];
+  // Edit session fields
+  parent_quote_id: string | null;
+  edit_session_id: string | null;
+  change_notes: string | null;
+  diff_summary: QuoteDiffSummary | null;
+  author_id: string | null;
+  is_editing: boolean;
 }
 
 export interface QuoteItem {
@@ -187,12 +200,72 @@ export interface CreateQuoteForm {
   scope_of_work?: string;
 }
 
+// Edit session types
+export interface QuoteEditSession {
+  id: string;
+  quote_id: string;
+  project_id: string;
+  user_id: string;
+  version_being_edited: number;
+  snapshot: QuoteSnapshot;
+  started_at: string;
+  last_activity_at: string;
+  status: 'active' | 'completed' | 'cancelled';
+  created_at: string;
+}
+
+export interface QuoteSnapshot {
+  quote: Quote;
+  items: QuoteItem[];
+  charges?: ChargeConfig[];
+}
+
+export interface QuoteDiffSummary {
+  items_added?: QuoteItemDiff[];
+  items_removed?: QuoteItemDiff[];
+  items_modified?: QuoteItemDiff[];
+  charges_changed?: boolean;
+  subtotal_delta?: number;
+  total_delta?: number;
+}
+
+export interface QuoteItemDiff {
+  product_name: string;
+  quantity?: number;
+  unit_price?: number;
+  line_total?: number;
+  old_quantity?: number;
+  old_unit_price?: number;
+  old_line_total?: number;
+}
+
+export interface QuoteVersionHistory {
+  id: string;
+  quote_id: string;
+  version_number: number;
+  changed_by: string | null;
+  change_type: 'created' | 'edited' | 'approved' | 'declined' | 'status_changed';
+  change_notes: string | null;
+  diff_summary: QuoteDiffSummary;
+  snapshot: Record<string, any>;
+  created_at: string;
+}
+
 // AI types
 export interface AIQuoteRequest {
   projectId: string;
   scopeOfWork: string;
   productFamilies: string[];
   additionalContext?: string;
+  editSessionId?: string;
+  editContext?: QuoteEditContext;
+}
+
+export interface QuoteEditContext {
+  quoteId: string;
+  sessionId: string;
+  currentSnapshot: QuoteSnapshot;
+  editInstruction: string;
 }
 
 export interface AIQuoteResponse {

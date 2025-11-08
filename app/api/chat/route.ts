@@ -289,6 +289,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
+    // Check if project is in edit mode
+    const { data: workingState } = await supabase
+      .from("project_working_state")
+      .select("edit_mode, current_edit_session_id, current_quote_id, quote_preview")
+      .eq("project_id", projectId)
+      .single();
+    
+    const isEditMode = workingState?.edit_mode || false;
+    const editSessionId = workingState?.current_edit_session_id || null;
+    const editQuoteId = workingState?.current_quote_id || null;
+    
+    if (isEditMode && editSessionId) {
+      console.log(`📝 edit:context { sessionId: "${editSessionId}", quoteId: "${editQuoteId}", instruction: "${message.substring(0, 50)}..." }`);
+    }
+
     // Get relevant products from price book
     // Set high limit to fetch all products (Supabase default is 1000)
     const { data: products } = await supabase
@@ -317,8 +332,41 @@ export async function POST(req: NextRequest) {
     // Get conversation context - analyze what's been discussed
     const conversationSummary = analyzeConversationContext(history);
 
-    const systemPrompt = `You are an expert AI estimator and quote builder for ${project.project_name}.
+    // Build edit mode context if applicable
+    let editModeContext = '';
+    if (isEditMode && workingState?.quote_preview) {
+      const quotePreview = workingState.quote_preview as any;
+      editModeContext = `
 
+## 🔧 EDIT MODE - CRITICAL INSTRUCTIONS:
+
+**You are currently in EDIT MODE for an existing quote.**
+
+**Current Quote Contents:**
+${quotePreview.line_items?.map((item: any, idx: number) => 
+  `${idx + 1}. ${item.product_name} - Qty: ${item.quantity}, Price: $${item.unit_price} each = $${item.line_total}`
+).join('\n') || 'No items'}
+
+**Subtotal:** $${quotePreview.subtotal}
+**Tax:** $${quotePreview.tax_amount} (${(quotePreview.tax_rate * 100).toFixed(1)}%)
+**Total:** $${quotePreview.total_price}
+
+**EDIT MODE RULES:**
+1. The user is modifying an EXISTING quote
+2. When they ask to "add" or "remove" items, they mean modify the quote above
+3. DO NOT suggest products from scratch - modify what exists
+4. If user says "increase labor to $X" → find labor item above and update it
+5. If user says "add X" → add X to the list above
+6. If user says "remove X" → remove X from the list above
+7. ALWAYS return ALL items (existing + new - removed) in PRODUCT_DATA section
+8. Session ID: ${editSessionId}
+9. This is a stateless operation - work only from the quote preview above
+
+`;
+    }
+
+    const systemPrompt = `You are an expert AI estimator and quote builder for ${project.project_name}.
+${editModeContext}
 ## ⚠️ CRITICAL RULES - READ CAREFULLY:
 
 **RULE #1:** Each of your responses REPLACES the previous product suggestions. Never accumulate or combine products from multiple messages.

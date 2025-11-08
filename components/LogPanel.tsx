@@ -59,6 +59,69 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     }
   };
 
+  const handleEditQuote = async (quote: Quote) => {
+    try {
+      console.log('[LogPanel] Starting edit for quote:', quote.id);
+      
+      // Import the edit session controller dynamically
+      const { startEditSession, rehydrateEditSession } = await import("@/lib/editSessionController");
+      
+      toast.loading("Opening quote for editing...");
+      
+      // Start edit session
+      console.log('[LogPanel] Calling startEditSession...');
+      const { sessionId, snapshot, version } = await startEditSession(quote.id, projectId);
+      console.log('[LogPanel] Session started:', sessionId);
+      
+      // Rehydrate into working state
+      console.log('[LogPanel] Rehydrating session...');
+      await rehydrateEditSession(sessionId, projectId);
+      console.log('[LogPanel] Session rehydrated');
+      
+      toast.dismiss();
+      toast.success(`Editing Quote v${version} (Session: ${sessionId.slice(0, 8)}...)`);
+      
+      // Dispatch event to switch to chat tab and show edit mode
+      window.dispatchEvent(new CustomEvent('editQuoteStarted', { 
+        detail: { 
+          quoteId: quote.id,
+          sessionId,
+          version,
+          quoteName: quote.quote_name
+        } 
+      }));
+      
+    } catch (error: any) {
+      toast.dismiss();
+      
+      console.error('[LogPanel] Edit error details:', {
+        error,
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        stack: error?.stack
+      });
+      
+      // Check for database schema errors
+      if (error?.code === '42P01' || error?.message?.includes('relation') || error?.message?.includes('does not exist')) {
+        toast.error("Database migration not applied. Please run the edit quote migration first.");
+        console.error('❌ Database schema error - migration needed. See EDIT_QUOTE_QUICK_START.md');
+      } else if (error?.code === '42703' || error?.message?.includes('column') || error?.message?.includes('does not exist')) {
+        toast.error("Database columns missing. Please apply the edit quote migration.");
+        console.error('❌ Database columns missing - migration needed. See EDIT_QUOTE_QUICK_START.md');
+      } else if (error?.message?.includes('CONCURRENCY_CONFLICT')) {
+        toast.error("This quote is already being edited by another user");
+      } else if (error?.message?.includes('VERSION_CONFLICT')) {
+        toast.error("Quote has been updated. Please refresh and try again");
+      } else if (error?.message) {
+        toast.error(`Error: ${error.message}`);
+      } else {
+        toast.error("Failed to open quote for editing. Check console for details.");
+      }
+    }
+  };
+
   const handleDownloadPDF = async (quote: Quote) => {
     try {
       const response = await fetch("/api/quotes/pdf", {
@@ -198,10 +261,11 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            // TODO: Open in chat for editing
+                            handleEditQuote(quote);
                           }}
-                          className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                          title="Edit Quote"
+                          className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={quote.is_editing ? "Quote is being edited" : "Edit Quote"}
+                          disabled={quote.is_editing}
                         >
                           <Edit size={16} />
                         </button>

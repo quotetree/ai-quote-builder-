@@ -44,6 +44,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [editSessionId, setEditSessionId] = useState<string | null>(null);
+  const [editQuoteId, setEditQuoteId] = useState<string | null>(null);
+  const [editVersion, setEditVersion] = useState<number | null>(null);
+  const [editQuoteName, setEditQuoteName] = useState<string | null>(null);
+  const [changeNotes, setChangeNotes] = useState("");
+  const [showChangeNotes, setShowChangeNotes] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -504,6 +511,97 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px';
     }
   }, [input]);
+
+  // Listen for edit quote events
+  useEffect(() => {
+    const handleEditQuoteStarted = async (event: CustomEvent) => {
+      const { quoteId, sessionId, version, quoteName } = event.detail;
+      
+      console.log('[EditMode] Quote edit started:', { quoteId, sessionId, version, quoteName });
+      console.log('[EditUI] ui:edit:enter { quoteId:', quoteId, ', version:', version, ', session:', sessionId, '}');
+      
+      setEditMode(true);
+      setEditSessionId(sessionId);
+      setEditQuoteId(quoteId);
+      setEditVersion(version);
+      setEditQuoteName(quoteName);
+      setChangeNotes("");
+      setShowChangeNotes(false);
+      
+      // Load the quote preview from working state
+      const workingState = await loadWorkingState();
+      if (workingState && workingState.quote_preview) {
+        console.log('[EditMode] Working state loaded:', {
+          hasQuotePreview: !!workingState.quote_preview,
+          lineItemCount: workingState.quote_preview?.line_items?.length || 0,
+          lineItems: workingState.quote_preview?.line_items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || []
+        });
+        
+        setQuotePreview(workingState.quote_preview);
+        setShowSplitView(true);
+        setActiveTab("preview");
+        
+        // Clear suggestions in edit mode (they're ephemeral)
+        setSuggestedProducts([]);
+        
+        console.log('[EditMode] Quote rehydrated into preview');
+        
+        // Show non-sticky toast notification
+        toast(
+          <div className="flex flex-col gap-1">
+            <div className="font-medium">✏️ Edit mode enabled</div>
+            <div className="text-sm text-gray-600">
+              Make changes via chat. Submitting will create v{version + 1}.
+            </div>
+          </div>,
+          { 
+            duration: 4000,
+            position: 'top-center',
+            style: {
+              background: '#FEF3C7',
+              color: '#92400E',
+              border: '1px solid #FCD34D'
+            }
+          }
+        );
+      }
+    };
+
+    window.addEventListener('editQuoteStarted' as any, handleEditQuoteStarted);
+    
+    return () => {
+      window.removeEventListener('editQuoteStarted' as any, handleEditQuoteStarted);
+    };
+  }, []);
+
+  // Check if we're in edit mode on mount
+  useEffect(() => {
+    async function checkEditMode() {
+      const { isProjectInEditMode } = await import("@/lib/editSessionController");
+      const editStatus = await isProjectInEditMode(projectId);
+      
+      if (editStatus.isEditing && editStatus.sessionId) {
+        console.log('[EditMode] Resuming edit session:', editStatus.sessionId);
+        setEditMode(true);
+        setEditSessionId(editStatus.sessionId);
+        setEditQuoteId(editStatus.quoteId);
+        
+        // Load quote info from database
+        const { data: quote } = await supabase
+          .from("quotes")
+          .select("version_number, quote_name")
+          .eq("id", editStatus.quoteId)
+          .single();
+        
+        if (quote) {
+          setEditVersion(quote.version_number);
+          setEditQuoteName(quote.quote_name);
+        }
+      }
+    }
+    
+    checkEditMode();
+  }, [projectId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1018,6 +1116,71 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
     setSubmitting(true);
     try {
+      // Check if we're in edit mode
+      if (editMode && editSessionId && editQuoteId) {
+        // Submit as edited version
+        const { submitEditedQuote } = await import("@/lib/editSessionController");
+        
+        console.log('[Submit] submit:start { quoteId:', editQuoteId, ', baseVersion:', editVersion, ', session:', editSessionId, '}');
+        
+        const modifiedQuote = {
+          items: quotePreview.line_items,
+          subtotal: quotePreview.subtotal,
+          tax_rate: quotePreview.tax_rate,
+          tax_amount: quotePreview.tax_amount,
+          discount_amount: quotePreview.discount_amount,
+          total_price: quotePreview.total_price,
+          profit_margin: 0, // Calculate actual profit margin from cost prices
+          charges: quotePreview.charges
+        };
+        
+        const updatedQuote = await submitEditedQuote(
+          editSessionId,
+          modifiedQuote,
+          editVersion!, // baseVersion
+          changeNotes.trim() || undefined
+        );
+        
+        // Clear edit mode state
+        setEditMode(false);
+        setEditSessionId(null);
+        setEditQuoteId(null);
+        setEditVersion(null);
+        setEditQuoteName(null);
+        
+        // Clear working state and UI
+        setSuggestedProducts([]);
+        setQuotePreview(null);
+        setShowSplitView(false);
+        
+        // Add success message to chat
+        const successMessage: Partial<ChatMessage> = {
+          project_id: projectId,
+          role: "assistant",
+          content: `✅ Quote v${updatedQuote.version_number} has been saved!\n\nYour edits have been submitted as a new version. The previous version remains accessible in the Quote Log.`,
+          metadata: {},
+        };
+        
+        const { data: successMsg } = await supabase
+          .from("chat_messages")
+          .insert(successMessage)
+          .select()
+          .single();
+        
+        if (successMsg) {
+          setMessages((prev) => [...prev, successMsg]);
+        }
+        
+        // Notify log panel to refresh
+        window.dispatchEvent(new CustomEvent('quoteCreated', { detail: { projectId, quoteId: editQuoteId } }));
+        
+        console.log('[EditUI] ui:edit:save { quoteId:', editQuoteId, ', from: v', editVersion, ', to: v', updatedQuote.version_number, '}');
+        toast.success(`Quote v${updatedQuote.version_number} saved successfully!`);
+        setSubmitting(false);
+        return;
+      }
+      
+      // Normal quote creation flow (not editing)
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -1115,8 +1278,138 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       
       toast.success(`Quote ${quoteNumber} saved successfully!`);
     } catch (error: any) {
-      console.error("Error submitting quote:", error);
-      toast.error(error.message || "Failed to submit quote");
+      console.error("[submitQuote] Error:", error);
+      console.error("[submitQuote] Error type:", typeof error);
+      console.error("[submitQuote] Error keys:", error ? Object.keys(error) : 'null');
+      console.error("[submitQuote] Error details:", {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        name: error?.name,
+        stack: error?.stack?.substring(0, 200)
+      });
+      
+      // Handle empty or malformed error objects
+      if (!error || (typeof error === 'object' && Object.keys(error).length === 0)) {
+        console.error("[submitQuote] EMPTY ERROR OBJECT DETECTED");
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">Submission Failed</div>
+            <div className="text-sm">
+              An unknown error occurred. Please check the browser console for details and try again.
+            </div>
+          </div>,
+          { duration: 8000 }
+        );
+        setSubmitting(false);
+        return;
+      }
+      
+      // Handle specific error codes
+      const errorCode = error?.code || (error?.message?.includes('VERSION_CONFLICT') ? 'VERSION_CONFLICT' : 
+                                        error?.message?.includes('CONCURRENCY_CONFLICT') ? 'CONCURRENCY_CONFLICT' : 
+                                        error?.message?.includes('DB_ERROR') ? 'DB_ERROR' : 
+                                        error?.message?.includes('invalid input syntax') ? 'UUID_ERROR' : null);
+      
+      console.log('[Submit] submit:error { code:', errorCode, ', message:', error?.message, ', details:', error?.details, '}');
+      
+      if (errorCode === 'VERSION_CONFLICT') {
+        const details = error?.details || {};
+        const currentVersion = details.currentVersion || (editVersion! + 1);
+        
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">Quote Was Updated</div>
+            <div className="text-sm">
+              This quote was updated to v{currentVersion} while you were editing v{editVersion}.
+            </div>
+            <div className="text-sm">
+              {details.hasOverlap ? (
+                <>Your changes overlap with the new version. Please review the latest version and re-edit if needed.</>
+              ) : (
+                <>Your changes have been automatically merged into v{currentVersion + 1}.</>
+              )}
+            </div>
+          </div>,
+          { duration: details.hasOverlap ? 10000 : 5000 }
+        );
+        
+        // Auto-exit edit mode on true conflict
+        if (details.hasOverlap) {
+          setTimeout(async () => {
+            if (editSessionId) {
+              console.log('[EditUI] Auto-exiting edit mode due to version conflict');
+              const { cancelEditSession } = await import("@/lib/editSessionController");
+              await cancelEditSession(editSessionId);
+              setEditMode(false);
+              setEditSessionId(null);
+              setEditQuoteId(null);
+              setEditVersion(null);
+              setEditQuoteName(null);
+              setChangeNotes("");
+              setShowChangeNotes(false);
+              setQuotePreview(null);
+              setShowSplitView(false);
+            }
+          }, 500);
+        }
+        
+      } else if (errorCode === 'CONCURRENCY_CONFLICT') {
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">Someone Else Is Editing</div>
+            <div className="text-sm">
+              Another user is currently editing this quote. Please wait for them to finish.
+            </div>
+          </div>,
+          { duration: 8000 }
+        );
+      } else if (errorCode === 'UUID_ERROR') {
+        console.error("[submitQuote] UUID casting error:", error);
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">UUID Error</div>
+            <div className="text-sm">
+              A composite ID was incorrectly sent to a UUID field. This is likely a bug.
+            </div>
+            <div className="text-xs text-gray-600">
+              Error: {error?.message?.substring(0, 100)}
+            </div>
+          </div>,
+          { duration: 10000 }
+        );
+      } else if (errorCode === 'DB_ERROR' || error?.message?.includes('invalid input syntax')) {
+        console.error("[submitQuote] Database error:", error);
+        const errorMsg = error?.message || error?.details?.message || "A database error occurred";
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">Database Error</div>
+            <div className="text-sm">
+              {errorMsg}
+            </div>
+            {error?.details?.hint && (
+              <div className="text-xs text-gray-600">
+                Hint: {error.details.hint}
+              </div>
+            )}
+          </div>,
+          { duration: 8000 }
+        );
+      } else if (error?.message) {
+        toast.error(error.message);
+      } else {
+        // Fallback for truly unknown errors
+        console.error("[submitQuote] Unknown error format:", JSON.stringify(error));
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">Unknown Error</div>
+            <div className="text-sm">
+              Failed to submit quote. Error details have been logged to the console.
+            </div>
+          </div>,
+          { duration: 8000 }
+        );
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1497,19 +1790,76 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
   return (
     <div className="flex h-full bg-white">
+      {/* ARIA live region for edit mode announcements */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {editMode && `Edit mode enabled for ${editQuoteName}, version ${editVersion} to ${editVersion! + 1}`}
+        {!editMode && "Edit mode disabled"}
+      </div>
+      
       {/* Left Side - Chat */}
       <div className={`flex flex-col bg-white transition-all duration-300 ${showSplitView ? 'w-1/2 border-r border-gray-200' : 'w-full'}`}>
-        {/* Chat Header with Clear Button */}
-        {messages.length > 1 && (
-          <div className="border-b border-gray-200 bg-white flex justify-end">
-            <button
-              onClick={clearChat}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-700 hover:text-red-600 hover:bg-red-50 border-b-2 border-transparent rounded-lg transition-colors"
-              title="Clear chat and start over"
-            >
-              <RotateCcw size={16} />
-              <span>Clear Chat</span>
-            </button>
+        {/* Chat Header with Clear Button and Edit Indicator */}
+        {(messages.length > 1 || editMode) && (
+          <div className="border-b border-gray-200 bg-white flex justify-between items-center px-4 py-2.5">
+            {/* Edit Mode Indicator */}
+            {editMode && editSessionId && (
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800">
+                  <Edit2 size={12} />
+                  <span>Editing v{editVersion} → v{editVersion! + 1}</span>
+                </div>
+                <button
+                  className="group relative inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                  title={`Session: ${editSessionId}`}
+                >
+                  <FileText size={12} />
+                  <span className="hidden md:inline">Session: {editSessionId.slice(0, 8)}...</span>
+                  {/* Tooltip */}
+                  <div className="absolute left-0 top-full mt-1 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                    {editSessionId}
+                  </div>
+                </button>
+              </div>
+            )}
+            
+            {!editMode && <div />}
+            
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              {editMode && (
+                <button
+                  onClick={async () => {
+                    if (confirm('Cancel editing? Unsaved changes will be lost.')) {
+                      console.log('[EditUI] ui:edit:exit { quoteId:', editQuoteId, 'session:', editSessionId, 'reason: user-cancelled-header }');
+                      const { cancelEditSession } = await import("@/lib/editSessionController");
+                      await cancelEditSession(editSessionId!);
+                      setEditMode(false);
+                      setEditSessionId(null);
+                      setEditQuoteId(null);
+                      setEditVersion(null);
+                      setEditQuoteName(null);
+                      setQuotePreview(null);
+                      setShowSplitView(false);
+                      toast.success("Edit cancelled");
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
+                  title="Cancel editing"
+                >
+                  Cancel Edit
+                </button>
+              )}
+              {messages.length > 1 && (
+                <button
+                  onClick={clearChat}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                  title="Clear chat and start over"
+                >
+                  <RotateCcw size={14} />
+                  <span>Clear Chat</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
         
@@ -1694,7 +2044,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                       
                       {/* Line Items */}
                       <div className="space-y-3 mb-6">
-                        {quotePreview.line_items.map((item, index) => (
+                        {(!quotePreview.line_items || quotePreview.line_items.length === 0) ? (
+                          <div className="text-center text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                            <p className="text-sm font-medium">⚠️ No line items found</p>
+                            <p className="text-xs mt-1">The quote preview is missing line items. Check the console for debugging info.</p>
+                          </div>
+                        ) : (
+                          quotePreview.line_items.map((item, index) => (
                           <div
                             key={index}
                             draggable
@@ -1838,7 +2194,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                               </div>
                             </div>
                           </div>
-                        ))}
+                        )))}
                       </div>
                       
                       {/* Totals */}
@@ -1900,14 +2256,63 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                       </div>
                     </div>
                     
-                    <button
-                      onClick={submitQuote}
-                      disabled={submitting}
-                      className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle size={18} />
-                      {submitting ? "Submitting..." : "Submit Quote"}
-                    </button>
+                    {/* Change Notes (Edit Mode Only) */}
+                    {editMode && (
+                      <div className="pt-4 border-t border-gray-200">
+                        <button
+                          onClick={() => setShowChangeNotes(!showChangeNotes)}
+                          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors mb-2"
+                        >
+                          <FileText size={14} />
+                          <span>{showChangeNotes ? 'Hide' : 'Add'} change notes (optional)</span>
+                        </button>
+                        
+                        {showChangeNotes && (
+                          <textarea
+                            value={changeNotes}
+                            onChange={(e) => setChangeNotes(e.target.value)}
+                            placeholder="Describe what changed in this version..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            rows={3}
+                          />
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Action Buttons */}
+                    <div className="space-y-2">
+                      <button
+                        onClick={submitQuote}
+                        disabled={submitting}
+                        className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle size={18} />
+                        {submitting ? "Submitting..." : editMode ? `Save as v${editVersion! + 1}` : "Submit Quote"}
+                      </button>
+                      
+                      {editMode && (
+                        <button
+                          onClick={async () => {
+                            if (confirm('Cancel editing? Unsaved changes will be lost.')) {
+                              console.log('[EditUI] ui:edit:exit { quoteId:', editQuoteId, 'session:', editSessionId, 'reason: user-cancelled }');
+                              const { cancelEditSession } = await import("@/lib/editSessionController");
+                              await cancelEditSession(editSessionId!);
+                              setEditMode(false);
+                              setEditSessionId(null);
+                              setEditQuoteId(null);
+                              setEditVersion(null);
+                              setEditQuoteName(null);
+                              setQuotePreview(null);
+                              setShowSplitView(false);
+                              toast.success("Edit cancelled");
+                            }
+                          }}
+                          className="w-full py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          Cancel Edit
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
