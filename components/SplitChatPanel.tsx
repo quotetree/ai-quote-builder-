@@ -41,6 +41,28 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     appliesTo: 'all',
     selectedProducts: []
   });
+  const [showMarkupConfig, setShowMarkupConfig] = useState(false);
+  const [currentMarkup, setCurrentMarkup] = useState<{
+    name: string;
+    rate: string;
+    baseAppliesTo: 'all' | 'exclude_products';
+    baseSelectedProducts: string[];
+    addToAppliesTo: 'all' | 'exclude_products';
+    addToSelectedProducts: string[];
+    distribution: 'proportional' | 'even' | 'single';
+    singleItemIndex: number | null;
+    showAdvanced: boolean;
+  }>({
+    name: 'Markup',
+    rate: '',
+    baseAppliesTo: 'all',
+    baseSelectedProducts: [],
+    addToAppliesTo: 'all',
+    addToSelectedProducts: [],
+    distribution: 'proportional',
+    singleItemIndex: null,
+    showAdvanced: false
+  });
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState("");
@@ -914,6 +936,354 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     toast.success("Charge removed");
   }
 
+  // Banker's rounding (round half to even)
+  function bankersRound(value: number, places: number = 2): number {
+    const multiplier = Math.pow(10, places);
+    const shifted = value * multiplier;
+    const floor = Math.floor(shifted);
+    const remainder = shifted - floor;
+    
+    if (remainder < 0.5) {
+      return floor / multiplier;
+    } else if (remainder > 0.5) {
+      return Math.ceil(shifted) / multiplier;
+    } else {
+      // Exactly 0.5 - round to even
+      return (floor % 2 === 0 ? floor : floor + 1) / multiplier;
+    }
+  }
+
+  // Match items based on selector
+  function matchItemsBySelector(
+    items: ProductSuggestion[],
+    appliesTo: 'all' | 'exclude_products',
+    excludedProducts: string[]
+  ): ProductSuggestion[] {
+    if (appliesTo === 'all') {
+      return items;
+    } else {
+      return items.filter(item => !excludedProducts.includes(item.product_name));
+    }
+  }
+
+  // Calculate markup preview
+  function calculateMarkupPreview() {
+    if (!quotePreview) return { baseCount: 0, baseTotal: 0, addToCount: 0, addToTotal: 0, markupAmount: 0 };
+    
+    const baseItems = matchItemsBySelector(
+      quotePreview.line_items,
+      currentMarkup.baseAppliesTo,
+      currentMarkup.baseSelectedProducts
+    );
+    
+    const addToItems = matchItemsBySelector(
+      quotePreview.line_items,
+      currentMarkup.addToAppliesTo,
+      currentMarkup.addToSelectedProducts
+    );
+    
+    const baseTotal = baseItems.reduce((sum, item) => sum + item.line_total, 0);
+    const addToTotal = addToItems.reduce((sum, item) => sum + item.line_total, 0);
+    
+    const rateDecimal = parseFloat(currentMarkup.rate) / 100 || 0;
+    const markupAmount = bankersRound(baseTotal * rateDecimal, 2);
+    
+    return {
+      baseCount: baseItems.length,
+      baseTotal,
+      addToCount: addToItems.length,
+      addToTotal,
+      markupAmount
+    };
+  }
+
+  // Add baked markup to quote
+  function addBakedMarkupToQuote() {
+    if (!quotePreview) return;
+    
+    const rateDecimal = parseFloat(currentMarkup.rate) / 100;
+    if (isNaN(rateDecimal) || rateDecimal <= 0) {
+      toast.error("Please enter a valid percentage");
+      return;
+    }
+    
+    const preview = calculateMarkupPreview();
+    
+    if (preview.baseCount === 0) {
+      toast.error("No base items match the selection");
+      return;
+    }
+    
+    if (preview.addToCount === 0) {
+      toast.error("No 'Add To' items match the selection");
+      return;
+    }
+    
+    const markupId = `markup-${Date.now()}`;
+    const baseItems = matchItemsBySelector(
+      quotePreview.line_items,
+      currentMarkup.baseAppliesTo,
+      currentMarkup.baseSelectedProducts
+    );
+    const addToItems = matchItemsBySelector(
+      quotePreview.line_items,
+      currentMarkup.addToAppliesTo,
+      currentMarkup.addToSelectedProducts
+    );
+    
+    // Calculate per-item deltas
+    const perItemDeltas: Record<string, number> = {};
+    let remainingMarkup = preview.markupAmount;
+    
+    if (currentMarkup.distribution === 'proportional') {
+      // Proportional distribution based on line totals
+      const addToItemsWithIds = addToItems.map((item, idx) => ({
+        ...item,
+        tempId: item.id || `temp-${idx}`
+      }));
+      
+      // Calculate each item's share
+      const shares = addToItemsWithIds.map(item => ({
+        tempId: item.tempId,
+        share: preview.addToTotal > 0 ? item.line_total / preview.addToTotal : 0
+      }));
+      
+      // Distribute with rounding
+      const deltas = shares.map((s, idx) => {
+        const delta = bankersRound(preview.markupAmount * s.share, 2);
+        return { tempId: s.tempId, delta };
+      });
+      
+      // Calculate rounding residue
+      const totalDistributed = deltas.reduce((sum, d) => sum + d.delta, 0);
+      const residue = bankersRound(preview.markupAmount - totalDistributed, 2);
+      
+      // Assign residue to the item with the largest share
+      if (residue !== 0 && deltas.length > 0) {
+        const largestIdx = shares.reduce((maxIdx, s, idx) =>
+          s.share > shares[maxIdx].share ? idx : maxIdx
+        , 0);
+        deltas[largestIdx].delta = bankersRound(deltas[largestIdx].delta + residue, 2);
+      }
+      
+      deltas.forEach(d => {
+        perItemDeltas[d.tempId] = d.delta;
+      });
+    } else if (currentMarkup.distribution === 'even') {
+      // Even distribution
+      const evenShare = bankersRound(preview.markupAmount / preview.addToCount, 2);
+      const totalDistributed = evenShare * preview.addToCount;
+      const residue = bankersRound(preview.markupAmount - totalDistributed, 2);
+      
+      addToItems.forEach((item, idx) => {
+        const tempId = item.id || `temp-${idx}`;
+        perItemDeltas[tempId] = idx === 0 ? bankersRound(evenShare + residue, 2) : evenShare;
+      });
+    } else if (currentMarkup.distribution === 'single' && currentMarkup.singleItemIndex !== null) {
+      // Single item gets all markup
+      const singleItem = addToItems[currentMarkup.singleItemIndex];
+      if (singleItem) {
+        const tempId = singleItem.id || `temp-${currentMarkup.singleItemIndex}`;
+        perItemDeltas[tempId] = preview.markupAmount;
+      }
+    }
+    
+    // Create new markup config
+    const newMarkup: import("@/types/database").BakedMarkupConfig = {
+      id: markupId,
+      label: currentMarkup.name,
+      percent: rateDecimal,
+      baseSelector: {
+        include: currentMarkup.baseAppliesTo === 'all' ? 'all' : baseItems.map(i => `item:${i.product_name}`),
+        exclude: currentMarkup.baseAppliesTo === 'exclude_products' ? currentMarkup.baseSelectedProducts : undefined
+      },
+      addToSelector: {
+        include: currentMarkup.addToAppliesTo === 'all' ? 'all' : addToItems.map(i => `item:${i.product_name}`),
+        exclude: currentMarkup.addToAppliesTo === 'exclude_products' ? currentMarkup.addToSelectedProducts : undefined
+      },
+      distribution: currentMarkup.distribution === 'single' && currentMarkup.singleItemIndex !== null
+        ? { singleItemId: addToItems[currentMarkup.singleItemIndex]?.id || `temp-${currentMarkup.singleItemIndex}` }
+        : currentMarkup.distribution as 'proportional' | 'even',
+      rounding: { mode: 'bankers', places: 2 },
+      audited: {
+        base: preview.baseTotal,
+        totalMarkup: preview.markupAmount,
+        perItemDeltas
+      },
+      createdAt: new Date().toISOString(),
+      createdBy: user?.id || 'unknown'
+    };
+    
+    // Apply baked adjustments to items
+    const updatedItems = quotePreview.line_items.map((item, idx) => {
+      const tempId = item.id || `temp-${idx}`;
+      const delta = perItemDeltas[tempId] || 0;
+      
+      if (delta === 0) return item;
+      
+      const newLineTotal = bankersRound(item.line_total + delta, 2);
+      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+      
+      return {
+        ...item,
+        line_total: newLineTotal,
+        unit_price: newUnitPrice,
+        bakedAdjustments: {
+          markupTotal: bankersRound((item.bakedAdjustments?.markupTotal || 0) + delta, 2),
+          breakdown: [
+            ...(item.bakedAdjustments?.breakdown || []),
+            { markupId, delta }
+          ]
+        }
+      };
+    });
+    
+    // Recalculate totals
+    const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    const totalCharges = (quotePreview.charges || []).reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    // Update charges to reflect new base
+    const updatedCharges = (quotePreview.charges || []).map(charge => {
+      const chargeApplicableItems = matchItemsBySelector(
+        updatedItems,
+        charge.applies_to,
+        charge.excluded_products || []
+      );
+      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
+      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
+      
+      return {
+        ...charge,
+        calculated_amount: chargeAmount,
+        applies_to_total: chargeBase,
+        applies_to_count: chargeApplicableItems.length
+      };
+    });
+    
+    const updatedTotalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      subtotal: newSubtotal,
+      charges: updatedCharges,
+      bakedMarkups: [...(quotePreview.bakedMarkups || []), newMarkup],
+      total_price: newSubtotal + updatedTotalCharges - (quotePreview.discount_amount || 0)
+    });
+    
+    // Reset form
+    setCurrentMarkup({
+      name: 'Markup',
+      rate: '',
+      baseAppliesTo: 'all',
+      baseSelectedProducts: [],
+      addToAppliesTo: 'all',
+      addToSelectedProducts: [],
+      distribution: 'proportional',
+      singleItemIndex: null,
+      showAdvanced: false
+    });
+    setShowMarkupConfig(false);
+    
+    // Telemetry: markup:add
+    console.log('[Telemetry] markup:add {', 
+      'markupId:', markupId, 
+      ', base:', preview.baseTotal, 
+      ', percent:', rateDecimal * 100,
+      ', total:', preview.markupAmount, 
+      ', targets:', Object.keys(perItemDeltas).length,
+      '}');
+    
+    console.log('[Markup] Added baked markup:', {
+      markupId,
+      base: preview.baseTotal,
+      percent: rateDecimal,
+      totalMarkup: preview.markupAmount,
+      distribution: currentMarkup.distribution,
+      itemsAffected: Object.keys(perItemDeltas).length
+    });
+    
+    toast.success("Markup added and baked into prices");
+  }
+
+  // Remove baked markup
+  function removeBakedMarkup(markupId: string) {
+    if (!quotePreview) return;
+    
+    // Find the markup config
+    const markupConfig = (quotePreview.bakedMarkups || []).find(m => m.id === markupId);
+    if (!markupConfig) return;
+    
+    // Remove adjustments from items
+    const updatedItems = quotePreview.line_items.map(item => {
+      if (!item.bakedAdjustments) return item;
+      
+      // Find this markup's delta
+      const markupBreakdown = item.bakedAdjustments.breakdown?.find(b => b.markupId === markupId);
+      if (!markupBreakdown) return item;
+      
+      // Subtract the delta
+      const newLineTotal = bankersRound(item.line_total - markupBreakdown.delta, 2);
+      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+      
+      // Remove from breakdown
+      const newBreakdown = (item.bakedAdjustments.breakdown || []).filter(b => b.markupId !== markupId);
+      const newMarkupTotal = bankersRound((item.bakedAdjustments.markupTotal || 0) - markupBreakdown.delta, 2);
+      
+      return {
+        ...item,
+        line_total: newLineTotal,
+        unit_price: newUnitPrice,
+        bakedAdjustments: newBreakdown.length > 0 ? {
+          markupTotal: newMarkupTotal,
+          breakdown: newBreakdown
+        } : undefined
+      };
+    });
+    
+    // Recalculate totals
+    const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    
+    // Update charges to reflect new base
+    const updatedCharges = (quotePreview.charges || []).map(charge => {
+      const chargeApplicableItems = matchItemsBySelector(
+        updatedItems,
+        charge.applies_to,
+        charge.excluded_products || []
+      );
+      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
+      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
+      
+      return {
+        ...charge,
+        calculated_amount: chargeAmount,
+        applies_to_total: chargeBase,
+        applies_to_count: chargeApplicableItems.length
+      };
+    });
+    
+    const totalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    // Remove markup config
+    const updatedMarkups = (quotePreview.bakedMarkups || []).filter(m => m.id !== markupId);
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      subtotal: newSubtotal,
+      charges: updatedCharges,
+      bakedMarkups: updatedMarkups,
+      total_price: newSubtotal + totalCharges - (quotePreview.discount_amount || 0)
+    });
+    
+    // Telemetry: markup:remove
+    console.log('[Telemetry] markup:remove { markupId:', markupId, '}');
+    
+    console.log('[Markup] Removed baked markup:', { markupId });
+    
+    toast.success("Markup removed");
+  }
+
   // Edit quantity for a preview product
   function editPreviewProductQuantity(index: number, newQuantity: number) {
     if (!quotePreview || newQuantity < 0.01) return;
@@ -1131,7 +1501,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           discount_amount: quotePreview.discount_amount,
           total_price: quotePreview.total_price,
           profit_margin: 0, // Calculate actual profit margin from cost prices
-          charges: quotePreview.charges
+          charges: quotePreview.charges,
+          bakedMarkups: quotePreview.bakedMarkups // Include baked markups for persistence
         };
         
         const updatedQuote = await submitEditedQuote(
@@ -1211,14 +1582,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           total_price: quotePreview.total_price,
           profit_margin: 0,
           charges: quotePreview.charges || [], // Save charges with quote
+          bakedMarkups: quotePreview.bakedMarkups || [], // Save baked markups with quote
         })
         .select()
         .single();
       
-      console.log('[Submit] Saved quote with charges and discounts:', {
+      console.log('[Submit] Saved quote with charges, discounts, and markups:', {
         quoteId: quote?.id,
         chargeCount: quotePreview.charges?.length || 0,
+        bakedMarkupCount: quotePreview.bakedMarkups?.length || 0,
         itemsWithDiscounts: quotePreview.line_items.filter(i => i.discount_percent && i.discount_percent > 0).length,
+        itemsWithBakedAdjustments: quotePreview.line_items.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal && i.bakedAdjustments.markupTotal > 0).length,
         discounts: quotePreview.line_items.map(i => ({ name: i.product_name, discount: i.discount_percent }))
       });
 
@@ -2181,6 +2555,21 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                     </button>
                                   </div>
                                 )}
+                                
+                                {/* Baked Markup Indicator */}
+                                {item.bakedAdjustments && item.bakedAdjustments.markupTotal && item.bakedAdjustments.markupTotal > 0 && (
+                                  <div className="text-xs text-gray-500 mt-1 italic">
+                                    <span 
+                                      className="cursor-help"
+                                      title={`Markup breakdown: ${(item.bakedAdjustments.breakdown || []).map(b => {
+                                        const config = (quotePreview.bakedMarkups || []).find(m => m.id === b.markupId);
+                                        return `${config?.label || 'Unknown'}: +$${formatCurrency(b.delta)} (${(config?.percent || 0) * 100}%)`;
+                                      }).join(', ')}`}
+                                    >
+                                      Includes Markup: +${formatCurrency(item.bakedAdjustments.markupTotal)}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Price and delete */}
@@ -2250,14 +2639,23 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           </div>
                         )}
                         
-                        {/* Add Charge Button */}
-                        <button
-                          onClick={() => setShowChargeConfig(true)}
-                          className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium py-1"
-                        >
-                          <Plus size={14} />
-                          Add Tax/Charge
-                        </button>
+                        {/* Add Tax and Markup Buttons */}
+                        <div className="flex gap-4">
+                          <button
+                            onClick={() => setShowChargeConfig(true)}
+                            className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium py-1"
+                          >
+                            <Plus size={14} />
+                            Add Tax
+                          </button>
+                          <button
+                            onClick={() => setShowMarkupConfig(true)}
+                            className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 font-medium py-1"
+                          >
+                            <Plus size={14} />
+                            Add Markup
+                          </button>
+                        </div>
                         
                         {quotePreview.discount_amount > 0 && (
                           <div className="flex justify-between text-sm text-green-600">
@@ -2457,6 +2855,262 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
                 >
                   Add Charge
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Baked Markup Configuration Modal */}
+      {showMarkupConfig && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowMarkupConfig(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Add Markup (baked)</h3>
+                <button onClick={() => setShowMarkupConfig(false)} className="text-gray-400 hover:text-gray-600">
+                  ×
+                </button>
+              </div>
+              
+              {/* Markup Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Charge Name</label>
+                <input
+                  type="text"
+                  value={currentMarkup.name}
+                  onChange={(e) => setCurrentMarkup({...currentMarkup, name: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="e.g., Markup"
+                />
+              </div>
+              
+              {/* Percentage */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Percentage (%)</label>
+                <input
+                  type="number"
+                  value={currentMarkup.rate}
+                  onChange={(e) => setCurrentMarkup({...currentMarkup, rate: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="e.g., 7.5"
+                  step="0.1"
+                  min="0"
+                />
+              </div>
+              
+              {/* Base Applies To */}
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Base Applies To</label>
+                <p className="text-xs text-gray-500 mb-2">Items used to calculate the markup amount</p>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentMarkup.baseAppliesTo === 'all'}
+                      onChange={() => setCurrentMarkup({...currentMarkup, baseAppliesTo: 'all', baseSelectedProducts: []})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">All items</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentMarkup.baseAppliesTo === 'exclude_products'}
+                      onChange={() => setCurrentMarkup({...currentMarkup, baseAppliesTo: 'exclude_products'})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Exclude...</span>
+                  </label>
+                </div>
+              </div>
+              
+              {/* Base Product Selection */}
+              {currentMarkup.baseAppliesTo === 'exclude_products' && quotePreview && (
+                <div className="pl-6 space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded p-2">
+                  {quotePreview.line_items.map((item, index) => (
+                    <label key={index} className="flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={currentMarkup.baseSelectedProducts.includes(item.product_name)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setCurrentMarkup({
+                              ...currentMarkup,
+                              baseSelectedProducts: [...currentMarkup.baseSelectedProducts, item.product_name]
+                            });
+                          } else {
+                            setCurrentMarkup({
+                              ...currentMarkup,
+                              baseSelectedProducts: currentMarkup.baseSelectedProducts.filter(p => p !== item.product_name)
+                            });
+                          }
+                        }}
+                        className="mr-2 mt-0.5"
+                      />
+                      <div className="flex-1">
+                        <span className="text-sm">{item.product_name}</span>
+                        <span className="text-xs text-gray-500 ml-2">(${formatCurrency(item.line_total)})</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+              
+              {/* Add To */}
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Add To</label>
+                <p className="text-xs text-gray-500 mb-2">Items that will receive the markup baked into their prices</p>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentMarkup.addToAppliesTo === 'all'}
+                      onChange={() => setCurrentMarkup({...currentMarkup, addToAppliesTo: 'all', addToSelectedProducts: []})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">All items</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentMarkup.addToAppliesTo === 'exclude_products'}
+                      onChange={() => setCurrentMarkup({...currentMarkup, addToAppliesTo: 'exclude_products'})}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Exclude...</span>
+                  </label>
+                </div>
+              </div>
+              
+              {/* Add To Product Selection */}
+              {currentMarkup.addToAppliesTo === 'exclude_products' && quotePreview && (
+                <div className="pl-6 space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded p-2">
+                  {quotePreview.line_items.map((item, index) => (
+                    <label key={index} className="flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={currentMarkup.addToSelectedProducts.includes(item.product_name)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setCurrentMarkup({
+                              ...currentMarkup,
+                              addToSelectedProducts: [...currentMarkup.addToSelectedProducts, item.product_name]
+                            });
+                          } else {
+                            setCurrentMarkup({
+                              ...currentMarkup,
+                              addToSelectedProducts: currentMarkup.addToSelectedProducts.filter(p => p !== item.product_name)
+                            });
+                          }
+                        }}
+                        className="mr-2 mt-0.5"
+                      />
+                      <div className="flex-1">
+                        <span className="text-sm">{item.product_name}</span>
+                        <span className="text-xs text-gray-500 ml-2">(${formatCurrency(item.line_total)})</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+              
+              {/* Advanced Options */}
+              <div className="border-t pt-4">
+                <button
+                  onClick={() => setCurrentMarkup({...currentMarkup, showAdvanced: !currentMarkup.showAdvanced})}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                >
+                  <span>{currentMarkup.showAdvanced ? '▼' : '▶'}</span>
+                  <span>Advanced</span>
+                </button>
+                
+                {currentMarkup.showAdvanced && (
+                  <div className="mt-3 pl-6 space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Distribution</label>
+                      <div className="space-y-2">
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            checked={currentMarkup.distribution === 'proportional'}
+                            onChange={() => setCurrentMarkup({...currentMarkup, distribution: 'proportional'})}
+                            className="mr-2"
+                          />
+                          <span className="text-sm">Proportional (based on line totals)</span>
+                        </label>
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            checked={currentMarkup.distribution === 'even'}
+                            onChange={() => setCurrentMarkup({...currentMarkup, distribution: 'even'})}
+                            className="mr-2"
+                          />
+                          <span className="text-sm">Even (equal shares)</span>
+                        </label>
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            checked={currentMarkup.distribution === 'single'}
+                            onChange={() => setCurrentMarkup({...currentMarkup, distribution: 'single', singleItemIndex: 0})}
+                            className="mr-2"
+                          />
+                          <span className="text-sm">Single item</span>
+                        </label>
+                      </div>
+                      
+                      {/* Single Item Picker */}
+                      {currentMarkup.distribution === 'single' && quotePreview && (
+                        <div className="mt-2 pl-6">
+                          <select
+                            value={currentMarkup.singleItemIndex ?? 0}
+                            onChange={(e) => setCurrentMarkup({...currentMarkup, singleItemIndex: parseInt(e.target.value)})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                          >
+                            {matchItemsBySelector(quotePreview.line_items, currentMarkup.addToAppliesTo, currentMarkup.addToSelectedProducts).map((item, idx) => (
+                              <option key={idx} value={idx}>
+                                {item.product_name} (${formatCurrency(item.line_total)})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Preview */}
+              {currentMarkup.rate && (() => {
+                const preview = calculateMarkupPreview();
+                return (
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                    <div className="text-sm text-purple-900 space-y-1">
+                      <div><strong>Base:</strong> {preview.baseCount} items totaling ${formatCurrency(preview.baseTotal)}</div>
+                      <div><strong>Markup Amount:</strong> ${formatCurrency(preview.markupAmount)} ({currentMarkup.rate}%)</div>
+                      <div><strong>Add To:</strong> {preview.addToCount} items</div>
+                      <div className="text-xs text-purple-700 mt-2 italic">
+                        The markup will be baked into the selected items' prices
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowMarkupConfig(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addBakedMarkupToQuote}
+                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+                >
+                  Add Markup
                 </button>
               </div>
             </div>

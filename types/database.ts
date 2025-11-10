@@ -71,6 +71,7 @@ export interface ProductSuggestion {
   quantity_unit?: string | null;
   price_unit?: string | null;
   discount_percent?: number; // Percentage as decimal (0.10 = 10%)
+  bakedAdjustments?: BakedAdjustment; // Baked markup adjustments applied to this item
 }
 
 export interface ChargeConfig {
@@ -84,6 +85,37 @@ export interface ChargeConfig {
   applies_to_total?: number;
 }
 
+export interface BakedMarkupSelector {
+  include: 'all' | string[]; // 'all' or array of selectors like ["tag:brand", "item:id", "category:name"]
+  exclude?: string[];
+}
+
+export interface BakedMarkupConfig {
+  id: string;
+  label: string;
+  percent: number; // Decimal (0.075 = 7.5%)
+  baseSelector: BakedMarkupSelector;
+  addToSelector: BakedMarkupSelector;
+  distribution: 'proportional' | 'even' | { singleItemId: string };
+  rounding: {
+    mode: 'bankers' | 'up' | 'down';
+    places: number;
+  };
+  audited: {
+    base: number;
+    totalMarkup: number;
+    perItemDeltas: Record<string, number>; // itemId -> delta amount
+  };
+  createdAt: string;
+  createdBy: string;
+  supersededById?: string;
+}
+
+export interface BakedAdjustment {
+  markupTotal?: number;
+  breakdown?: Array<{ markupId: string; delta: number }>;
+}
+
 export interface QuotePreview {
   line_items: ProductSuggestion[];
   subtotal: number;
@@ -92,6 +124,7 @@ export interface QuotePreview {
   discount_amount: number;
   total_price: number;
   charges?: ChargeConfig[];
+  bakedMarkups?: BakedMarkupConfig[]; // Markup rules that bake amounts into item prices
 }
 
 export interface ProjectWorkingState {
@@ -142,6 +175,7 @@ export interface Quote {
   updated_at: string;
   items?: QuoteItem[];
   charges?: ChargeConfig[]; // Tax/fee configurations
+  bakedMarkups?: BakedMarkupConfig[]; // Baked markup rules
   // Edit session fields
   parent_quote_id: string | null;
   edit_session_id: string | null;
@@ -219,6 +253,7 @@ export interface QuoteSnapshot {
   quote: Quote;
   items: QuoteItem[];
   charges?: ChargeConfig[];
+  bakedMarkups?: BakedMarkupConfig[];
 }
 
 export interface QuoteDiffSummary {

@@ -122,14 +122,17 @@ export async function startEditSession(
       }
     }
 
-    // Load charges from the quote itself (not working state)
+    // Load charges and baked markups from the quote itself (not working state)
     const charges = quote.charges || [];
+    const bakedMarkups = quote.bakedMarkups || [];
     
-    console.log('[EditSession] Loaded charges from quote:', {
+    console.log('[EditSession] Loaded charges and markups from quote:', {
       quoteId: quote.id,
       chargeCount: charges.length,
+      bakedMarkupCount: bakedMarkups.length,
       itemsWithDiscounts: (quote.items || []).filter((i: any) => i.discount_percent > 0).length,
-      charges: charges.map((c: any) => ({ name: c.name, rate: c.rate, amount: c.calculated_amount }))
+      charges: charges.map((c: any) => ({ name: c.name, rate: c.rate, amount: c.calculated_amount })),
+      bakedMarkups: bakedMarkups.map((m: any) => ({ label: m.label, percent: m.percent, total: m.audited?.totalMarkup }))
     });
 
     // Create snapshot of current state
@@ -139,13 +142,15 @@ export async function startEditSession(
         items: undefined // Remove items from quote object
       } as Quote,
       items: (quote.items || []) as QuoteItem[],
-      charges: charges
+      charges: charges,
+      bakedMarkups: bakedMarkups
     };
     
     console.log('[EditSession] Snapshot created:', {
       quoteId: quote.id,
       itemCount: snapshot.items.length,
       chargeCount: snapshot.charges?.length || 0,
+      bakedMarkupCount: snapshot.bakedMarkups?.length || 0,
       items: snapshot.items.map(i => ({ name: i.product_name, qty: i.quantity }))
     });
 
@@ -231,8 +236,10 @@ export async function rehydrateEditSession(
       sessionId,
       itemCount: snapshot.items?.length || 0,
       chargeCount: snapshot.charges?.length || 0,
+      bakedMarkupCount: snapshot.bakedMarkups?.length || 0,
       items: snapshot.items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || [],
-      charges: snapshot.charges?.map((c: any) => ({ name: c.name, amount: c.calculated_amount })) || []
+      charges: snapshot.charges?.map((c: any) => ({ name: c.name, amount: c.calculated_amount })) || [],
+      bakedMarkups: snapshot.bakedMarkups?.map((m: any) => ({ label: m.label, percent: m.percent })) || []
     });
 
     // Convert quote items to suggested products format
@@ -244,7 +251,8 @@ export async function rehydrateEditSession(
       unit_price: Number(item.unit_price),
       line_total: Number(item.line_total),
       selected: true,
-      discount_percent: Number(item.discount_percent || 0)
+      discount_percent: Number(item.discount_percent || 0),
+      bakedAdjustments: item.bakedAdjustments // Restore baked adjustments
     }));
 
     // Build quote preview
@@ -255,15 +263,19 @@ export async function rehydrateEditSession(
       tax_amount: Number(snapshot.quote.tax_amount),
       discount_amount: Number(snapshot.quote.discount_amount),
       total_price: Number(snapshot.quote.total_price),
-      charges: snapshot.charges || []
+      charges: snapshot.charges || [],
+      bakedMarkups: snapshot.bakedMarkups || [] // Restore baked markup configs
     };
     
     console.log('[EditSession] Quote preview created:', {
       lineItemCount: quotePreview.line_items.length,
       chargeCount: quotePreview.charges?.length || 0,
+      bakedMarkupCount: quotePreview.bakedMarkups?.length || 0,
       itemsWithDiscounts: quotePreview.line_items.filter(i => i.discount_percent && i.discount_percent > 0).length,
-      lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity, discount: i.discount_percent || 0 })),
+      itemsWithBakedAdjustments: quotePreview.line_items.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal && i.bakedAdjustments.markupTotal > 0).length,
+      lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity, discount: i.discount_percent || 0, bakedMarkup: i.bakedAdjustments?.markupTotal || 0 })),
       charges: quotePreview.charges?.map(c => ({ name: c.name, amount: c.calculated_amount })) || [],
+      bakedMarkups: quotePreview.bakedMarkups?.map(m => ({ label: m.label, percent: m.percent, total: m.audited?.totalMarkup })) || [],
       total: quotePreview.total_price
     });
 
@@ -487,6 +499,7 @@ export async function submitEditedQuote(
     total_price: number;
     profit_margin: number;
     charges?: ChargeConfig[];
+    bakedMarkups?: import("@/types/database").BakedMarkupConfig[];
   },
   baseVersion: number,
   changeNotes?: string
@@ -596,6 +609,7 @@ export async function submitEditedQuote(
         total_price: modifiedQuote.total_price,
         profit_margin: modifiedQuote.profit_margin,
         charges: modifiedQuote.charges || [], // Save charges with quote
+        bakedMarkups: modifiedQuote.bakedMarkups || [], // Save baked markups with quote
         change_notes: changeNotes || null,
         diff_summary: diff,
         author_id: user.id,
@@ -607,10 +621,11 @@ export async function submitEditedQuote(
       .select()
       .single();
     
-    console.log('[Submit] Updated quote with charges:', {
+    console.log('[Submit] Updated quote with charges and markups:', {
       quoteId: session.quote_id,
       newVersion,
-      chargeCount: modifiedQuote.charges?.length || 0
+      chargeCount: modifiedQuote.charges?.length || 0,
+      bakedMarkupCount: modifiedQuote.bakedMarkups?.length || 0
     });
 
     if (updateError) {
