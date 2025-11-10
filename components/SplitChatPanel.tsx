@@ -1682,16 +1682,29 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       
       toast.success(`Quote ${quoteNumber} saved successfully!`);
     } catch (error: any) {
+      // Supabase errors have nested structure - extract useful info
+      const errorInfo = {
+        message: error?.message || error?.error_description || error?.msg,
+        code: error?.code || error?.error || error?.status,
+        details: error?.details || error?.error_description,
+        hint: error?.hint,
+        name: error?.name,
+        // Supabase-specific fields
+        statusCode: error?.statusCode,
+        statusText: error?.statusText
+      };
+      
       console.error("[submitQuote] Error:", error);
       console.error("[submitQuote] Error type:", typeof error);
       console.error("[submitQuote] Error keys:", error ? Object.keys(error) : 'null');
-      console.error("[submitQuote] Error details:", {
-        message: error?.message,
-        code: error?.code,
-        details: error?.details,
-        name: error?.name,
-        stack: error?.stack?.substring(0, 200)
-      });
+      console.error("[submitQuote] Parsed error info:", errorInfo);
+      
+      // Try to serialize the full error for debugging
+      try {
+        console.error("[submitQuote] Full error JSON:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      } catch (jsonError) {
+        console.error("[submitQuote] Could not serialize error to JSON");
+      }
       
       // Handle empty or malformed error objects
       if (!error || (typeof error === 'object' && Object.keys(error).length === 0)) {
@@ -1710,14 +1723,40 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       }
       
       // Handle specific error codes
-      const errorCode = error?.code || (error?.message?.includes('VERSION_CONFLICT') ? 'VERSION_CONFLICT' : 
-                                        error?.message?.includes('CONCURRENCY_CONFLICT') ? 'CONCURRENCY_CONFLICT' : 
-                                        error?.message?.includes('DB_ERROR') ? 'DB_ERROR' : 
-                                        error?.message?.includes('invalid input syntax') ? 'UUID_ERROR' : null);
+      const errorCode = error?.code || 
+        (error?.message?.includes('baked_markups') || error?.message?.includes('bakedMarkups') || 
+         error?.message?.includes('schema cache') || error?.message?.includes('column') ? 'DB_MIGRATION_REQUIRED' :
+         error?.message?.includes('VERSION_CONFLICT') ? 'VERSION_CONFLICT' : 
+         error?.message?.includes('CONCURRENCY_CONFLICT') ? 'CONCURRENCY_CONFLICT' : 
+         error?.message?.includes('DB_ERROR') ? 'DB_ERROR' : 
+         error?.message?.includes('invalid input syntax') ? 'UUID_ERROR' : null);
       
       console.log('[Submit] submit:error { code:', errorCode, ', message:', error?.message, ', details:', error?.details, '}');
       
-      if (errorCode === 'VERSION_CONFLICT') {
+      if (errorCode === 'DB_MIGRATION_REQUIRED') {
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <div className="font-medium">⚠️ Database Migration Required</div>
+            <div className="text-sm">
+              The database needs to be updated to support baked markups.
+            </div>
+            <div className="text-sm font-medium mt-1">
+              Steps to fix:
+            </div>
+            <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+              <li>Open Supabase SQL Editor</li>
+              <li>Run the migration from APPLY_BAKED_MARKUPS_MIGRATION.md</li>
+              <li>Restart your dev server</li>
+            </ol>
+            <div className="text-xs text-gray-500 mt-1">
+              Error: {error?.message?.substring(0, 100)}
+            </div>
+          </div>,
+          { duration: 15000 }
+        );
+        console.error("[submitQuote] DB_MIGRATION_REQUIRED - Column 'baked_markups' not found");
+        console.error("See APPLY_BAKED_MARKUPS_MIGRATION.md for migration instructions");
+      } else if (errorCode === 'VERSION_CONFLICT') {
         const details = error?.details || {};
         const currentVersion = details.currentVersion || (editVersion! + 1);
         
