@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ChatMessage, ProductSuggestion, QuotePreview, ChargeConfig } from "@/types/database";
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
+import { useCurrentUser, getCurrentUserClient, getAnonymousUser, type UserRef } from "@/lib/auth/client";
 
 interface SplitChatPanelProps {
   projectId: string;
@@ -86,6 +87,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const currentRunIdRef = useRef<string | null>(null); // Track current run ID for validation
   const currentPoolIdRef = useRef<string | null>(null); // Track current pool ID for product isolation
   const supabase = createClient();
+  const currentUser = useCurrentUser(); // Get current authenticated user
 
   // Global orphan cleanup that survives component lifecycle
   useEffect(() => {
@@ -998,7 +1000,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   }
 
   // Add baked markup to quote
-  function addBakedMarkupToQuote() {
+  async function addBakedMarkupToQuote() {
     if (!quotePreview) return;
     
     const rateDecimal = parseFloat(currentMarkup.rate) / 100;
@@ -1017,6 +1019,25 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     if (preview.addToCount === 0) {
       toast.error("No 'Add To' items match the selection");
       return;
+    }
+    
+    // Get current user for audit trail
+    let createdBy: UserRef;
+    try {
+      const user = currentUser || await getCurrentUserClient();
+      if (user) {
+        createdBy = user;
+      } else {
+        // No user available - use anonymous fallback
+        createdBy = getAnonymousUser();
+        console.warn('[Auth] No user available for markup creation, using anonymous fallback');
+        console.log('[Telemetry] user:missing { context: "addBakedMarkupToQuote" }');
+      }
+    } catch (error) {
+      // Error fetching user - use anonymous fallback
+      createdBy = getAnonymousUser();
+      console.warn('[Auth] Error fetching user for markup creation:', error);
+      console.log('[Telemetry] user:missing { context: "addBakedMarkupToQuote", error: true }');
     }
     
     const markupId = `markup-${Date.now()}`;
@@ -1111,7 +1132,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         perItemDeltas
       },
       createdAt: new Date().toISOString(),
-      createdBy: user?.id || 'unknown'
+      createdBy: createdBy.id
     };
     
     // Apply baked adjustments to items
@@ -1192,6 +1213,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       ', percent:', rateDecimal * 100,
       ', total:', preview.markupAmount, 
       ', targets:', Object.keys(perItemDeltas).length,
+      ', createdBy:', createdBy.id,
       '}');
     
     console.log('[Markup] Added baked markup:', {
