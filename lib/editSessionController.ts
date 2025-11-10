@@ -123,8 +123,9 @@ export async function startEditSession(
     }
 
     // Load charges and baked markups from the quote itself (not working state)
+    // Note: Database returns snake_case (baked_markups) but we use camelCase in app
     const charges = quote.charges || [];
-    const bakedMarkups = quote.bakedMarkups || [];
+    const bakedMarkups = (quote as any).baked_markups || quote.bakedMarkups || [];
     
     console.log('[EditSession] Loaded charges and markups from quote:', {
       quoteId: quote.id,
@@ -609,7 +610,7 @@ export async function submitEditedQuote(
         total_price: modifiedQuote.total_price,
         profit_margin: modifiedQuote.profit_margin,
         charges: modifiedQuote.charges || [], // Save charges with quote
-        bakedMarkups: modifiedQuote.bakedMarkups || [], // Save baked markups with quote
+        baked_markups: modifiedQuote.bakedMarkups || [], // Save baked markups with quote (DB uses snake_case)
         change_notes: changeNotes || null,
         diff_summary: diff,
         author_id: user.id,

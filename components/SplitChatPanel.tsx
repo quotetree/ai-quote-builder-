@@ -1604,7 +1604,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           total_price: quotePreview.total_price,
           profit_margin: 0,
           charges: quotePreview.charges || [], // Save charges with quote
-          bakedMarkups: quotePreview.bakedMarkups || [], // Save baked markups with quote
+          baked_markups: quotePreview.bakedMarkups || [], // Save baked markups with quote (DB uses snake_case)
         })
         .select()
         .single();
