@@ -43,6 +43,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     selectedProducts: []
   });
   const [showMarkupConfig, setShowMarkupConfig] = useState(false);
+  const [editingMarkupId, setEditingMarkupId] = useState<string | null>(null); // Track if we're editing an existing markup
   const [currentMarkup, setCurrentMarkup] = useState<{
     name: string;
     rate: string;
@@ -568,6 +569,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         // Clear suggestions in edit mode (they're ephemeral)
         setSuggestedProducts([]);
         
+        // Telemetry for rehydrated baked markups
+        const markupCount = workingState.quote_preview?.bakedMarkups?.length || 0;
+        if (markupCount > 0) {
+          console.log('[Telemetry] rehydrate:bakedMarkups { count:', markupCount, '}');
+          console.log('[EditMode] Rehydrated', markupCount, 'baked markup(s)');
+        }
+        
         console.log('[EditMode] Quote rehydrated into preview');
         
         // Show non-sticky toast notification
@@ -938,6 +946,126 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     toast.success("Charge removed");
   }
 
+  // Edit baked markup - pre-fill modal with existing values
+  function editBakedMarkup(markupId: string) {
+    if (!quotePreview) return;
+    
+    const markup = quotePreview.bakedMarkups?.find(m => m.id === markupId);
+    if (!markup) {
+      toast.error("Markup not found");
+      return;
+    }
+    
+    console.log('[Markup] edit:open { markupId:', markupId, ', label:', markup.label, ', percent:', markup.percent, '}');
+    
+    // Convert stored markup config back to form state
+    setCurrentMarkup({
+      name: markup.label,
+      rate: ((markup.percent || 0) * 100).toString(),
+      baseAppliesTo: markup.baseSelector.include === 'all' ? 'all' : 'exclude_products',
+      baseSelectedProducts: markup.baseSelector.exclude || [],
+      addToAppliesTo: markup.addToSelector.include === 'all' ? 'all' : 'exclude_products',
+      addToSelectedProducts: markup.addToSelector.exclude || [],
+      distribution: typeof markup.distribution === 'string' ? markup.distribution : 'proportional',
+      singleItemIndex: typeof markup.distribution === 'object' && 'singleItemId' in markup.distribution 
+        ? (quotePreview.line_items.findIndex(item => item.id === (markup.distribution as any).singleItemId) || 0)
+        : null,
+      showAdvanced: true // Show advanced when editing
+    });
+    
+    setEditingMarkupId(markupId);
+    setShowMarkupConfig(true);
+  }
+
+  // Remove baked markup - subtract deltas and remove rule
+  function removeBakedMarkup(markupId: string) {
+    if (!quotePreview) return;
+    
+    const markup = quotePreview.bakedMarkups?.find(m => m.id === markupId);
+    if (!markup) {
+      toast.error("Markup not found");
+      return;
+    }
+    
+    console.log('[Markup] delete:start { markupId:', markupId, ', totalMarkup:', markup.audited?.totalMarkup || 0, '}');
+    console.log('[Telemetry] markup:delete { markupId:', markupId, ', totalDelta:', markup.audited?.totalMarkup || 0, '}');
+    
+    // Remove deltas from affected items
+    const updatedItems = quotePreview.line_items.map(item => {
+      if (!item.bakedAdjustments || !item.bakedAdjustments.breakdown) {
+        return item;
+      }
+      
+      // Filter out this markup's delta
+      const newBreakdown = item.bakedAdjustments.breakdown.filter(b => b.markupId !== markupId);
+      const newMarkupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
+      
+      // If item had this markup, subtract the delta from line_total and unit_price
+      const oldDelta = item.bakedAdjustments.breakdown.find(b => b.markupId === markupId)?.delta || 0;
+      
+      if (oldDelta > 0) {
+        const newLineTotal = item.line_total - oldDelta;
+        const newUnitPrice = newLineTotal / item.quantity;
+        
+        return {
+          ...item,
+          unit_price: newUnitPrice,
+          line_total: newLineTotal,
+          bakedAdjustments: newBreakdown.length > 0 ? {
+            markupTotal: newMarkupTotal,
+            breakdown: newBreakdown
+          } : undefined
+        };
+      }
+      
+      return {
+        ...item,
+        bakedAdjustments: newBreakdown.length > 0 ? {
+          markupTotal: newMarkupTotal,
+          breakdown: newBreakdown
+        } : undefined
+      };
+    });
+    
+    // Remove markup from bakedMarkups array
+    const updatedMarkups = (quotePreview.bakedMarkups || []).filter(m => m.id !== markupId);
+    
+    // Recalculate totals
+    const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
+    
+    // Update charges to reflect new base (taxes may need recalculation)
+    const updatedCharges = (quotePreview.charges || []).map(charge => {
+      const chargeApplicableItems = matchItemsBySelector(
+        updatedItems,
+        charge.applies_to,
+        charge.excluded_products || []
+      );
+      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
+      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
+      
+      return {
+        ...charge,
+        applies_to_total: chargeBase,
+        applies_to_count: chargeApplicableItems.length,
+        calculated_amount: chargeAmount
+      };
+    });
+    
+    const totalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    
+    setQuotePreview({
+      ...quotePreview,
+      line_items: updatedItems,
+      bakedMarkups: updatedMarkups,
+      charges: updatedCharges,
+      subtotal: newSubtotal,
+      total_price: newSubtotal + totalCharges - (quotePreview.discount_amount || 0)
+    });
+    
+    console.log('[Markup] delete:success { markupId:', markupId, ', newSubtotal:', newSubtotal, ', remainingMarkups:', updatedMarkups.length, '}');
+    toast.success(`Removed ${markup.label} - totals updated`);
+  }
+
   // Banker's rounding (round half to even)
   function bankersRound(value: number, places: number = 2): number {
     const multiplier = Math.pow(10, places);
@@ -1009,7 +1137,75 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return;
     }
     
-    const preview = calculateMarkupPreview();
+    // If editing, first remove old markup's deltas from items
+    let baseItems = quotePreview.line_items;
+    if (editingMarkupId) {
+      const oldMarkup = quotePreview.bakedMarkups?.find(m => m.id === editingMarkupId);
+      if (oldMarkup) {
+        console.log('[Markup] edit:remove-old-deltas { markupId:', editingMarkupId, '}');
+        // Remove old deltas from items
+        baseItems = baseItems.map(item => {
+          if (!item.bakedAdjustments || !item.bakedAdjustments.breakdown) {
+            return item;
+          }
+          
+          const oldDelta = item.bakedAdjustments.breakdown.find(b => b.markupId === editingMarkupId)?.delta || 0;
+          const newBreakdown = item.bakedAdjustments.breakdown.filter(b => b.markupId !== editingMarkupId);
+          const newMarkupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
+          
+          if (oldDelta > 0) {
+            const newLineTotal = item.line_total - oldDelta;
+            const newUnitPrice = newLineTotal / item.quantity;
+            
+            return {
+              ...item,
+              unit_price: newUnitPrice,
+              line_total: newLineTotal,
+              bakedAdjustments: newBreakdown.length > 0 ? {
+                markupTotal: newMarkupTotal,
+                breakdown: newBreakdown
+              } : undefined
+            };
+          }
+          
+          return {
+            ...item,
+            bakedAdjustments: newBreakdown.length > 0 ? {
+              markupTotal: newMarkupTotal,
+              breakdown: newBreakdown
+            } : undefined
+          };
+        });
+      }
+    }
+    
+    // Calculate preview based on clean items (without old markup)
+    const cleanPreview = (() => {
+      const tempPreview = { ...quotePreview, line_items: baseItems };
+      const baseMatches = matchItemsBySelector(
+        tempPreview.line_items,
+        currentMarkup.baseAppliesTo,
+        currentMarkup.baseSelectedProducts
+      );
+      const addToMatches = matchItemsBySelector(
+        tempPreview.line_items,
+        currentMarkup.addToAppliesTo,
+        currentMarkup.addToSelectedProducts
+      );
+      const baseTotal = baseMatches.reduce((sum, item) => sum + item.line_total, 0);
+      const addToTotal = addToMatches.reduce((sum, item) => sum + item.line_total, 0);
+      const markupAmount = bankersRound(baseTotal * rateDecimal, 2);
+      
+      return {
+        baseCount: baseMatches.length,
+        addToCount: addToMatches.length,
+        baseTotal,
+        addToTotal,
+        markupAmount
+      };
+    })();
+    
+    const preview = cleanPreview;
     
     if (preview.baseCount === 0) {
       toast.error("No base items match the selection");
@@ -1040,14 +1236,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       console.log('[Telemetry] user:missing { context: "addBakedMarkupToQuote", error: true }');
     }
     
-    const markupId = `markup-${Date.now()}`;
-    const baseItems = matchItemsBySelector(
-      quotePreview.line_items,
+    // Use existing ID if editing, otherwise create new
+    const markupId = editingMarkupId || `markup-${Date.now()}`;
+    const baseMatches = matchItemsBySelector(
+      baseItems,
       currentMarkup.baseAppliesTo,
       currentMarkup.baseSelectedProducts
     );
-    const addToItems = matchItemsBySelector(
-      quotePreview.line_items,
+    const addToMatches = matchItemsBySelector(
+      baseItems,
       currentMarkup.addToAppliesTo,
       currentMarkup.addToSelectedProducts
     );
@@ -1058,7 +1255,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     if (currentMarkup.distribution === 'proportional') {
       // Proportional distribution based on line totals
-      const addToItemsWithIds = addToItems.map((item, idx) => ({
+      const addToItemsWithIds = addToMatches.map((item, idx) => ({
         ...item,
         tempId: item.id || `temp-${idx}`
       }));
@@ -1096,13 +1293,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const totalDistributed = evenShare * preview.addToCount;
       const residue = bankersRound(preview.markupAmount - totalDistributed, 2);
       
-      addToItems.forEach((item, idx) => {
+      addToMatches.forEach((item, idx) => {
         const tempId = item.id || `temp-${idx}`;
         perItemDeltas[tempId] = idx === 0 ? bankersRound(evenShare + residue, 2) : evenShare;
       });
     } else if (currentMarkup.distribution === 'single' && currentMarkup.singleItemIndex !== null) {
       // Single item gets all markup
-      const singleItem = addToItems[currentMarkup.singleItemIndex];
+      const singleItem = addToMatches[currentMarkup.singleItemIndex];
       if (singleItem) {
         const tempId = singleItem.id || `temp-${currentMarkup.singleItemIndex}`;
         perItemDeltas[tempId] = preview.markupAmount;
@@ -1115,15 +1312,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       label: currentMarkup.name,
       percent: rateDecimal,
       baseSelector: {
-        include: currentMarkup.baseAppliesTo === 'all' ? 'all' : baseItems.map(i => `item:${i.product_name}`),
+        include: currentMarkup.baseAppliesTo === 'all' ? 'all' : baseMatches.map(i => `item:${i.product_name}`),
         exclude: currentMarkup.baseAppliesTo === 'exclude_products' ? currentMarkup.baseSelectedProducts : undefined
       },
       addToSelector: {
-        include: currentMarkup.addToAppliesTo === 'all' ? 'all' : addToItems.map(i => `item:${i.product_name}`),
+        include: currentMarkup.addToAppliesTo === 'all' ? 'all' : addToMatches.map(i => `item:${i.product_name}`),
         exclude: currentMarkup.addToAppliesTo === 'exclude_products' ? currentMarkup.addToSelectedProducts : undefined
       },
       distribution: currentMarkup.distribution === 'single' && currentMarkup.singleItemIndex !== null
-        ? { singleItemId: addToItems[currentMarkup.singleItemIndex]?.id || `temp-${currentMarkup.singleItemIndex}` }
+        ? { singleItemId: addToMatches[currentMarkup.singleItemIndex]?.id || `temp-${currentMarkup.singleItemIndex}` }
         : currentMarkup.distribution as 'proportional' | 'even',
       rounding: { mode: 'bankers', places: 2 },
       audited: {
@@ -1132,11 +1329,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         perItemDeltas
       },
       createdAt: new Date().toISOString(),
-      createdBy: createdBy.id
+      createdBy: createdBy.id,
+      supersededById: editingMarkupId ? undefined : undefined // Will be set if this gets edited later
     };
     
-    // Apply baked adjustments to items
-    const updatedItems = quotePreview.line_items.map((item, idx) => {
+    // Apply baked adjustments to items (starting from baseItems which already has old deltas removed)
+    const updatedItems = baseItems.map((item, idx) => {
       const tempId = item.id || `temp-${idx}`;
       const delta = perItemDeltas[tempId] || 0;
       
@@ -1183,14 +1381,28 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     const updatedTotalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
     
+    // Update bakedMarkups array - replace if editing, append if new
+    const updatedBakedMarkups = editingMarkupId
+      ? (quotePreview.bakedMarkups || []).map(m => m.id === editingMarkupId ? newMarkup : m)
+      : [...(quotePreview.bakedMarkups || []), newMarkup];
+    
     setQuotePreview({
       ...quotePreview,
       line_items: updatedItems,
       subtotal: newSubtotal,
       charges: updatedCharges,
-      bakedMarkups: [...(quotePreview.bakedMarkups || []), newMarkup],
+      bakedMarkups: updatedBakedMarkups,
       total_price: newSubtotal + updatedTotalCharges - (quotePreview.discount_amount || 0)
     });
+    
+    // Telemetry
+    if (editingMarkupId) {
+      console.log('[Telemetry] markup:edit { markupId:', markupId, ', newPercent:', rateDecimal, ', totalDelta:', preview.markupAmount, '}');
+      toast.success(`Updated ${currentMarkup.name} - totals recalculated`);
+    } else {
+      console.log('[Telemetry] markup:add { markupId:', markupId, ', percent:', rateDecimal, ', total:', preview.markupAmount, ', targets:', preview.addToCount, ', createdBy:', createdBy.id, '}');
+      toast.success(`Added ${currentMarkup.name} - $${formatCurrency(preview.markupAmount)} baked into ${preview.addToCount} items`);
+    }
     
     // Reset form
     setCurrentMarkup({
@@ -1204,19 +1416,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       singleItemIndex: null,
       showAdvanced: false
     });
+    setEditingMarkupId(null);
     setShowMarkupConfig(false);
     
-    // Telemetry: markup:add
-    console.log('[Telemetry] markup:add {', 
-      'markupId:', markupId, 
-      ', base:', preview.baseTotal, 
-      ', percent:', rateDecimal * 100,
-      ', total:', preview.markupAmount, 
-      ', targets:', Object.keys(perItemDeltas).length,
-      ', createdBy:', createdBy.id,
-      '}');
-    
-    console.log('[Markup] Added baked markup:', {
+    console.log('[Markup] ' + (editingMarkupId ? 'Updated' : 'Added') + ' baked markup:', {
       markupId,
       base: preview.baseTotal,
       percent: rateDecimal,
@@ -2700,6 +2903,41 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           </div>
                         )}
                         
+                        {/* Baked Markups Section */}
+                        {(quotePreview.bakedMarkups && quotePreview.bakedMarkups.length > 0) && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Baked Markups</div>
+                            {quotePreview.bakedMarkups.map((markup, markupIndex) => (
+                              <div key={markup.id || `markup-${markupIndex}`} className="group flex items-start justify-between text-sm hover:bg-purple-50 p-2 rounded -mx-2">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-gray-700">{markup.label} ({(markup.percent * 100).toFixed(1)}%):</span>
+                                    <button
+                                      onClick={() => editBakedMarkup(markup.id)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-purple-100 rounded transition-opacity"
+                                      title="Edit markup"
+                                    >
+                                      <Edit2 size={12} className="text-purple-600" />
+                                    </button>
+                                    <button
+                                      onClick={() => removeBakedMarkup(markup.id)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                                      title="Delete markup"
+                                    >
+                                      <Trash2 size={12} className="text-red-600" />
+                                    </button>
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-0.5">
+                                    Base: {markup.audited?.base ? `$${formatCurrency(markup.audited.base)}` : 'N/A'} → 
+                                    Affects {Object.keys(markup.audited?.perItemDeltas || {}).length} items
+                                  </div>
+                                </div>
+                                <span className="font-medium">${formatCurrency(markup.audited?.totalMarkup || 0)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
                         {/* Add Tax and Markup Buttons */}
                         <div className="flex gap-4">
                           <button
@@ -2925,12 +3163,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       
       {/* Baked Markup Configuration Modal */}
       {showMarkupConfig && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowMarkupConfig(false)}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => { setShowMarkupConfig(false); setEditingMarkupId(null); }}>
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Add Markup (baked)</h3>
-                <button onClick={() => setShowMarkupConfig(false)} className="text-gray-400 hover:text-gray-600">
+                <h3 className="text-lg font-semibold">{editingMarkupId ? 'Edit' : 'Add'} Markup (baked)</h3>
+                <button onClick={() => { setShowMarkupConfig(false); setEditingMarkupId(null); }} className="text-gray-400 hover:text-gray-600">
                   ×
                 </button>
               </div>
@@ -3162,7 +3400,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               {/* Actions */}
               <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => setShowMarkupConfig(false)}
+                  onClick={() => { setShowMarkupConfig(false); setEditingMarkupId(null); }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
                 >
                   Cancel
@@ -3171,7 +3409,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                   onClick={addBakedMarkupToQuote}
                   className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
                 >
-                  Add Markup
+                  {editingMarkupId ? 'Update Markup' : 'Add Markup'}
                 </button>
               </div>
             </div>
