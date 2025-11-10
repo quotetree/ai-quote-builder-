@@ -1215,10 +1215,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         .select()
         .single();
       
-      console.log('[Submit] Saved quote with charges:', {
+      console.log('[Submit] Saved quote with charges and discounts:', {
         quoteId: quote?.id,
         chargeCount: quotePreview.charges?.length || 0,
-        charges: quotePreview.charges
+        itemsWithDiscounts: quotePreview.line_items.filter(i => i.discount_percent && i.discount_percent > 0).length,
+        discounts: quotePreview.line_items.map(i => ({ name: i.product_name, discount: i.discount_percent }))
       });
 
       if (quoteError) throw quoteError;
@@ -1233,7 +1234,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           description: item.description,
           quantity: item.quantity,
           unit_price: item.unit_price,
-          discount_percent: 0,
+          discount_percent: item.discount_percent || 0, // Preserve item discounts
           line_total: item.line_total,
           sort_order: index,
         }));

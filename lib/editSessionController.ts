@@ -128,6 +128,7 @@ export async function startEditSession(
     console.log('[EditSession] Loaded charges from quote:', {
       quoteId: quote.id,
       chargeCount: charges.length,
+      itemsWithDiscounts: (quote.items || []).filter((i: any) => i.discount_percent > 0).length,
       charges: charges.map((c: any) => ({ name: c.name, rate: c.rate, amount: c.calculated_amount }))
     });
 
@@ -260,7 +261,8 @@ export async function rehydrateEditSession(
     console.log('[EditSession] Quote preview created:', {
       lineItemCount: quotePreview.line_items.length,
       chargeCount: quotePreview.charges?.length || 0,
-      lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity })),
+      itemsWithDiscounts: quotePreview.line_items.filter(i => i.discount_percent && i.discount_percent > 0).length,
+      lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity, discount: i.discount_percent || 0 })),
       charges: quotePreview.charges?.map(c => ({ name: c.name, amount: c.calculated_amount })) || [],
       total: quotePreview.total_price
     });
