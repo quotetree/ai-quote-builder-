@@ -996,16 +996,25 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         return item;
       }
       
+      // Get the OLD delta BEFORE filtering (critical!)
+      const oldDelta = item.bakedAdjustments.breakdown.find(b => b.markupId === markupId)?.delta || 0;
+      
       // Filter out this markup's delta
       const newBreakdown = item.bakedAdjustments.breakdown.filter(b => b.markupId !== markupId);
       const newMarkupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
       
       // If item had this markup, subtract the delta from line_total and unit_price
-      const oldDelta = item.bakedAdjustments.breakdown.find(b => b.markupId === markupId)?.delta || 0;
-      
       if (oldDelta > 0) {
-        const newLineTotal = item.line_total - oldDelta;
-        const newUnitPrice = newLineTotal / item.quantity;
+        const newLineTotal = bankersRound(item.line_total - oldDelta, 2);
+        const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+        
+        console.log('[Markup] Removing delta from item:', {
+          name: item.product_name,
+          oldLineTotal: item.line_total,
+          delta: oldDelta,
+          newLineTotal,
+          newUnitPrice
+        });
         
         return {
           ...item,
@@ -1018,6 +1027,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         };
       }
       
+      // Item didn't have this markup - just update breakdown
       return {
         ...item,
         bakedAdjustments: newBreakdown.length > 0 ? {
@@ -1052,6 +1062,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     });
     
     const totalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
+    const newTotal = bankersRound(newSubtotal + totalCharges - (quotePreview.discount_amount || 0), 2);
+    
+    console.log('[Markup] delete:totals { oldSubtotal:', quotePreview.subtotal, ', newSubtotal:', newSubtotal, ', delta:', quotePreview.subtotal - newSubtotal, '}');
+    console.log('[Markup] delete:totals { oldTotal:', quotePreview.total_price, ', newTotal:', newTotal, ', delta:', quotePreview.total_price - newTotal, '}');
+    console.log('[Markup] delete:charges { oldCharges:', quotePreview.charges?.reduce((sum, c) => sum + (c.calculated_amount || 0), 0) || 0, ', newCharges:', totalCharges, '}');
     
     setQuotePreview({
       ...quotePreview,
@@ -1059,10 +1074,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       bakedMarkups: updatedMarkups,
       charges: updatedCharges,
       subtotal: newSubtotal,
-      total_price: newSubtotal + totalCharges - (quotePreview.discount_amount || 0)
+      total_price: newTotal
     });
     
-    console.log('[Markup] delete:success { markupId:', markupId, ', newSubtotal:', newSubtotal, ', remainingMarkups:', updatedMarkups.length, '}');
+    console.log('[Markup] delete:success { markupId:', markupId, ', newSubtotal:', newSubtotal, ', newTotal:', newTotal, ', remainingMarkups:', updatedMarkups.length, '}');
     toast.success(`Removed ${markup.label} - totals updated`);
   }
 
