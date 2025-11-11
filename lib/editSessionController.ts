@@ -256,205 +256,72 @@ export async function rehydrateEditSession(
       bakedAdjustments: undefined // Will rebuild from markup configs
     }));
 
-    // Rebuild bakedAdjustments from saved markup configs using STABLE KEY matching
-    // This is critical because bakedAdjustments.breakdown is NOT persisted in quote_items table
+    // ANNOTATION ONLY: Build a map of lineItemId -> total markup amount
+    // Do NOT modify prices here - they already include markup from when saved
+    // We only annotate for UI display ("Includes Markup: +$X")
     const bakedMarkups = snapshot.bakedMarkups || [];
+    const markupByItemId: Record<string, number> = {};
     let unmatchedTargetCount = 0;
     
     if (bakedMarkups.length > 0) {
-      const MARKUP_DEBUG = process.env.NEXT_PUBLIC_MARKUP_DEBUG === 'true';
-      console.log('[EditSession] Rebuilding bakedAdjustments from', bakedMarkups.length, 'markup configs');
+      console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
       
-      // Import stable key utilities (dynamic import for server context)
-      const { generateStableKey } = await import('@/lib/stableKey');
-      
-      // CRITICAL FIX: Current item prices include markups, but stable keys were generated
-      // from BASELINE prices. We need to calculate baselines first, then generate keys.
-      
-      // Step 1: Calculate total markup per item across ALL markups
-      const totalMarkupPerKey: Record<string, number> = {};
+      // Build simple map: lineItemId -> sum of all markup amounts
       for (const markup of bakedMarkups) {
-        const deltas = markup.audited?.perItemDeltas || {};
-        Object.entries(deltas).forEach(([key, delta]) => {
-          totalMarkupPerKey[key] = (totalMarkupPerKey[key] || 0) + (delta as number);
-        });
-      }
-      
-      console.log('[EditSession] Total markups per key:', totalMarkupPerKey);
-      
-      // Step 2: Build a map of stored stable_key → baseline price
-      const baselinePriceMap: Record<string, number> = {};
-      for (const markup of bakedMarkups) {
-        const baselines = markup.audited?.perItemBaseBefore || {};
-        Object.entries(baselines).forEach(([key, price]) => {
-          if (!baselinePriceMap[key]) {
-            baselinePriceMap[key] = price as number;
-          }
-        });
-      }
-      
-      console.log('[EditSession] Baseline price map:', baselinePriceMap);
-      
-      // Step 3: Build lookup by matching item properties
-      // Match by: name + baseline_price (calculated) or name + id
-      const matched = new Set<string>();
-      
-      // For each markup config, rebuild the per-item breakdowns
-      for (const markup of bakedMarkups) {
-        const audited = markup.audited || {};
-        const perItemDeltas = audited.perItemDeltas || {};
-        const perItemBaseBefore = audited.perItemBaseBefore || {};
         const targets = markup.targets || [];
-        
-        console.log('[EditSession] Rebuilding markup:', {
-          id: markup.id,
-          label: markup.label,
-          percent: markup.percent,
-          totalMarkup: audited.totalMarkup,
-          targetCount: targets.length,
-          targetsHaveStableKeys: targets.every((t: any) => t.stable_key),
-          targets: targets.length > 0 ? targets.map((t: any) => ({ item_id: t.item_id, stable_key: t.stable_key })) : [],
-          currentItemCount: suggestedProducts.length,
-          currentItems: suggestedProducts.map((item, idx) => ({
-            idx,
-            id: item.id,
-            name: item.product_name,
-            line_total: item.line_total,
-            unit_price: item.unit_price
-          }))
-        });
-        
-        // Match each target to a current item
-        const targetMatches: Array<{ target: any; item: ProductSuggestion; delta: number }> = [];
-        
         for (const target of targets) {
-          let matchedItem: ProductSuggestion | null = null;
+          const itemId = (target as any).item_id || (target as any).lineItemId;
+          const amount = (target as any).amount || 0;
           
-          // Strategy 1: Match by item_id (if available and not a temp ID)
-          if (target.item_id && !target.item_id.startsWith('temp-')) {
-            matchedItem = suggestedProducts.find(item => 
-              item.id === target.item_id && !matched.has(item.id || '')
-            ) || null;
-            
-            if (matchedItem && MARKUP_DEBUG) {
-              console.log('[MARKUP_DEBUG] Matched by ID:', { target_id: target.item_id, item: matchedItem.product_name });
-            }
+          if (itemId && amount > 0) {
+            markupByItemId[itemId] = (markupByItemId[itemId] || 0) + amount;
           }
-          
-          // Strategy 2: Match by name + baseline price comparison
-          if (!matchedItem && target.stable_key) {
-            const storedBaseline = baselinePriceMap[target.stable_key];
-            
-            // Find items by name and compare baseline prices
-            for (const item of suggestedProducts) {
-              if (matched.has(item.id || '')) continue;
-              
-              // Calculate this item's baseline by subtracting total markups
-              const itemTotalMarkup = totalMarkupPerKey[target.stable_key] || 0;
-              const calculatedBaseline = item.line_total - itemTotalMarkup;
-              
-              // Normalize names for comparison
-              const normalizedItemName = item.product_name.toLowerCase().trim();
-              // We need to infer the name from the stable key or use a different approach
-              
-              // For now, try to match by price similarity (within 1% or $5)
-              if (storedBaseline) {
-                const priceDiff = Math.abs(calculatedBaseline - storedBaseline);
-                const priceDiffPercent = priceDiff / storedBaseline;
-                
-                if (priceDiff < 5 || priceDiffPercent < 0.01) {
-                  matchedItem = item;
-                  if (MARKUP_DEBUG) {
-                    console.log('[MARKUP_DEBUG] Matched by baseline price:', {
-                      stable_key: target.stable_key,
-                      item: item.product_name,
-                      storedBaseline,
-                      calculatedBaseline,
-                      currentPrice: item.line_total,
-                      markup: itemTotalMarkup
-                    });
-                  }
-                  break;
-                }
+        }
+      }
+      
+      console.log('[EditSession] Markup annotation map:', markupByItemId);
+      
+      // Annotate items with markup amounts (DO NOT modify prices - annotation only!)
+      suggestedProducts = suggestedProducts.map(item => {
+        const itemId = item.id;
+        if (!itemId) return item;
+        
+        const markupAmount = markupByItemId[itemId];
+        if (!markupAmount || markupAmount <= 0) return item;
+        
+        // Build breakdown from all markups that target this item
+        const breakdown: Array<{ markupId: string; delta: number }> = [];
+        for (const markup of bakedMarkups) {
+          const targets = markup.targets || [];
+          for (const target of targets) {
+            const targetItemId = (target as any).item_id || (target as any).lineItemId;
+            if (targetItemId === itemId) {
+              const amount = (target as any).amount || 0;
+              if (amount > 0) {
+                breakdown.push({ markupId: markup.id, delta: amount });
               }
             }
-          }
-          
-          // Strategy 3: Fallback - match by position if nothing else works
-          if (!matchedItem && targets.length === suggestedProducts.length) {
-            const targetIndex = targets.indexOf(target);
-            if (targetIndex >= 0 && targetIndex < suggestedProducts.length) {
-              const item = suggestedProducts[targetIndex];
-              if (!matched.has(item.id || '')) {
-                matchedItem = item;
-                console.warn('[EditSession] Matched by position (fallback):', { index: targetIndex, item: item.product_name });
-              }
-            }
-          }
-          
-          if (matchedItem) {
-            const delta = perItemDeltas[target.stable_key] || 0;
-            if (delta > 0) {
-              targetMatches.push({ target, item: matchedItem, delta });
-              matched.add(matchedItem.id || '');
-              
-              if (MARKUP_DEBUG) {
-                console.log('[MARKUP_DEBUG] Final match:', {
-                  stable_key: target.stable_key,
-                  matched_item: matchedItem.product_name,
-                  matched_id: matchedItem.id,
-                  delta,
-                  baseline: perItemBaseBefore[target.stable_key]
-                });
-              }
-            }
-          } else {
-            unmatchedTargetCount++;
-            console.warn('[EditSession] Unmatched markup target:', {
-              markupId: markup.id,
-              stable_key: target.stable_key,
-              item_id: target.item_id,
-              storedBaseline: baselinePriceMap[target.stable_key]
-            });
           }
         }
         
-        // Apply deltas to matched items
-        suggestedProducts = suggestedProducts.map(item => {
-          const match = targetMatches.find(m => m.item === item);
-          if (!match) return item;
-          
-          const existingBreakdown = item.bakedAdjustments?.breakdown || [];
-          const newBreakdown = [...existingBreakdown, { markupId: markup.id, delta: match.delta }];
-          const markupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
-          
-          if (MARKUP_DEBUG) {
-            console.log('[MARKUP_DEBUG] Applying markup to item:', {
-              item: item.product_name,
-              markupId: markup.id,
-              delta: match.delta,
-              markupTotal
-            });
-          }
-          
-          return {
-            ...item,
-            bakedAdjustments: {
-              markupTotal,
-              breakdown: newBreakdown
-            }
-          };
+        console.log('[EditSession] Annotated item:', {
+          name: item.product_name,
+          id: itemId,
+          markupAmount,
+          breakdownCount: breakdown.length
         });
         
-        console.log('[EditSession] Matched', targetMatches.length, 'of', targets.length, 'targets for markup', markup.label);
-      }
+        return {
+          ...item,
+          bakedAdjustments: {
+            markupTotal: markupAmount,
+            breakdown
+          }
+        };
+      });
       
-      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0);
-      console.log('[EditSession] Rebuilt bakedAdjustments for', itemsWithMarkups.length, 'items');
-      
-      if (unmatchedTargetCount > 0) {
-        console.warn('[EditSession] WARNING: ', unmatchedTargetCount, 'markup targets could not be matched to current items');
-      }
+      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
+      console.log('[EditSession] ✓ Annotated', itemsWithMarkups.length, 'items with markup indicators');
     }
 
     // Build quote preview
@@ -498,7 +365,7 @@ export async function rehydrateEditSession(
     if (stateError) throw stateError;
 
     // Telemetry for rehydration
-    const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0).length;
+    const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0).length;
     if (bakedMarkups.length > 0) {
       const totalTargets = bakedMarkups.reduce((sum, m) => sum + (m.targets?.length || 0), 0);
       console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, ', totalTargets:', totalTargets, ', unmatched:', unmatchedTargetCount || 0, '}');
