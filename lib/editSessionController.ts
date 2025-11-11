@@ -244,7 +244,7 @@ export async function rehydrateEditSession(
     });
 
     // Convert quote items to suggested products format
-    const suggestedProducts: ProductSuggestion[] = snapshot.items.map((item) => ({
+    let suggestedProducts: ProductSuggestion[] = snapshot.items.map((item) => ({
       id: item.product_id || undefined,
       product_name: item.product_name,
       description: item.description || "",
@@ -253,8 +253,62 @@ export async function rehydrateEditSession(
       line_total: Number(item.line_total),
       selected: true,
       discount_percent: Number(item.discount_percent || 0),
-      bakedAdjustments: item.bakedAdjustments // Restore baked adjustments
+      bakedAdjustments: undefined // Will rebuild from markup configs
     }));
+
+    // Rebuild bakedAdjustments from saved markup configs
+    // This is critical because bakedAdjustments.breakdown is NOT persisted in quote_items table
+    const bakedMarkups = snapshot.bakedMarkups || [];
+    if (bakedMarkups.length > 0) {
+      console.log('[EditSession] Rebuilding bakedAdjustments from', bakedMarkups.length, 'markup configs');
+      
+      // For each markup config, rebuild the per-item breakdowns
+      for (const markup of bakedMarkups) {
+        const audited = markup.audited || {};
+        const perItemDeltas = audited.perItemDeltas || {};
+        
+        console.log('[EditSession] Rebuilding markup:', {
+          id: markup.id,
+          label: markup.label,
+          percent: markup.percent,
+          totalMarkup: audited.totalMarkup,
+          itemCount: Object.keys(perItemDeltas).length
+        });
+        
+        // Apply each item's delta to rebuild bakedAdjustments
+        suggestedProducts = suggestedProducts.map((item, idx) => {
+          // Try to match by product_id first, then by index as fallback
+          const itemKey = item.id || `temp-${idx}`;
+          const delta = perItemDeltas[itemKey] || 0;
+          
+          if (delta > 0) {
+            const existingBreakdown = item.bakedAdjustments?.breakdown || [];
+            const newBreakdown = [...existingBreakdown, { markupId: markup.id, delta }];
+            const markupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
+            
+            console.log('[EditSession] Rebuilding item adjustment:', {
+              item: item.product_name,
+              markupId: markup.id,
+              delta,
+              markupTotal
+            });
+            
+            return {
+              ...item,
+              bakedAdjustments: {
+                markupTotal,
+                breakdown: newBreakdown
+              }
+            };
+          }
+          
+          return item;
+        });
+      }
+      
+      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0);
+      console.log('[EditSession] Rebuilt bakedAdjustments for', itemsWithMarkups.length, 'items');
+    }
 
     // Build quote preview
     const quotePreview: QuotePreview = {
@@ -296,11 +350,19 @@ export async function rehydrateEditSession(
 
     if (stateError) throw stateError;
 
+    // Telemetry for rehydration
+    const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0).length;
+    if (bakedMarkups.length > 0) {
+      console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, '}');
+    }
+    
     logEditOperation('edit:loaded', {
       sessionId,
       projectId,
       itemCount: suggestedProducts.length,
-      total: quotePreview.total_price
+      total: quotePreview.total_price,
+      bakedMarkupsRehydrated: bakedMarkups.length,
+      itemsWithMarkups
     });
 
     return {
