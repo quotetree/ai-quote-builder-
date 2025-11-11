@@ -990,46 +990,50 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     console.log('[Markup] delete:start { markupId:', markupId, ', totalMarkup:', markup.audited?.totalMarkup || 0, '}');
     console.log('[Telemetry] markup:delete { markupId:', markupId, ', totalDelta:', markup.audited?.totalMarkup || 0, '}');
     
-    // Remove deltas from affected items
-    const updatedItems = quotePreview.line_items.map(item => {
+    const perItemBaseBefore = markup.audited?.perItemBaseBefore || {};
+    
+    // Recompute items from baseline (don't subtract - recompute for accuracy)
+    const updatedItems = quotePreview.line_items.map((item, idx) => {
       if (!item.bakedAdjustments || !item.bakedAdjustments.breakdown) {
         return item;
       }
       
-      // Get the OLD delta BEFORE filtering (critical!)
+      const itemKey = item.id || `temp-${idx}`;
+      
+      // Check if this item has the markup we're deleting
+      const hasThisMarkup = item.bakedAdjustments.breakdown.some(b => b.markupId === markupId);
+      if (!hasThisMarkup) {
+        return item; // Not affected, skip
+      }
+      
+      // Get OLD breakdown and delta
       const oldDelta = item.bakedAdjustments.breakdown.find(b => b.markupId === markupId)?.delta || 0;
+      const oldMarkupTotal = item.bakedAdjustments.markupTotal || 0;
       
       // Filter out this markup's delta
       const newBreakdown = item.bakedAdjustments.breakdown.filter(b => b.markupId !== markupId);
       const newMarkupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
       
-      // If item had this markup, subtract the delta from line_total and unit_price
-      if (oldDelta > 0) {
-        const newLineTotal = bankersRound(item.line_total - oldDelta, 2);
-        const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
-        
-        console.log('[Markup] Removing delta from item:', {
-          name: item.product_name,
-          oldLineTotal: item.line_total,
-          delta: oldDelta,
-          newLineTotal,
-          newUnitPrice
-        });
-        
-        return {
-          ...item,
-          unit_price: newUnitPrice,
-          line_total: newLineTotal,
-          bakedAdjustments: newBreakdown.length > 0 ? {
-            markupTotal: newMarkupTotal,
-            breakdown: newBreakdown
-          } : undefined
-        };
-      }
+      // Recompute from baseline (more accurate than subtracting)
+      // Get baseline: prefer stored value, fallback to current - old total markup
+      const baseline = perItemBaseBefore[itemKey] ?? (item.line_total - oldMarkupTotal);
+      const newLineTotal = bankersRound(baseline + newMarkupTotal, 2);
+      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
       
-      // Item didn't have this markup - just update breakdown
+      console.log('[Markup] Recomputing item from baseline:', {
+        name: item.product_name,
+        baseline,
+        oldMarkupTotal,
+        newMarkupTotal,
+        oldLineTotal: item.line_total,
+        newLineTotal,
+        method: perItemBaseBefore[itemKey] ? 'stored' : 'computed'
+      });
+      
       return {
         ...item,
+        unit_price: newUnitPrice,
+        line_total: newLineTotal,
         bakedAdjustments: newBreakdown.length > 0 ? {
           markupTotal: newMarkupTotal,
           breakdown: newBreakdown
@@ -1321,6 +1325,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       }
     }
     
+    // Capture per-item baselines BEFORE applying deltas (critical for recompute on delete)
+    const perItemBaseBefore: Record<string, number> = {};
+    baseItems.forEach((item, idx) => {
+      const tempId = item.id || `temp-${idx}`;
+      const delta = perItemDeltas[tempId] || 0;
+      if (delta > 0) {
+        perItemBaseBefore[tempId] = item.line_total; // Store price BEFORE this markup
+      }
+    });
+    
     // Create new markup config
     const newMarkup: import("@/types/database").BakedMarkupConfig = {
       id: markupId,
@@ -1341,12 +1355,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       audited: {
         base: preview.baseTotal,
         totalMarkup: preview.markupAmount,
-        perItemDeltas
+        perItemDeltas,
+        perItemBaseBefore // NEW: Store baseline prices for exact rollback
       },
       createdAt: new Date().toISOString(),
       createdBy: createdBy.id,
       supersededById: editingMarkupId ? undefined : undefined // Will be set if this gets edited later
     };
+    
+    console.log('[Markup] Storing baselines:', {
+      markupId,
+      baselineCount: Object.keys(perItemBaseBefore).length,
+      baselines: Object.entries(perItemBaseBefore).map(([k, v]) => ({ item: k, baseline: v }))
+    });
     
     // Apply baked adjustments to items (starting from baseItems which already has old deltas removed)
     const updatedItems = baseItems.map((item, idx) => {

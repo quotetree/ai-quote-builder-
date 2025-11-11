@@ -105,6 +105,7 @@ export interface BakedMarkupConfig {
     base: number;
     totalMarkup: number;
     perItemDeltas: Record<string, number>; // itemId -> delta amount
+    perItemBaseBefore?: Record<string, number>; // itemId -> price before this markup (for exact rollback)
   };
   createdAt: string;
   createdBy: string;
