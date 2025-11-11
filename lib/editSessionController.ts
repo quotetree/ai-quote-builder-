@@ -266,10 +266,37 @@ export async function rehydrateEditSession(
       console.log('[EditSession] Rebuilding bakedAdjustments from', bakedMarkups.length, 'markup configs');
       
       // Import stable key utilities (dynamic import for server context)
-      const { buildItemLookups, findBestMatch, generateStableKey } = await import('@/lib/stableKey');
+      const { generateStableKey } = await import('@/lib/stableKey');
       
-      // Build lookup maps for current items
-      const { byId, byKey } = buildItemLookups(suggestedProducts);
+      // CRITICAL FIX: Current item prices include markups, but stable keys were generated
+      // from BASELINE prices. We need to calculate baselines first, then generate keys.
+      
+      // Step 1: Calculate total markup per item across ALL markups
+      const totalMarkupPerKey: Record<string, number> = {};
+      for (const markup of bakedMarkups) {
+        const deltas = markup.audited?.perItemDeltas || {};
+        Object.entries(deltas).forEach(([key, delta]) => {
+          totalMarkupPerKey[key] = (totalMarkupPerKey[key] || 0) + (delta as number);
+        });
+      }
+      
+      console.log('[EditSession] Total markups per key:', totalMarkupPerKey);
+      
+      // Step 2: Build a map of stored stable_key → baseline price
+      const baselinePriceMap: Record<string, number> = {};
+      for (const markup of bakedMarkups) {
+        const baselines = markup.audited?.perItemBaseBefore || {};
+        Object.entries(baselines).forEach(([key, price]) => {
+          if (!baselinePriceMap[key]) {
+            baselinePriceMap[key] = price as number;
+          }
+        });
+      }
+      
+      console.log('[EditSession] Baseline price map:', baselinePriceMap);
+      
+      // Step 3: Build lookup by matching item properties
+      // Match by: name + baseline_price (calculated) or name + id
       const matched = new Set<string>();
       
       // For each markup config, rebuild the per-item breakdowns
@@ -285,14 +312,85 @@ export async function rehydrateEditSession(
           percent: markup.percent,
           totalMarkup: audited.totalMarkup,
           targetCount: targets.length,
-          targets: targets.map(t => ({ item_id: t.item_id, stable_key: t.stable_key }))
+          targetsHaveStableKeys: targets.every((t: any) => t.stable_key),
+          targets: targets.length > 0 ? targets.map((t: any) => ({ item_id: t.item_id, stable_key: t.stable_key })) : [],
+          currentItemCount: suggestedProducts.length,
+          currentItems: suggestedProducts.map((item, idx) => ({
+            idx,
+            id: item.id,
+            name: item.product_name,
+            line_total: item.line_total,
+            unit_price: item.unit_price
+          }))
         });
         
-        // Match each target to a current item using stable keys
+        // Match each target to a current item
         const targetMatches: Array<{ target: any; item: ProductSuggestion; delta: number }> = [];
         
         for (const target of targets) {
-          const matchedItem = findBestMatch(target, byId, byKey, perItemBaseBefore, matched);
+          let matchedItem: ProductSuggestion | null = null;
+          
+          // Strategy 1: Match by item_id (if available and not a temp ID)
+          if (target.item_id && !target.item_id.startsWith('temp-')) {
+            matchedItem = suggestedProducts.find(item => 
+              item.id === target.item_id && !matched.has(item.id || '')
+            ) || null;
+            
+            if (matchedItem && MARKUP_DEBUG) {
+              console.log('[MARKUP_DEBUG] Matched by ID:', { target_id: target.item_id, item: matchedItem.product_name });
+            }
+          }
+          
+          // Strategy 2: Match by name + baseline price comparison
+          if (!matchedItem && target.stable_key) {
+            const storedBaseline = baselinePriceMap[target.stable_key];
+            
+            // Find items by name and compare baseline prices
+            for (const item of suggestedProducts) {
+              if (matched.has(item.id || '')) continue;
+              
+              // Calculate this item's baseline by subtracting total markups
+              const itemTotalMarkup = totalMarkupPerKey[target.stable_key] || 0;
+              const calculatedBaseline = item.line_total - itemTotalMarkup;
+              
+              // Normalize names for comparison
+              const normalizedItemName = item.product_name.toLowerCase().trim();
+              // We need to infer the name from the stable key or use a different approach
+              
+              // For now, try to match by price similarity (within 1% or $5)
+              if (storedBaseline) {
+                const priceDiff = Math.abs(calculatedBaseline - storedBaseline);
+                const priceDiffPercent = priceDiff / storedBaseline;
+                
+                if (priceDiff < 5 || priceDiffPercent < 0.01) {
+                  matchedItem = item;
+                  if (MARKUP_DEBUG) {
+                    console.log('[MARKUP_DEBUG] Matched by baseline price:', {
+                      stable_key: target.stable_key,
+                      item: item.product_name,
+                      storedBaseline,
+                      calculatedBaseline,
+                      currentPrice: item.line_total,
+                      markup: itemTotalMarkup
+                    });
+                  }
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Strategy 3: Fallback - match by position if nothing else works
+          if (!matchedItem && targets.length === suggestedProducts.length) {
+            const targetIndex = targets.indexOf(target);
+            if (targetIndex >= 0 && targetIndex < suggestedProducts.length) {
+              const item = suggestedProducts[targetIndex];
+              if (!matched.has(item.id || '')) {
+                matchedItem = item;
+                console.warn('[EditSession] Matched by position (fallback):', { index: targetIndex, item: item.product_name });
+              }
+            }
+          }
           
           if (matchedItem) {
             const delta = perItemDeltas[target.stable_key] || 0;
@@ -301,9 +399,8 @@ export async function rehydrateEditSession(
               matched.add(matchedItem.id || '');
               
               if (MARKUP_DEBUG) {
-                console.log('[MARKUP_DEBUG] Matched target:', {
+                console.log('[MARKUP_DEBUG] Final match:', {
                   stable_key: target.stable_key,
-                  item_id: target.item_id,
                   matched_item: matchedItem.product_name,
                   matched_id: matchedItem.id,
                   delta,
@@ -316,7 +413,8 @@ export async function rehydrateEditSession(
             console.warn('[EditSession] Unmatched markup target:', {
               markupId: markup.id,
               stable_key: target.stable_key,
-              item_id: target.item_id
+              item_id: target.item_id,
+              storedBaseline: baselinePriceMap[target.stable_key]
             });
           }
         }
