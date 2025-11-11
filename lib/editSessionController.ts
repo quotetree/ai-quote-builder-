@@ -267,19 +267,65 @@ export async function rehydrateEditSession(
         const audited = markup.audited || {};
         const perItemDeltas = audited.perItemDeltas || {};
         
-        console.log('[EditSession] Rebuilding markup:', {
-          id: markup.id,
-          label: markup.label,
-          percent: markup.percent,
-          totalMarkup: audited.totalMarkup,
-          itemCount: Object.keys(perItemDeltas).length
-        });
+      console.log('[EditSession] Rebuilding markup:', {
+        id: markup.id,
+        label: markup.label,
+        percent: markup.percent,
+        totalMarkup: audited.totalMarkup,
+        itemCount: Object.keys(perItemDeltas).length,
+        perItemDeltasKeys: Object.keys(perItemDeltas)
+      });
+      
+      // Log items for debugging
+      console.log('[EditSession] Items to match:', suggestedProducts.map((item, idx) => ({
+        idx,
+        id: item.id,
+        name: item.product_name,
+        price: item.line_total
+      })));
+      
+      // Apply each item's delta to rebuild bakedAdjustments
+      suggestedProducts = suggestedProducts.map((item, idx) => {
+        // Try multiple matching strategies:
+        // 1. Match by item.id (if it's a UUID from database)
+        // 2. Match by temp-${idx} (if saved with temp keys)
+        // 3. Match by index position (items should be in same order)
+        const tempKey = `temp-${idx}`;
+        const idKey = item.id;
         
-        // Apply each item's delta to rebuild bakedAdjustments
-        suggestedProducts = suggestedProducts.map((item, idx) => {
-          // Try to match by product_id first, then by index as fallback
-          const itemKey = item.id || `temp-${idx}`;
-          const delta = perItemDeltas[itemKey] || 0;
+        let delta = 0;
+        let matchMethod = 'none';
+        
+        // Try ID match first
+        if (idKey && perItemDeltas[idKey]) {
+          delta = perItemDeltas[idKey];
+          matchMethod = 'id';
+        }
+        // Try temp key match
+        else if (perItemDeltas[tempKey]) {
+          delta = perItemDeltas[tempKey];
+          matchMethod = 'temp';
+        }
+        // Try positional match (use index directly)
+        else {
+          const deltaKeys = Object.keys(perItemDeltas);
+          if (deltaKeys.length > idx) {
+            // Items are in order, just use the nth delta
+            const nthKey = deltaKeys[idx];
+            delta = perItemDeltas[nthKey] || 0;
+            matchMethod = 'positional';
+          }
+        }
+        
+        console.log('[EditSession] Matching item:', {
+          idx,
+          name: item.product_name,
+          idKey,
+          tempKey,
+          foundDelta: delta,
+          matchMethod,
+          availableKeys: Object.keys(perItemDeltas)
+        });
           
           if (delta > 0) {
             const existingBreakdown = item.bakedAdjustments?.breakdown || [];
