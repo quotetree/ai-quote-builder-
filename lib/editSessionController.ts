@@ -281,7 +281,7 @@ export async function rehydrateEditSession(
       
       console.log('[EditSession] Markup annotation map:', markupByItemId);
       
-      // Annotate items with markup amounts (DO NOT modify prices - annotation only!)
+      // Annotate items with markup amounts AND fix old quotes with baked-in unit prices
       suggestedProducts = suggestedProducts.map(item => {
         const itemId = item.id;
         if (!itemId) return item;
@@ -304,18 +304,27 @@ export async function rehydrateEditSession(
           }
         }
         
+        // For OLD quotes (before fix), unit_price may have markup baked in
+        // Restore baseline by calculating from line_total - markup
+        const baselineLineTotal = item.line_total - markupAmount;
+        const baselineUnitPrice = item.quantity > 0 
+          ? baselineLineTotal / item.quantity 
+          : item.unit_price;
+        
         console.log('[EditSession] Annotated item:', {
           name: item.product_name,
           id: itemId,
-          unitPrice: item.unit_price,
-          lineTotal: item.line_total,
+          oldUnitPrice: item.unit_price,
+          restoredUnitPrice: baselineUnitPrice,
+          lineTotal: baselineLineTotal,
           markupAmount,
           breakdownCount: breakdown.length
         });
         
         return {
           ...item,
-          // Prices stay as-is from database (unit_price = original, line_total = with markup)
+          unit_price: baselineUnitPrice,  // Restore baseline (works for old & new quotes)
+          line_total: baselineLineTotal,   // Remove markup for clean baseline
           bakedAdjustments: {
             markupTotal: markupAmount,
             breakdown
