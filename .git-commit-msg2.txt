@@ -1,0 +1,73 @@
+feat: Rebuild bakedAdjustments breakdown on Edit mode rehydration
+
+CRITICAL: Enables "Includes Markup" indicators and proper delete rollback
+
+Problem 1: Missing Visual Indicators
+When reopening a quote in Edit mode with baked markups, items don't show
+"Includes Markup: +$X.YZ" sublines.
+
+Problem 2: Delete Doesn't Revert Item Prices
+Deleting markup updates Total but item prices stay inflated. Should revert
+to pre-markup price but stays at baked price.
+
+Root Cause:
+bakedAdjustments.breakdown is NOT persisted in quote_items table!
+
+When saved:
+- baked_markups configs ARE saved (in quotes.baked_markups)
+- Item prices ARE saved with markup baked in
+- bakedAdjustments.breakdown is NOT saved (ephemeral)
+
+When rehydrating:
+- Items load with inflated prices (correct)
+- bakedMarkups array loads (correct)
+- item.bakedAdjustments is undefined! (missing)
+
+So delete fails:
+- Line 1000: oldDelta = item.bakedAdjustments.breakdown.find(...)
+- item.bakedAdjustments is undefined
+- oldDelta is always 0
+- No delta subtracted from price
+
+Solution: Rebuild bakedAdjustments During Rehydration
+
+Use audited.perItemDeltas stored in each markup config to rebuild the
+breakdown for each item.
+
+Implementation:
+
+1. After loading items from DB (line 247-257)
+2. Loop through bakedMarkups configs (line 261-311)
+3. For each markup, get audited.perItemDeltas
+4. Match items by ID or index
+5. Rebuild bakedAdjustments.breakdown for each item
+6. Set markupTotal = sum of breakdown deltas
+
+Result:
+- Items now have bakedAdjustments with breakdown
+- "Includes Markup" sublines render correctly
+- Delete can find oldDelta and subtract it
+- Item prices revert when markup deleted
+
+Changes:
+- Line 247: Changed const to let for suggestedProducts
+- Lines 259-311: Added rebuild logic with detailed logging
+- Lines 353-366: Added telemetry for rehydration
+
+Console Logs Added:
+- [EditSession] Rebuilding bakedAdjustments from N configs
+- [EditSession] Rebuilding markup: { id, label, percent, itemCount }
+- [EditSession] Rebuilding item adjustment: { item, markupId, delta }
+- [EditSession] Rebuilt bakedAdjustments for N items
+- [Telemetry] rehydrate:bakedMarkups { rules, itemsAffected }
+
+Expected After Fix:
+1. Reopen Edit -> Items show "Includes Markup: +$1,350.27"
+2. Delete markup -> Item price drops from $2,628 to $1,278
+3. Console shows rebuild process with exact deltas
+
+Files: lib/editSessionController.ts, REHYDRATE_BAKED_ADJUSTMENTS_FIX.md
+
+Fixes: Rehydration of baked markup metadata
+Enables: Visual indicators and proper delete rollback
+

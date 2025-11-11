@@ -256,104 +256,107 @@ export async function rehydrateEditSession(
       bakedAdjustments: undefined // Will rebuild from markup configs
     }));
 
-    // Rebuild bakedAdjustments from saved markup configs
+    // Rebuild bakedAdjustments from saved markup configs using STABLE KEY matching
     // This is critical because bakedAdjustments.breakdown is NOT persisted in quote_items table
     const bakedMarkups = snapshot.bakedMarkups || [];
+    let unmatchedTargetCount = 0;
+    
     if (bakedMarkups.length > 0) {
+      const MARKUP_DEBUG = process.env.NEXT_PUBLIC_MARKUP_DEBUG === 'true';
       console.log('[EditSession] Rebuilding bakedAdjustments from', bakedMarkups.length, 'markup configs');
+      
+      // Import stable key utilities (dynamic import for server context)
+      const { buildItemLookups, findBestMatch, generateStableKey } = await import('@/lib/stableKey');
+      
+      // Build lookup maps for current items
+      const { byId, byKey } = buildItemLookups(suggestedProducts);
+      const matched = new Set<string>();
       
       // For each markup config, rebuild the per-item breakdowns
       for (const markup of bakedMarkups) {
         const audited = markup.audited || {};
         const perItemDeltas = audited.perItemDeltas || {};
+        const perItemBaseBefore = audited.perItemBaseBefore || {};
+        const targets = markup.targets || [];
         
-      console.log('[EditSession] Rebuilding markup:', {
-        id: markup.id,
-        label: markup.label,
-        percent: markup.percent,
-        totalMarkup: audited.totalMarkup,
-        itemCount: Object.keys(perItemDeltas).length,
-        perItemDeltasKeys: Object.keys(perItemDeltas)
-      });
-      
-      // Log items for debugging
-      console.log('[EditSession] Items to match:', suggestedProducts.map((item, idx) => ({
-        idx,
-        id: item.id,
-        name: item.product_name,
-        price: item.line_total
-      })));
-      
-      // Apply each item's delta to rebuild bakedAdjustments
-      suggestedProducts = suggestedProducts.map((item, idx) => {
-        // Try multiple matching strategies:
-        // 1. Match by item.id (if it's a UUID from database)
-        // 2. Match by temp-${idx} (if saved with temp keys)
-        // 3. Match by index position (items should be in same order)
-        const tempKey = `temp-${idx}`;
-        const idKey = item.id;
+        console.log('[EditSession] Rebuilding markup:', {
+          id: markup.id,
+          label: markup.label,
+          percent: markup.percent,
+          totalMarkup: audited.totalMarkup,
+          targetCount: targets.length,
+          targets: targets.map(t => ({ item_id: t.item_id, stable_key: t.stable_key }))
+        });
         
-        let delta = 0;
-        let matchMethod = 'none';
+        // Match each target to a current item using stable keys
+        const targetMatches: Array<{ target: any; item: ProductSuggestion; delta: number }> = [];
         
-        // Try ID match first
-        if (idKey && perItemDeltas[idKey]) {
-          delta = perItemDeltas[idKey];
-          matchMethod = 'id';
-        }
-        // Try temp key match
-        else if (perItemDeltas[tempKey]) {
-          delta = perItemDeltas[tempKey];
-          matchMethod = 'temp';
-        }
-        // Try positional match (use index directly)
-        else {
-          const deltaKeys = Object.keys(perItemDeltas);
-          if (deltaKeys.length > idx) {
-            // Items are in order, just use the nth delta
-            const nthKey = deltaKeys[idx];
-            delta = perItemDeltas[nthKey] || 0;
-            matchMethod = 'positional';
+        for (const target of targets) {
+          const matchedItem = findBestMatch(target, byId, byKey, perItemBaseBefore, matched);
+          
+          if (matchedItem) {
+            const delta = perItemDeltas[target.stable_key] || 0;
+            if (delta > 0) {
+              targetMatches.push({ target, item: matchedItem, delta });
+              matched.add(matchedItem.id || '');
+              
+              if (MARKUP_DEBUG) {
+                console.log('[MARKUP_DEBUG] Matched target:', {
+                  stable_key: target.stable_key,
+                  item_id: target.item_id,
+                  matched_item: matchedItem.product_name,
+                  matched_id: matchedItem.id,
+                  delta,
+                  baseline: perItemBaseBefore[target.stable_key]
+                });
+              }
+            }
+          } else {
+            unmatchedTargetCount++;
+            console.warn('[EditSession] Unmatched markup target:', {
+              markupId: markup.id,
+              stable_key: target.stable_key,
+              item_id: target.item_id
+            });
           }
         }
         
-        console.log('[EditSession] Matching item:', {
-          idx,
-          name: item.product_name,
-          idKey,
-          tempKey,
-          foundDelta: delta,
-          matchMethod,
-          availableKeys: Object.keys(perItemDeltas)
-        });
+        // Apply deltas to matched items
+        suggestedProducts = suggestedProducts.map(item => {
+          const match = targetMatches.find(m => m.item === item);
+          if (!match) return item;
           
-          if (delta > 0) {
-            const existingBreakdown = item.bakedAdjustments?.breakdown || [];
-            const newBreakdown = [...existingBreakdown, { markupId: markup.id, delta }];
-            const markupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
-            
-            console.log('[EditSession] Rebuilding item adjustment:', {
+          const existingBreakdown = item.bakedAdjustments?.breakdown || [];
+          const newBreakdown = [...existingBreakdown, { markupId: markup.id, delta: match.delta }];
+          const markupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
+          
+          if (MARKUP_DEBUG) {
+            console.log('[MARKUP_DEBUG] Applying markup to item:', {
               item: item.product_name,
               markupId: markup.id,
-              delta,
+              delta: match.delta,
               markupTotal
             });
-            
-            return {
-              ...item,
-              bakedAdjustments: {
-                markupTotal,
-                breakdown: newBreakdown
-              }
-            };
           }
           
-          return item;
+          return {
+            ...item,
+            bakedAdjustments: {
+              markupTotal,
+              breakdown: newBreakdown
+            }
+          };
         });
+        
+        console.log('[EditSession] Matched', targetMatches.length, 'of', targets.length, 'targets for markup', markup.label);
       }
       
       const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0);
       console.log('[EditSession] Rebuilt bakedAdjustments for', itemsWithMarkups.length, 'items');
+      
+      if (unmatchedTargetCount > 0) {
+        console.warn('[EditSession] WARNING: ', unmatchedTargetCount, 'markup targets could not be matched to current items');
+      }
     }
 
     // Build quote preview
@@ -399,7 +402,8 @@ export async function rehydrateEditSession(
     // Telemetry for rehydration
     const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal > 0).length;
     if (bakedMarkups.length > 0) {
-      console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, '}');
+      const totalTargets = bakedMarkups.reduce((sum, m) => sum + (m.targets?.length || 0), 0);
+      console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, ', totalTargets:', totalTargets, ', unmatched:', unmatchedTargetCount || 0, '}');
     }
     
     logEditOperation('edit:loaded', {
@@ -408,7 +412,8 @@ export async function rehydrateEditSession(
       itemCount: suggestedProducts.length,
       total: quotePreview.total_price,
       bakedMarkupsRehydrated: bakedMarkups.length,
-      itemsWithMarkups
+      itemsWithMarkups,
+      unmatchedTargets: unmatchedTargetCount || 0
     });
 
     return {

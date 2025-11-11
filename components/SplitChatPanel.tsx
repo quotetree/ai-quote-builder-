@@ -7,6 +7,7 @@ import { ChatMessage, ProductSuggestion, QuotePreview, ChargeConfig } from "@/ty
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
 import { useCurrentUser, getCurrentUserClient, getAnonymousUser, type UserRef } from "@/lib/auth/client";
+import { generateStableKey } from "@/lib/stableKey";
 
 interface SplitChatPanelProps {
   projectId: string;
@@ -1268,27 +1269,46 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       currentMarkup.addToSelectedProducts
     );
     
-    // Calculate per-item deltas
-    const perItemDeltas: Record<string, number> = {};
+    // Generate stable keys for all items (for reliable cross-version matching)
+    const itemStableKeys = new Map<number, string>();
+    baseItems.forEach((item, idx) => {
+      itemStableKeys.set(idx, generateStableKey(item));
+    });
+    
+    // Calculate per-item deltas (using stable keys, not temp IDs)
+    const perItemDeltas: Record<string, number> = {}; // stableKey -> delta
     let remainingMarkup = preview.markupAmount;
+    
+    // Build index map for addToMatches to find their stable keys
+    const addToMatchIndices = new Map<any, number>();
+    addToMatches.forEach(item => {
+      const idx = baseItems.findIndex(bi => bi === item);
+      if (idx >= 0) {
+        addToMatchIndices.set(item, idx);
+      }
+    });
     
     if (currentMarkup.distribution === 'proportional') {
       // Proportional distribution based on line totals
-      const addToItemsWithIds = addToMatches.map((item, idx) => ({
-        ...item,
-        tempId: item.id || `temp-${idx}`
-      }));
+      const addToItemsWithKeys = addToMatches.map(item => {
+        const idx = addToMatchIndices.get(item);
+        const stableKey = idx !== undefined ? itemStableKeys.get(idx) : undefined;
+        return {
+          ...item,
+          stableKey: stableKey || `fallback-${item.product_name}`
+        };
+      });
       
       // Calculate each item's share
-      const shares = addToItemsWithIds.map(item => ({
-        tempId: item.tempId,
+      const shares = addToItemsWithKeys.map(item => ({
+        stableKey: item.stableKey,
         share: preview.addToTotal > 0 ? item.line_total / preview.addToTotal : 0
       }));
       
       // Distribute with rounding
       const deltas = shares.map((s, idx) => {
         const delta = bankersRound(preview.markupAmount * s.share, 2);
-        return { tempId: s.tempId, delta };
+        return { stableKey: s.stableKey, delta };
       });
       
       // Calculate rounding residue
@@ -1304,7 +1324,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       }
       
       deltas.forEach(d => {
-        perItemDeltas[d.tempId] = d.delta;
+        perItemDeltas[d.stableKey] = d.delta;
       });
     } else if (currentMarkup.distribution === 'even') {
       // Even distribution
@@ -1313,25 +1333,40 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const residue = bankersRound(preview.markupAmount - totalDistributed, 2);
       
       addToMatches.forEach((item, idx) => {
-        const tempId = item.id || `temp-${idx}`;
-        perItemDeltas[tempId] = idx === 0 ? bankersRound(evenShare + residue, 2) : evenShare;
+        const itemIdx = addToMatchIndices.get(item);
+        const stableKey = itemIdx !== undefined ? itemStableKeys.get(itemIdx) : undefined;
+        if (stableKey) {
+          perItemDeltas[stableKey] = idx === 0 ? bankersRound(evenShare + residue, 2) : evenShare;
+        }
       });
     } else if (currentMarkup.distribution === 'single' && currentMarkup.singleItemIndex !== null) {
       // Single item gets all markup
       const singleItem = addToMatches[currentMarkup.singleItemIndex];
       if (singleItem) {
-        const tempId = singleItem.id || `temp-${currentMarkup.singleItemIndex}`;
-        perItemDeltas[tempId] = preview.markupAmount;
+        const itemIdx = addToMatchIndices.get(singleItem);
+        const stableKey = itemIdx !== undefined ? itemStableKeys.get(itemIdx) : undefined;
+        if (stableKey) {
+          perItemDeltas[stableKey] = preview.markupAmount;
+        }
       }
     }
     
     // Capture per-item baselines BEFORE applying deltas (critical for recompute on delete)
-    const perItemBaseBefore: Record<string, number> = {};
+    // AND build targets array for rehydration
+    const perItemBaseBefore: Record<string, number> = {}; // stableKey -> baseline
+    const targets: Array<{ item_id?: string; stable_key: string }> = [];
+    
     baseItems.forEach((item, idx) => {
-      const tempId = item.id || `temp-${idx}`;
-      const delta = perItemDeltas[tempId] || 0;
+      const stableKey = itemStableKeys.get(idx);
+      if (!stableKey) return;
+      
+      const delta = perItemDeltas[stableKey] || 0;
       if (delta > 0) {
-        perItemBaseBefore[tempId] = item.line_total; // Store price BEFORE this markup
+        perItemBaseBefore[stableKey] = item.line_total; // Store price BEFORE this markup
+        targets.push({
+          item_id: item.id && !item.id.startsWith('temp-') ? item.id : undefined,
+          stable_key: stableKey
+        });
       }
     });
     
@@ -1352,11 +1387,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         ? { singleItemId: addToMatches[currentMarkup.singleItemIndex]?.id || `temp-${currentMarkup.singleItemIndex}` }
         : currentMarkup.distribution as 'proportional' | 'even',
       rounding: { mode: 'bankers', places: 2 },
+      targets, // NEW: Explicit list of targeted items with stable keys for rehydration
       audited: {
         base: preview.baseTotal,
         totalMarkup: preview.markupAmount,
-        perItemDeltas,
-        perItemBaseBefore // NEW: Store baseline prices for exact rollback
+        perItemDeltas, // Now uses stableKey as keys
+        perItemBaseBefore // Now uses stableKey as keys
       },
       createdAt: new Date().toISOString(),
       createdBy: createdBy.id,
@@ -1371,16 +1407,22 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     // Apply baked adjustments to items (starting from baseItems which already has old deltas removed)
     const updatedItems = baseItems.map((item, idx) => {
-      const tempId = item.id || `temp-${idx}`;
-      const delta = perItemDeltas[tempId] || 0;
+      const stableKey = itemStableKeys.get(idx);
+      if (!stableKey) return item;
       
-      if (delta === 0) return item;
+      const delta = perItemDeltas[stableKey] || 0;
+      
+      if (delta === 0) return {
+        ...item,
+        stableKey // Add stable key to item for future reference
+      };
       
       const newLineTotal = bankersRound(item.line_total + delta, 2);
       const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
       
       return {
         ...item,
+        stableKey, // Add stable key to item for future reference
         line_total: newLineTotal,
         unit_price: newUnitPrice,
         bakedAdjustments: {

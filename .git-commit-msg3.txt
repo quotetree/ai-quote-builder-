@@ -1,0 +1,127 @@
+feat: Store baseline prices and recompute from baseline on markup delete
+
+CRITICAL: Fixes accumulation errors and ensures exact baseline restoration
+
+Problem: Accumulation Error from Subtraction
+When deleting a markup, using subtraction (current - delta) accumulates
+floating-point errors and rounding drift, especially with multiple markups.
+
+User report: Delete 6% markup on Camera Labor - price stays at $9,443 instead
+of reverting to $7,500 baseline.
+
+Root Causes:
+1. No baseline stored - only stored delta
+2. Subtraction approach: newPrice = current - delta
+3. Multiple markups compound errors
+4. Rounding residue distributes differently on add vs subtract
+
+Solution: Store Baseline + Recompute (Don't Subtract)
+
+New approach:
+1. When applying markup: Store perItemBaseBefore[itemId] = item.line_total
+2. When deleting markup: Recompute from baseline
+   - baseline = perItemBaseBefore[itemId] OR (current - sumOfAllDeltas)
+   - newPrice = baseline + sumOfRemainingDeltas
+3. Always recompute, never subtract
+
+Implementation:
+
+1. Store Baseline (lines 1324-1332)
+BEFORE applying markup deltas, capture each item's current price:
+```
+perItemBaseBefore[itemId] = item.line_total  // Price BEFORE this markup
+```
+
+2. Update Type (types/database.ts line 108)
+Added optional field to BakedMarkupConfig.audited:
+```
+perItemBaseBefore?: Record<string, number>
+```
+
+3. Recompute on Delete (lines 993-1042)
+Changed from subtraction to recomputation:
+```
+// OLD: newPrice = current - delta
+// NEW: newPrice = baseline + sumOfRemainingDeltas
+baseline = perItemBaseBefore[itemKey] ?? (current - oldMarkupTotal)
+newLineTotal = bankersRound(baseline + newMarkupTotal, 2)
+```
+
+Benefits:
+- Exact baseline restoration (no drift)
+- Works with multiple markups
+- Rounding consistency
+- Backward compatible (fallback to computed baseline)
+
+Data Flow Example:
+
+Add 6% markup:
+- Baseline: $7,500
+- Delta: $450
+- Store: perItemBaseBefore["temp-0"] = 7500
+- Apply: newPrice = 7500 + 450 = 7950
+
+Add 3% markup:
+- Baseline: $7,950 (price before 3% markup)
+- Delta: $238.50
+- Store: perItemBaseBefore["temp-0"] = 7950
+- Apply: newPrice = 7950 + 238.50 = 8188.50
+
+Delete 6% markup:
+- Load baseline: 7500 (stored)
+- Remove 6% from breakdown
+- Remaining: 3% = $238.50
+- Recompute: 7500 + 238.50 = 7738.50 (exact!)
+
+Delete 3% markup:
+- Compute baseline: 7738.50 - 238.50 = 7500
+- Remove 3% from breakdown
+- Remaining: 0
+- Recompute: 7500 + 0 = 7500 (back to original!)
+
+Fallback Strategy:
+For old markups without perItemBaseBefore:
+```
+baseline = item.line_total - oldMarkupTotal
+```
+Computes baseline as current minus all markup deltas.
+Works for normal flow, assumes no external price edits.
+
+Console Logs Added:
+
+Adding markup:
+```
+[Markup] Storing baselines: {
+  markupId, baselineCount, baselines: [{ item, baseline }]
+}
+```
+
+Deleting markup:
+```
+[Markup] Recomputing item from baseline: {
+  name, baseline, oldMarkupTotal, newMarkupTotal,
+  oldLineTotal, newLineTotal,
+  method: "stored" | "computed"
+}
+```
+
+Files Changed:
+- types/database.ts: Add perItemBaseBefore field
+- components/SplitChatPanel.tsx:
+  * Lines 1324-1332: Capture baseline before apply
+  * Line 1355: Store in audited
+  * Lines 1362-1366: Log stored baselines
+  * Lines 993-1042: Recompute delete logic
+  * Lines 1023-1031: Log recompute details
+- BASELINE_RECOMPUTE_FIX.md: Complete documentation
+
+Acceptance Criteria:
+AC1: Delete markup -> exact baseline restoration (no drift)
+AC2: Multiple markups work correctly
+AC3: Backward compatible with old markups
+AC4: Console logs show baseline and method
+AC5: No accumulated rounding errors
+
+Fixes: Markup delete accumulation errors
+Ensures: Exact baseline price restoration
+

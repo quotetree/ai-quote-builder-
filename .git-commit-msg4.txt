@@ -1,0 +1,87 @@
+fix: Improve item matching in bakedAdjustments rehydration with fallback strategies
+
+CRITICAL: Fixes "Includes Markup" indicators not showing when reopening quotes for edit
+
+Problem:
+When reopening a saved quote for editing, items don't show "Includes Markup: +$X" 
+indicators even though the markup is applied and shows in the Baked Markups section.
+
+Root Cause: Key Mismatch
+When CREATING a quote:
+- Items have temporary IDs: "temp-0", "temp-1", etc.
+- perItemDeltas saved with these keys: { "temp-0": 1943.82 }
+
+When RELOADING from database:
+- Items have database UUIDs: "uuid-abc-123..."
+- Matching by item.id fails (UUID != "temp-0")
+- Matching by temp-${idx} fails (UUID != "temp-0")
+- Result: delta = 0, no bakedAdjustments rebuilt
+
+Solution: Multi-Strategy Matching
+Implemented 3 fallback strategies in order:
+
+1. ID Match: Try item.id first (for items with stable UUIDs)
+2. Temp Match: Try temp-${idx} (for newly created items)
+3. Positional Match: Use index position (items in same order)
+
+New Logic:
+```
+if (perItemDeltas[item.id]) -> use that delta
+else if (perItemDeltas[`temp-${idx}`]) -> use that delta
+else -> use the nth delta for the nth item (positional)
+```
+
+Enhanced Logging:
+Added comprehensive logging to diagnose matching:
+- perItemDeltasKeys: What keys are stored
+- Items to match: What IDs items have when loaded
+- Per-item matching: Which strategy worked (id/temp/positional)
+
+Console output now shows:
+```
+[EditSession] Rebuilding markup: {
+  perItemDeltasKeys: ["temp-0"]  // What's stored
+}
+
+[EditSession] Items to match: [
+  { idx: 0, id: "uuid-abc", name: "Camera Labor", price: 9443.82 }
+]
+
+[EditSession] Matching item: {
+  idx: 0,
+  name: "Camera Labor",
+  idKey: "uuid-abc",
+  tempKey: "temp-0",
+  foundDelta: 1943.82,
+  matchMethod: "temp",     // Successfully matched!
+  availableKeys: ["temp-0"]
+}
+```
+
+Why Positional Matching Works:
+- Items are always in the same order (database preserves order)
+- perItemDeltas keys are in creation order
+- Safe to match nth item to nth delta
+
+Benefits:
+- Works for new quotes (temp IDs)
+- Works for saved quotes (database UUIDs)
+- Works even if ID format changes
+- Gracefully falls back through strategies
+
+Files Changed:
+- lib/editSessionController.ts:
+  * Lines 270-277: Log perItemDeltas keys
+  * Lines 279-285: Log items being matched
+  * Lines 289-328: Multi-strategy matching logic
+  * Lines 320-328: Log matching results
+
+Expected Behavior After Fix:
+1. Save quote with 6% markup on Camera Labor
+2. Reopen Edit
+3. Camera Labor shows "Includes Markup: +$1,943.82"
+4. Console shows successful match (method: "temp" or "positional")
+
+Fixes: Missing "Includes Markup" indicators on reopen
+Enables: Full UI parity between create and edit modes
+

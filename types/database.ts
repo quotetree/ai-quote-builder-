@@ -72,6 +72,7 @@ export interface ProductSuggestion {
   price_unit?: string | null;
   discount_percent?: number; // Percentage as decimal (0.10 = 10%)
   bakedAdjustments?: BakedAdjustment; // Baked markup adjustments applied to this item
+  stableKey?: string; // Deterministic key for cross-version mapping (hash of name+price+id)
 }
 
 export interface ChargeConfig {
@@ -101,11 +102,12 @@ export interface BakedMarkupConfig {
     mode: 'bankers' | 'up' | 'down';
     places: number;
   };
+  targets?: Array<{ item_id?: string; stable_key: string }>; // Exact items targeted at submit time
   audited: {
     base: number;
     totalMarkup: number;
-    perItemDeltas: Record<string, number>; // itemId -> delta amount
-    perItemBaseBefore?: Record<string, number>; // itemId -> price before this markup (for exact rollback)
+    perItemDeltas: Record<string, number>; // stableKey -> delta amount
+    perItemBaseBefore?: Record<string, number>; // stableKey -> price before this markup (for exact rollback)
   };
   createdAt: string;
   createdBy: string;
