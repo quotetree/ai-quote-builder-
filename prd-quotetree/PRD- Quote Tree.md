@@ -43,7 +43,7 @@
 
 * They probably use tools like ServiceTitan, QuickBooks, Jobber, CompanyCam, System Surveyor, and have some kind of project management and CRM tool. 
 
-## **\-Ideal Customer Profile:**
+No, you just messed up.## **\-Ideal Customer Profile:**
 
 | Tier | Buyer Type | Primary Goals | Example Titles |
 | ----- | ----- | ----- | ----- |

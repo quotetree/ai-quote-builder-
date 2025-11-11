@@ -281,7 +281,7 @@ export async function rehydrateEditSession(
       
       console.log('[EditSession] Markup annotation map:', markupByItemId);
       
-      // Annotate items with markup amounts AND restore baseline prices for display
+      // Annotate items with markup amounts (DO NOT modify prices - annotation only!)
       suggestedProducts = suggestedProducts.map(item => {
         const itemId = item.id;
         if (!itemId) return item;
@@ -304,23 +304,18 @@ export async function rehydrateEditSession(
           }
         }
         
-        // Calculate baseline by subtracting markup from current price
-        const baselineLineTotal = item.line_total - markupAmount;
-        const baselineUnitPrice = item.quantity > 0 ? baselineLineTotal / item.quantity : item.unit_price;
-        
         console.log('[EditSession] Annotated item:', {
           name: item.product_name,
           id: itemId,
-          currentPrice: item.unit_price,
-          baselinePrice: baselineUnitPrice,
+          unitPrice: item.unit_price,
+          lineTotal: item.line_total,
           markupAmount,
           breakdownCount: breakdown.length
         });
         
         return {
           ...item,
-          unit_price: baselineUnitPrice, // Show baseline price (before markup)
-          line_total: baselineLineTotal,  // Show baseline total (before markup)
+          // Prices stay as-is from database (unit_price = original, line_total = with markup)
           bakedAdjustments: {
             markupTotal: markupAmount,
             breakdown

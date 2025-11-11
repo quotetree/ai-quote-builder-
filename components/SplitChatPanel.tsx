@@ -1015,11 +1015,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const newBreakdown = item.bakedAdjustments.breakdown.filter(b => b.markupId !== markupId);
       const newMarkupTotal = newBreakdown.reduce((sum, b) => sum + b.delta, 0);
       
-      // Recompute from baseline (more accurate than subtracting)
+      // Recompute line_total from baseline (DO NOT change unit_price - keep original)
       // Get baseline: prefer stored value, fallback to current - old total markup
       const baseline = perItemBaseBefore[itemKey] ?? (item.line_total - oldMarkupTotal);
       const newLineTotal = bankersRound(baseline + newMarkupTotal, 2);
-      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+      // DO NOT change unit_price - it should stay original
       
       console.log('[Markup] Recomputing item from baseline:', {
         name: item.product_name,
@@ -1028,12 +1028,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         newMarkupTotal,
         oldLineTotal: item.line_total,
         newLineTotal,
+        unitPriceUnchanged: item.unit_price,
         method: perItemBaseBefore[itemKey] ? 'stored' : 'computed'
       });
       
       return {
         ...item,
-        unit_price: newUnitPrice,
+        // unit_price stays ORIGINAL - not modified by markup operations
         line_total: newLineTotal,
         bakedAdjustments: newBreakdown.length > 0 ? {
           markupTotal: newMarkupTotal,
@@ -1418,13 +1419,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       };
       
       const newLineTotal = bankersRound(item.line_total + delta, 2);
-      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+      // DO NOT change unit_price - keep original, only markup the line_total
       
       return {
         ...item,
         stableKey, // Add stable key to item for future reference
         line_total: newLineTotal,
-        unit_price: newUnitPrice,
+        // unit_price stays ORIGINAL - not modified by markup
         bakedAdjustments: {
           markupTotal: bankersRound((item.bakedAdjustments?.markupTotal || 0) + delta, 2),
           breakdown: [
@@ -1525,9 +1526,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const markupBreakdown = item.bakedAdjustments.breakdown?.find(b => b.markupId === markupId);
       if (!markupBreakdown) return item;
       
-      // Subtract the delta
+      // Subtract the delta from line_total only (keep unit_price original)
       const newLineTotal = bankersRound(item.line_total - markupBreakdown.delta, 2);
-      const newUnitPrice = item.quantity > 0 ? bankersRound(newLineTotal / item.quantity, 2) : item.unit_price;
+      // DO NOT change unit_price - it should stay original
       
       // Remove from breakdown
       const newBreakdown = (item.bakedAdjustments.breakdown || []).filter(b => b.markupId !== markupId);
@@ -1536,7 +1537,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return {
         ...item,
         line_total: newLineTotal,
-        unit_price: newUnitPrice,
+        // unit_price stays ORIGINAL - not modified
         bakedAdjustments: newBreakdown.length > 0 ? {
           markupTotal: newMarkupTotal,
           breakdown: newBreakdown
