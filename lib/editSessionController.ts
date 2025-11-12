@@ -282,24 +282,27 @@ export async function rehydrateEditSession(
       // Walk every persisted markup and apply its targets as UI hints
       for (const markup of bakedMarkups) {
         const targets = (markup as any).targets || [];
+        const perItemDeltas = (markup as any).audited?.perItemDeltas || {};
         
         console.log('[EditSession] Processing markup:', {
           label: (markup as any).label,
           targetCount: targets.length,
-          targets: targets.map((t: any) => ({
-            itemId: t.item_id || t.itemId,
-            amount: t.amount
-          }))
+          perItemDeltasKeys: Object.keys(perItemDeltas)
         });
         
         for (const target of targets) {
           // Handle both snake_case (from DB) and camelCase (in memory)
           const itemId = (target as any).item_id || (target as any).itemId;
-          const amount = (target as any).amount || 0;
+          const stableKey = (target as any).stable_key || (target as any).stableKey;
+          
+          // Amount is stored in perItemDeltas keyed by stable_key
+          const amount = perItemDeltas[stableKey] || 0;
+          
+          if (amount <= 0) continue;
           
           const item = itemById.get(itemId);
           if (!item) {
-            console.warn('[EditSession] Target item not found:', itemId);
+            console.warn('[EditSession] Target item not found:', { itemId, stableKey });
             continue;
           }
           
@@ -318,6 +321,7 @@ export async function rehydrateEditSession(
           console.log('[EditSession] Annotated item:', {
             name: item.product_name,
             id: itemId,
+            stableKey,
             addedAmount: amount,
             totalMarkup: item.bakedAdjustments.markupTotal
           });
