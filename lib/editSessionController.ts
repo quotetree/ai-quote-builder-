@@ -316,20 +316,25 @@ export async function rehydrateEditSession(
         const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
         
         if (Object.keys(auditedDeltas).length > 0) {
-          // Simply distribute the audited amounts proportionally across ALL items
-          // based on their current line_total (which already has markup baked in)
+          // Distribute markup to top N items (by line_total) where N = number that had markup
           const deltasArray = Object.values(auditedDeltas).filter(v => typeof v === 'number' && v > 0) as number[];
           const totalMarkupAmount = deltasArray.reduce((sum, v) => sum + v, 0);
-          const totalLineTotal = suggestedProducts.reduce((sum, i) => sum + i.line_total, 0);
+          const numItemsWithMarkup = deltasArray.length;
           
-          // Each item gets markup proportional to its share of the total
-          for (const item of suggestedProducts) {
-            if (!item.id || item.line_total <= 0) continue;
-            
-            const proportion = item.line_total / totalLineTotal;
+          // Sort items by line_total descending and take top N
+          const sortedItems = [...suggestedProducts]
+            .filter(i => i.id && i.line_total > 0)
+            .sort((a, b) => b.line_total - a.line_total)
+            .slice(0, numItemsWithMarkup);
+          
+          const totalOfTopItems = sortedItems.reduce((sum, i) => sum + i.line_total, 0);
+          
+          // Distribute markup proportionally among these top N items
+          for (const item of sortedItems) {
+            const proportion = item.line_total / totalOfTopItems;
             const itemMarkupAmount = totalMarkupAmount * proportion;
             
-            if (itemMarkupAmount > 0.01) { // Only if significant
+            if (itemMarkupAmount > 0.01 && item.id) {
               markupByItemId[item.id] = (markupByItemId[item.id] || 0) + itemMarkupAmount;
             }
           }
