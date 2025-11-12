@@ -91,6 +91,13 @@ export interface BakedMarkupSelector {
   exclude?: string[];
 }
 
+export interface BakedMarkupTarget {
+  item_id?: string;
+  itemId?: string;
+  stable_key: string;
+  amountCents?: number;
+}
+
 export interface BakedMarkupConfig {
   id: string;
   label: string;
@@ -102,7 +109,7 @@ export interface BakedMarkupConfig {
     mode: 'bankers' | 'up' | 'down';
     places: number;
   };
-  targets?: Array<{ item_id?: string; stable_key: string }>; // Exact items targeted at submit time
+  targets?: BakedMarkupTarget[]; // Exact items targeted at submit time (per-item allocations)
   audited: {
     base: number;
     totalMarkup: number;

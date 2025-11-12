@@ -301,33 +301,7 @@ export async function rehydrateEditSession(
       bakedAdjustments: item.bakedAdjustments // Already set by rehydrateBakedMarkupsIntoItems
     }));
 
-    // Items already have bakedAdjustments from rehydrateBakedMarkupsIntoItems above
-    // Now restore baseline prices (items should display WITHOUT markup, then show "+ Markup" below)
     const bakedMarkups = snapshot.bakedMarkups || [];
-    
-    if (bakedMarkups.length > 0) {
-      suggestedProducts = suggestedProducts.map(item => {
-        if (!item.bakedAdjustments || !item.bakedAdjustments.markupTotal) return item;
-        
-        const markupAmount = item.bakedAdjustments.markupTotal;
-        
-        // Calculate baseline by removing markup from current prices
-        const baselineLineTotal = item.line_total - markupAmount;
-        const baselineUnitPrice = item.quantity > 0 
-          ? baselineLineTotal / item.quantity 
-          : item.unit_price;
-        
-        return {
-          ...item,
-          unit_price: baselineUnitPrice,  // Display baseline (before markup)
-          line_total: baselineLineTotal   // Display baseline (before markup)
-          // bakedAdjustments stays - UI will show "Includes Markup: +$X"
-        };
-      });
-      
-      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
-      console.log('[EditSession] ✓ Restored baselines for', itemsWithMarkups.length, 'items with markups');
-    }
 
     // Build quote preview
     const quotePreview: QuotePreview = {
