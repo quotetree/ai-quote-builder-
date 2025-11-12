@@ -936,11 +936,11 @@ ${formattedResults}
         });
         
         // Check if the number of products seems excessive compared to the user's request
-        const userMessageWords = message.toLowerCase().split(/\s+/);
-        const hasQuantityInMessage = userMessageWords.some(w => /^\d+$/.test(w));
-        const requestedQuantity = hasQuantityInMessage 
-          ? parseInt(userMessageWords.find(w => /^\d+$/.test(w)) || '0')
-          : 1;
+        const userMessageWords: string[] = message.toLowerCase().split(/\s+/);
+        const DIGITS = /^\d+$/;
+        const hasQuantityInMessage = userMessageWords.some((w: string) => DIGITS.test(w));
+        const quantityWord: string | undefined = userMessageWords.find((w: string) => DIGITS.test(w));
+        const requestedQuantity = hasQuantityInMessage && quantityWord ? parseInt(quantityWord, 10) : 1;
         
         if (productSuggestions.length > requestedQuantity * 2 && requestedQuantity > 0) {
           console.warn(`⚠️ attemptedContextReuse: AI suggested ${productSuggestions.length} products but user only requested ~${requestedQuantity}. ContextId: ${contextId}. Possible context contamination.`);
