@@ -283,38 +283,67 @@ export async function rehydrateEditSession(
     if (bakedMarkups.length > 0) {
       console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
       
-      // Build lookup: item ID -> item
-      const itemById = new Map(suggestedProducts.map(i => [i.id, i]));
-      
-      // Build map: current item ID -> total markup amount
-      // Match by baseline prices (stored in perItemBaseBefore)
+      // Strategy: Look at what items are in the markup's "appliesTo" selector
+      // and distribute the total markup proportionally across matching items
       for (const markup of bakedMarkups) {
-        const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
-        const perItemBaseBefore = (markup as any).audited?.perItemBaseBefore || {};
+        const appliesTo = (markup as any).appliesTo || [];
+        const selector = (markup as any).baseSelector || (markup as any).addToSelector;
+        const totalMarkup = (markup as any).audited?.totalMarkup || 0;
         
-        // Match items by their baseline price + current line_total
-        for (const [oldItemId, amount] of Object.entries(auditedDeltas)) {
-          if (!amount || typeof amount !== 'number' || amount <= 0) continue;
-          
-          // Try direct ID match first
-          let matchedItem = itemById.get(oldItemId);
-          
-          // If no direct match, find by baseline price
-          if (!matchedItem) {
-            const expectedBaseline = perItemBaseBefore[oldItemId];
-            if (expectedBaseline) {
-              // Current item's line_total should be baseline + markup
-              const expectedTotal = expectedBaseline + amount;
-              matchedItem = suggestedProducts.find(i => 
-                Math.abs(i.line_total - expectedTotal) < 0.50 // Allow 50 cent variance
-              );
+        if (totalMarkup <= 0) continue;
+        
+        // Find items that match the selector
+        let matchedItems: typeof suggestedProducts = [];
+        
+        if (selector?.include === 'all') {
+          matchedItems = suggestedProducts;
+        } else if (Array.isArray(appliesTo) && appliesTo.length > 0) {
+          // appliesTo contains item IDs - try to match by product name
+          // Extract product IDs/names from appliesTo
+          matchedItems = suggestedProducts.filter(item => {
+            // Check if any appliesTo entry references this item
+            return appliesTo.some((targetId: string) => {
+              // Could be an ID match
+              if (item.id === targetId) return true;
+              // Or contains the product name
+              if (targetId.includes(item.product_name) || item.product_name.includes(targetId)) return true;
+              return false;
+            });
+          });
+        }
+        
+        // If we have audited deltas, use those exact amounts
+        const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
+        if (Object.keys(auditedDeltas).length > 0) {
+          // For each item, check ALL possible markup amounts to see which one fits
+          for (const item of suggestedProducts) {
+            if (!item.id) continue;
+            
+            // Try each audited delta to see if it matches this item
+            for (const [oldItemId, amount] of Object.entries(auditedDeltas)) {
+              if (!amount || typeof amount !== 'number' || amount <= 0) continue;
+              
+              // Check: does line_total - markup ≈ qty × unit_price?
+              // This means: line_total has markup baked in
+              const baselineTotal = item.line_total - amount;
+              const expectedTotal = item.quantity * item.unit_price;
+              
+              // If they match (within $1), this item has this markup!
+              if (Math.abs(baselineTotal - expectedTotal) < 1.0) {
+                markupByItemId[item.id] = (markupByItemId[item.id] || 0) + amount;
+                break; // Found the match for this item
+              }
             }
           }
-          
-          if (matchedItem && matchedItem.id) {
-            markupByItemId[matchedItem.id] = (markupByItemId[matchedItem.id] || 0) + amount;
-          } else {
-            unmatchedTargetCount++;
+        } else if (matchedItems.length > 0) {
+          // Distribute proportionally
+          const totalBase = matchedItems.reduce((sum, i) => sum + i.line_total, 0);
+          for (const item of matchedItems) {
+            const proportion = item.line_total / totalBase;
+            const itemMarkup = totalMarkup * proportion;
+            if (item.id) {
+              markupByItemId[item.id] = (markupByItemId[item.id] || 0) + itemMarkup;
+            }
           }
         }
       }
