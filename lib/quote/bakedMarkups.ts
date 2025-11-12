@@ -25,45 +25,45 @@ export function normalizeBakedMarkups(quote: any) {
 
 export function rehydrateBakedMarkupsIntoItems(quote: any) {
   const items = quote.items || [];
+  const bakedMarkups = quote.baked_markups || [];
   
-  // Clear old hints
-  items.forEach((it: any) => {
-    delete it.__includesMarkupCents;
-    if (it.bakedAdjustments) {
-      it.bakedAdjustments = undefined;
+  // Clear previous markup flags
+  for (const i of items) {
+    delete i.__includesMarkupCents;
+    if (i.bakedAdjustments) {
+      i.bakedAdjustments = undefined;
     }
-  });
+  }
 
-  const map = new Map(items.map((i: any) => [i.id, i]));
+  const itemById = new Map(items.map((i: any) => [i.id, i]));
   
-  for (const bm of quote.baked_markups ?? []) {
-    const targets = bm.targets ?? [];
+  for (const bm of bakedMarkups) {
     const perItemDeltas = bm.audited?.perItemDeltas ?? {};
     
-    for (const t of targets) {
+    for (const t of bm.targets ?? []) {
       const itemId = (t as any).item_id || (t as any).itemId;
       const stableKey = (t as any).stable_key || (t as any).stableKey;
       
-      // Amount is in perItemDeltas keyed by stable_key
-      const amount = perItemDeltas[stableKey] || 0;
+      // Get amount from perItemDeltas using stable_key
+      const amountCents = (perItemDeltas[stableKey] || 0) * 100;
+      if (amountCents <= 0) continue;
       
-      if (amount <= 0) continue;
+      const item = itemById.get(itemId);
+      if (!item) continue;
       
-      const it = map.get(itemId);
-      if (!it) continue;
+      // Accumulate cents (multiple markups can affect same item)
+      item.__includesMarkupCents = (item.__includesMarkupCents ?? 0) + amountCents;
       
-      // Accumulate (multiple markups can affect same item)
-      it.__includesMarkupCents = (it.__includesMarkupCents ?? 0) + (amount * 100);
-      
-      // Also set bakedAdjustments for UI
-      if (!it.bakedAdjustments) {
-        it.bakedAdjustments = { markupTotal: 0, breakdown: [] };
+      // Also set bakedAdjustments for UI (in dollars)
+      const amountDollars = amountCents / 100;
+      if (!item.bakedAdjustments) {
+        item.bakedAdjustments = { markupTotal: 0, breakdown: [] };
       }
-      it.bakedAdjustments.markupTotal = (it.bakedAdjustments.markupTotal || 0) + amount;
-      it.bakedAdjustments.breakdown = it.bakedAdjustments.breakdown || [];
-      it.bakedAdjustments.breakdown.push({
+      item.bakedAdjustments.markupTotal = (item.bakedAdjustments.markupTotal || 0) + amountDollars;
+      item.bakedAdjustments.breakdown = item.bakedAdjustments.breakdown || [];
+      item.bakedAdjustments.breakdown.push({
         markupId: bm.id,
-        delta: amount
+        delta: amountDollars
       });
     }
   }

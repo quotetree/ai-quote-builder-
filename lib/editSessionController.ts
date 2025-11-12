@@ -240,6 +240,8 @@ export async function rehydrateEditSession(
   const supabase = createClient();
   
   try {
+    console.log('[rehydrateEditSession] Starting', { sessionId, projectId });
+    
     // Get the edit session
     const { data: session, error: sessionError } = await supabase
       .from("quote_edit_sessions")
@@ -248,18 +250,33 @@ export async function rehydrateEditSession(
       .eq("status", "active")
       .single();
 
-    if (sessionError) throw sessionError;
+    if (sessionError) {
+      console.error('[rehydrateEditSession] Session fetch error:', sessionError instanceof Error ? sessionError.message : JSON.stringify(sessionError));
+      throw sessionError;
+    }
     if (!session) throw new Error("Edit session not found or expired");
 
     const snapshot = session.snapshot as QuoteSnapshot;
+    
+    console.log('[rehydrateEditSession] Snapshot loaded:', {
+      itemCount: snapshot.items?.length || 0,
+      bakedMarkupsCount: snapshot.bakedMarkups?.length || 0
+    });
     
     // Normalize and rehydrate baked_markups before processing
     const snapshotForRehydrate: any = {
       items: snapshot.items || [],
       baked_markups: snapshot.bakedMarkups || []
     };
-    normalizeBakedMarkups(snapshotForRehydrate);
-    rehydrateBakedMarkupsIntoItems(snapshotForRehydrate);
+    
+    try {
+      normalizeBakedMarkups(snapshotForRehydrate);
+      rehydrateBakedMarkupsIntoItems(snapshotForRehydrate);
+      console.log('[rehydrateEditSession] Rehydration complete');
+    } catch (rehydrateErr) {
+      console.error('[rehydrateEditSession] Rehydration error:', rehydrateErr instanceof Error ? rehydrateErr.message : JSON.stringify(rehydrateErr));
+      // Continue anyway - rehydration failure shouldn't block editing
+    }
     
     console.log('[EditSession] Rehydrating snapshot:', {
       sessionId,
@@ -382,6 +399,7 @@ export async function rehydrateEditSession(
     };
 
   } catch (error: any) {
+    console.error('[rehydrateEditSession]', error instanceof Error ? error.message : JSON.stringify(error));
     const info = logErr('rehydrateEditSession', error);
     logEditOperation('edit:error', { 
       operation: 'rehydrateEditSession',
