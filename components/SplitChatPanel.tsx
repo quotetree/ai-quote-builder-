@@ -2234,15 +2234,18 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         };
       });
       
+      // Determine current quote line count safely
+      const quoteLineCount = quotePreview?.line_items?.length ?? 0;
+      
       // Pass ONLY current working state as source of truth
       const currentWorkingState = {
         suggestedProducts: suggestedProducts.filter(p => p.poolId === poolId), // Only current pool products
         quotePreview: quotePreview,
         hasExistingProducts: suggestedProducts.length > 0,
-        hasExistingQuote: quotePreview?.line_items?.length > 0
+        hasExistingQuote: quoteLineCount > 0
       };
 
-      console.log(`🔒 context:isolated { contextId: "${contextId}", workingProducts: ${currentWorkingState.suggestedProducts.length}, quoteLines: ${currentWorkingState.hasExistingQuote ? quotePreview.line_items.length : 0} }`);
+      console.log(`🔒 context:isolated { contextId: "${contextId}", workingProducts: ${currentWorkingState.suggestedProducts.length}, quoteLines: ${currentWorkingState.hasExistingQuote ? quoteLineCount : 0} }`);
 
       // Call AI API with abort signal, runId, and poolId
       const response = await fetch("/api/chat", {
