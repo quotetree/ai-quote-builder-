@@ -283,37 +283,44 @@ export async function rehydrateEditSession(
     if (bakedMarkups.length > 0) {
       console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
       
-      // Build simple map: lineItemId -> sum of all markup amounts
-      // Try both targets array AND audited.perItemDeltas (fallback)
+      // Build lookup: item ID -> item
+      const itemById = new Map(suggestedProducts.map(i => [i.id, i]));
+      
+      // Build map: current item ID -> total markup amount
+      // Match by baseline prices (stored in perItemBaseBefore)
       for (const markup of bakedMarkups) {
-        const targets = markup.targets || [];
         const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
+        const perItemBaseBefore = (markup as any).audited?.perItemBaseBefore || {};
         
-        let matchedFromTargets = false;
-        
-        // First try targets array
-        for (const target of targets) {
-          const itemId = (target as any).item_id || (target as any).lineItemId;
-          const amount = (target as any).amount || 0;
+        // Match items by their baseline price + current line_total
+        for (const [oldItemId, amount] of Object.entries(auditedDeltas)) {
+          if (!amount || typeof amount !== 'number' || amount <= 0) continue;
           
-          if (itemId && amount > 0) {
-            markupByItemId[itemId] = (markupByItemId[itemId] || 0) + amount;
-            matchedFromTargets = true;
-          }
-        }
-        
-        // Fallback: use audited.perItemDeltas if no targets matched
-        if (!matchedFromTargets && Object.keys(auditedDeltas).length > 0) {
-          console.log('[EditSession] Using audited.perItemDeltas as fallback for markup:', markup.label);
-          for (const [itemId, amount] of Object.entries(auditedDeltas)) {
-            if (amount && typeof amount === 'number' && amount > 0) {
-              markupByItemId[itemId] = (markupByItemId[itemId] || 0) + amount;
+          // Try direct ID match first
+          let matchedItem = itemById.get(oldItemId);
+          
+          // If no direct match, find by baseline price
+          if (!matchedItem) {
+            const expectedBaseline = perItemBaseBefore[oldItemId];
+            if (expectedBaseline) {
+              // Current item's line_total should be baseline + markup
+              const expectedTotal = expectedBaseline + amount;
+              matchedItem = suggestedProducts.find(i => 
+                Math.abs(i.line_total - expectedTotal) < 0.50 // Allow 50 cent variance
+              );
             }
+          }
+          
+          if (matchedItem && matchedItem.id) {
+            markupByItemId[matchedItem.id] = (markupByItemId[matchedItem.id] || 0) + amount;
+          } else {
+            unmatchedTargetCount++;
           }
         }
       }
       
       console.log('[EditSession] Markup annotation map:', markupByItemId);
+      console.log('[EditSession] Unmatched targets:', unmatchedTargetCount);
       
       // Annotate items with markup amounts AND fix old quotes with baked-in unit prices
       suggestedProducts = suggestedProducts.map(item => {
