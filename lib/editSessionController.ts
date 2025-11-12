@@ -74,13 +74,16 @@ export async function startEditSession(
       throw new Error("Not authenticated");
     }
 
-    // Fetch the quote with all its items
+    // Fetch the quote with all its items (explicitly include baked_markups!)
     console.log('[EditSession] Fetching quote:', quoteId);
     const { data: quote, error: quoteError } = await supabase
       .from("quotes")
       .select(`
         *,
-        items:quote_items(*)
+        items:quote_items(*),
+        baked_markups,
+        charges,
+        discounts
       `)
       .eq("id", quoteId)
       .single();
@@ -95,7 +98,11 @@ export async function startEditSession(
       id: quote.id,
       version: quote.version_number,
       isEditing: quote.is_editing,
-      itemCount: quote.items?.length || 0
+      itemCount: quote.items?.length || 0,
+      hasBakedMarkups: !!(quote as any).baked_markups,
+      bakedMarkupsCount: ((quote as any).baked_markups || []).length,
+      hasCharges: !!quote.charges,
+      chargesCount: (quote.charges || []).length
     });
 
     // Check if quote is already being edited
