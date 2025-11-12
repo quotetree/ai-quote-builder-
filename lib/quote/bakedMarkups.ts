@@ -24,49 +24,47 @@ export function normalizeBakedMarkups(quote: any) {
 }
 
 export function rehydrateBakedMarkupsIntoItems(quote: any) {
-  const items = quote.items || [];
-  const bakedMarkups = quote.baked_markups || [];
+  const items = Array.isArray(quote.items) ? quote.items : [];
+  const bakedMarkups = Array.isArray(quote.baked_markups) ? quote.baked_markups : [];
   
-  // Clear previous markup flags
+  // reset all previous markup flags
   for (const i of items) {
+    delete i._uiIncludesMarkup;
     delete i.__includesMarkupCents;
     if (i.bakedAdjustments) {
       i.bakedAdjustments = undefined;
     }
   }
 
-  const itemById = new Map(items.map((i: any) => [i.id, i]));
+  // create item map for fast lookup
+  const itemMap = new Map(items.map((i: any) => [i.id, i]));
   
+  // apply stored markups back to matching items
   for (const bm of bakedMarkups) {
-    const perItemDeltas = bm.audited?.perItemDeltas ?? {};
-    
-    for (const t of bm.targets ?? []) {
-      const itemId = (t as any).item_id || (t as any).itemId;
-      const stableKey = (t as any).stable_key || (t as any).stableKey;
-      
-      // Get amount from perItemDeltas using stable_key
-      const amountCents = (perItemDeltas[stableKey] || 0) * 100;
-      if (amountCents <= 0) continue;
-      
-      const item = itemById.get(itemId);
+    for (const target of bm.targets ?? []) {
+      const itemId = (target as any).item_id || (target as any).itemId;
+      const item = itemMap.get(itemId);
       if (!item) continue;
+
+      const amt = Number((target as any).amountCents ?? 0) / 100;
+      if (amt <= 0) continue;
       
-      // Accumulate cents (multiple markups can affect same item)
-      item.__includesMarkupCents = (item.__includesMarkupCents ?? 0) + amountCents;
+      item._uiIncludesMarkup = (item._uiIncludesMarkup ?? 0) + amt;
       
-      // Also set bakedAdjustments for UI (in dollars)
-      const amountDollars = amountCents / 100;
+      // Also set bakedAdjustments for backward compatibility
       if (!item.bakedAdjustments) {
         item.bakedAdjustments = { markupTotal: 0, breakdown: [] };
       }
-      item.bakedAdjustments.markupTotal = (item.bakedAdjustments.markupTotal || 0) + amountDollars;
+      item.bakedAdjustments.markupTotal = (item.bakedAdjustments.markupTotal || 0) + amt;
       item.bakedAdjustments.breakdown = item.bakedAdjustments.breakdown || [];
       item.bakedAdjustments.breakdown.push({
         markupId: bm.id,
-        delta: amountDollars
+        delta: amt
       });
     }
   }
+  
+  // now each item has _uiIncludesMarkup again
 }
 
 function cryptoRandomId() {

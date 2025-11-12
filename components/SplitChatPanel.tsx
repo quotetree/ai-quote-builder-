@@ -1353,9 +1353,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     }
     
     // Capture per-item baselines BEFORE applying deltas (critical for recompute on delete)
-    // AND build targets array for rehydration
+    // AND build targets array for rehydration with amountCents
     const perItemBaseBefore: Record<string, number> = {}; // stableKey -> baseline
-    const targets: Array<{ item_id?: string; stable_key: string }> = [];
+    const targets: Array<{ item_id?: string; itemId?: string; stable_key: string; amountCents: number }> = [];
     
     baseItems.forEach((item, idx) => {
       const stableKey = itemStableKeys.get(idx);
@@ -1364,9 +1364,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const delta = perItemDeltas[stableKey] || 0;
       if (delta > 0) {
         perItemBaseBefore[stableKey] = item.line_total; // Store price BEFORE this markup
+        const amountCents = Math.round(delta * 100); // Convert dollars to cents
         targets.push({
           item_id: item.id && !item.id.startsWith('temp-') ? item.id : undefined,
-          stable_key: stableKey
+          itemId: item.id, // Also include camelCase for compatibility
+          stable_key: stableKey,
+          amountCents // Store amount directly in target
         });
       }
     });
@@ -2900,16 +2903,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                 )}
                                 
                                 {/* Baked Markup Indicator */}
-                                {item.bakedAdjustments && item.bakedAdjustments.markupTotal && item.bakedAdjustments.markupTotal > 0 && (
+                                {((item as any)._uiIncludesMarkup > 0 || (item.bakedAdjustments?.markupTotal || 0) > 0) && (
                                   <div className="text-xs text-gray-500 mt-1 italic">
                                     <span 
                                       className="cursor-help"
-                                      title={`Markup breakdown: ${(item.bakedAdjustments.breakdown || []).map(b => {
+                                      title={`Markup breakdown: ${(item.bakedAdjustments?.breakdown || []).map(b => {
                                         const config = (quotePreview.bakedMarkups || []).find(m => m.id === b.markupId);
                                         return `${config?.label || 'Unknown'}: +$${formatCurrency(b.delta)} (${(config?.percent || 0) * 100}%)`;
                                       }).join(', ')}`}
                                     >
-                                      Includes Markup: +${formatCurrency(item.bakedAdjustments.markupTotal)}
+                                      Includes Markup: +${formatCurrency((item as any)._uiIncludesMarkup || item.bakedAdjustments?.markupTotal || 0)}
                                     </span>
                                   </div>
                                 )}
