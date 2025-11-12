@@ -266,152 +266,86 @@ export async function rehydrateEditSession(
       bakedAdjustments: undefined // Will rebuild from markup configs
     }));
 
-    // ANNOTATION ONLY: Build a map of lineItemId -> total markup amount
-    // Do NOT modify prices here - they already include markup from when saved
-    // We only annotate for UI display ("Includes Markup: +$X")
+    // REHYDRATE: Read persisted baked_markups and populate __includesMarkupCents on each item
+    // This is ANNOTATION ONLY - prices already have markup baked in from save
     const bakedMarkups = snapshot.bakedMarkups || [];
-    const markupByItemId: Record<string, number> = {};
-    let unmatchedTargetCount = 0;
     
-    console.log('[EditSession] 🔍 REHYDRATION DEBUG:', {
-      snapshotHasBakedMarkups: !!snapshot.bakedMarkups,
+    console.log('[EditSession] 🔍 REHYDRATION:', {
       bakedMarkupsCount: bakedMarkups.length,
-      bakedMarkupsRaw: JSON.stringify(bakedMarkups, null, 2),
       itemCount: suggestedProducts.length
     });
     
     if (bakedMarkups.length > 0) {
-      console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
+      // Build item lookup map
+      const itemById = new Map(suggestedProducts.map(i => [i.id, i]));
       
-      // Strategy: Look at what items are in the markup's "appliesTo" selector
-      // and distribute the total markup proportionally across matching items
+      // Walk every persisted markup and apply its targets as UI hints
       for (const markup of bakedMarkups) {
-        const appliesTo = (markup as any).appliesTo || [];
-        const selector = (markup as any).baseSelector || (markup as any).addToSelector;
-        const totalMarkup = (markup as any).audited?.totalMarkup || 0;
+        const targets = (markup as any).targets || [];
         
-        if (totalMarkup <= 0) continue;
+        console.log('[EditSession] Processing markup:', {
+          label: (markup as any).label,
+          targetCount: targets.length,
+          targets: targets.map((t: any) => ({
+            itemId: t.item_id || t.itemId,
+            amount: t.amount
+          }))
+        });
         
-        // Find items that match the selector
-        let matchedItems: typeof suggestedProducts = [];
-        
-        if (selector?.include === 'all') {
-          matchedItems = suggestedProducts;
-        } else if (Array.isArray(appliesTo) && appliesTo.length > 0) {
-          // appliesTo contains item IDs - try to match by product name
-          // Extract product IDs/names from appliesTo
-          matchedItems = suggestedProducts.filter(item => {
-            // Check if any appliesTo entry references this item
-            return appliesTo.some((targetId: string) => {
-              // Could be an ID match
-              if (item.id === targetId) return true;
-              // Or contains the product name
-              if (targetId.includes(item.product_name) || item.product_name.includes(targetId)) return true;
-              return false;
-            });
+        for (const target of targets) {
+          // Handle both snake_case (from DB) and camelCase (in memory)
+          const itemId = (target as any).item_id || (target as any).itemId;
+          const amount = (target as any).amount || 0;
+          
+          const item = itemById.get(itemId);
+          if (!item) {
+            console.warn('[EditSession] Target item not found:', itemId);
+            continue;
+          }
+          
+          // Accumulate markup amount as a UI hint (multiple markups can affect same item)
+          if (!item.bakedAdjustments) {
+            item.bakedAdjustments = { markupTotal: 0, breakdown: [] };
+          }
+          
+          item.bakedAdjustments.markupTotal = (item.bakedAdjustments.markupTotal || 0) + amount;
+          item.bakedAdjustments.breakdown = item.bakedAdjustments.breakdown || [];
+          item.bakedAdjustments.breakdown.push({
+            markupId: (markup as any).id,
+            delta: amount
           });
-        }
-        
-        // Use audited deltas to distribute markup
-        const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
-        
-        if (Object.keys(auditedDeltas).length > 0) {
-          // Distribute markup to top N items (by line_total) where N = number that had markup
-          const deltasArray = Object.values(auditedDeltas).filter(v => typeof v === 'number' && v > 0) as number[];
-          const totalMarkupAmount = deltasArray.reduce((sum, v) => sum + v, 0);
-          const numItemsWithMarkup = deltasArray.length;
           
-          // Sort items by line_total descending and take top N
-          const sortedItems = [...suggestedProducts]
-            .filter(i => i.id && i.line_total > 0)
-            .sort((a, b) => b.line_total - a.line_total)
-            .slice(0, numItemsWithMarkup);
-          
-          const totalOfTopItems = sortedItems.reduce((sum, i) => sum + i.line_total, 0);
-          
-          // Distribute markup proportionally among these top N items
-          for (const item of sortedItems) {
-            const proportion = item.line_total / totalOfTopItems;
-            const itemMarkupAmount = totalMarkupAmount * proportion;
-            
-            if (itemMarkupAmount > 0.01 && item.id) {
-              markupByItemId[item.id] = (markupByItemId[item.id] || 0) + itemMarkupAmount;
-            }
-          }
-        } else if (matchedItems.length > 0) {
-          // Fallback: distribute proportionally across matched items
-          const totalBase = matchedItems.reduce((sum, i) => sum + i.line_total, 0);
-          for (const item of matchedItems) {
-            const proportion = item.line_total / totalBase;
-            const itemMarkup = totalMarkup * proportion;
-            if (item.id) {
-              markupByItemId[item.id] = (markupByItemId[item.id] || 0) + itemMarkup;
-            }
-          }
+          console.log('[EditSession] Annotated item:', {
+            name: item.product_name,
+            id: itemId,
+            addedAmount: amount,
+            totalMarkup: item.bakedAdjustments.markupTotal
+          });
         }
       }
       
-      console.log('[EditSession] Markup annotation map:', markupByItemId);
-      console.log('[EditSession] Unmatched targets:', unmatchedTargetCount);
+      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
+      console.log('[EditSession] ✓ Rehydrated', itemsWithMarkups.length, 'items with markup annotations');
       
-      // Annotate items with markup amounts AND fix old quotes with baked-in unit prices
+      // Fix old quotes: restore baseline prices (items should display WITHOUT markup, then show "+ Markup" below)
       suggestedProducts = suggestedProducts.map(item => {
-        const itemId = item.id;
-        if (!itemId) return item;
+        if (!item.bakedAdjustments || !item.bakedAdjustments.markupTotal) return item;
         
-        const markupAmount = markupByItemId[itemId];
-        if (!markupAmount || markupAmount <= 0) return item;
+        const markupAmount = item.bakedAdjustments.markupTotal;
         
-        // Build breakdown from all markups that target this item
-        const breakdown: Array<{ markupId: string; delta: number }> = [];
-        for (const markup of bakedMarkups) {
-          const targets = markup.targets || [];
-          for (const target of targets) {
-            const targetItemId = (target as any).item_id || (target as any).lineItemId;
-            if (targetItemId === itemId) {
-              const amount = (target as any).amount || 0;
-              if (amount > 0) {
-                breakdown.push({ markupId: markup.id, delta: amount });
-              }
-            }
-          }
-        }
-        
-        // For OLD quotes (before fix), unit_price may have markup baked in
-        // Restore baseline by calculating from line_total - markup
+        // Calculate baseline by removing markup from current prices
         const baselineLineTotal = item.line_total - markupAmount;
         const baselineUnitPrice = item.quantity > 0 
           ? baselineLineTotal / item.quantity 
           : item.unit_price;
         
-        console.log('[EditSession] Annotated item:', {
-          name: item.product_name,
-          id: itemId,
-          oldUnitPrice: item.unit_price,
-          restoredUnitPrice: baselineUnitPrice,
-          lineTotal: baselineLineTotal,
-          markupAmount,
-          breakdownCount: breakdown.length
-        });
-        
         return {
           ...item,
-          unit_price: baselineUnitPrice,  // Restore baseline (works for old & new quotes)
-          line_total: baselineLineTotal,   // Remove markup for clean baseline
-          bakedAdjustments: {
-            markupTotal: markupAmount,
-            breakdown
-          }
+          unit_price: baselineUnitPrice,  // Display baseline (before markup)
+          line_total: baselineLineTotal   // Display baseline (before markup)
+          // bakedAdjustments stays - UI will show "Includes Markup: +$X"
         };
       });
-      
-      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
-      console.log('[EditSession] ✓ Annotated', itemsWithMarkups.length, 'items with markup indicators');
-      console.log('[EditSession] 🔍 Items with markups:', itemsWithMarkups.map(i => ({
-        name: i.product_name,
-        id: i.id,
-        bakedAdjustments: i.bakedAdjustments
-      })));
     }
 
     // Build quote preview
