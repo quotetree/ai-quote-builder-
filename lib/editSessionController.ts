@@ -263,6 +263,13 @@ export async function rehydrateEditSession(
     const markupByItemId: Record<string, number> = {};
     let unmatchedTargetCount = 0;
     
+    console.log('[EditSession] 🔍 REHYDRATION DEBUG:', {
+      snapshotHasBakedMarkups: !!snapshot.bakedMarkups,
+      bakedMarkupsCount: bakedMarkups.length,
+      bakedMarkupsRaw: JSON.stringify(bakedMarkups, null, 2),
+      itemCount: suggestedProducts.length
+    });
+    
     if (bakedMarkups.length > 0) {
       console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
       
@@ -334,6 +341,11 @@ export async function rehydrateEditSession(
       
       const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
       console.log('[EditSession] ✓ Annotated', itemsWithMarkups.length, 'items with markup indicators');
+      console.log('[EditSession] 🔍 Items with markups:', itemsWithMarkups.map(i => ({
+        name: i.product_name,
+        id: i.id,
+        bakedAdjustments: i.bakedAdjustments
+      })));
     }
 
     // Build quote preview
@@ -345,8 +357,15 @@ export async function rehydrateEditSession(
       discount_amount: Number(snapshot.quote.discount_amount),
       total_price: Number(snapshot.quote.total_price),
       charges: snapshot.charges || [],
-      bakedMarkups: snapshot.bakedMarkups || [] // Restore baked markup configs
+      bakedMarkups: bakedMarkups // Use the one we read, ensure it's passed to UI
     };
+    
+    console.log('[EditSession] 🔍 FINAL PREVIEW DEBUG:', {
+      lineItemsCount: quotePreview.line_items.length,
+      lineItemsWithBakedAdjustments: quotePreview.line_items.filter(i => i.bakedAdjustments).length,
+      bakedMarkupsCount: quotePreview.bakedMarkups?.length || 0,
+      sampleItemWithMarkup: quotePreview.line_items.find(i => i.bakedAdjustments)
+    });
     
     console.log('[EditSession] Quote preview created:', {
       lineItemCount: quotePreview.line_items.length,
