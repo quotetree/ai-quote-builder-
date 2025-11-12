@@ -41,12 +41,26 @@ export function rehydrateBakedMarkupsIntoItems(quote: any) {
   
   // apply stored markups back to matching items
   for (const bm of bakedMarkups) {
+    const perItemDeltas = (bm as any).audited?.perItemDeltas ?? {};
+    
     for (const target of bm.targets ?? []) {
       const itemId = (target as any).item_id || (target as any).itemId;
       const item = itemMap.get(itemId);
       if (!item) continue;
 
-      const amt = Number((target as any).amountCents ?? 0) / 100;
+      // Try to get amount from target.amountCents (NEW format)
+      // Fall back to perItemDeltas[stable_key] (OLD format) if not present
+      let amt = 0;
+      if ((target as any).amountCents) {
+        amt = Number((target as any).amountCents) / 100;
+      } else {
+        // OLD format: lookup by stable_key in perItemDeltas
+        const stableKey = (target as any).stable_key || (target as any).stableKey;
+        if (stableKey && perItemDeltas[stableKey]) {
+          amt = Number(perItemDeltas[stableKey]);
+        }
+      }
+      
       if (amt <= 0) continue;
       
       item._uiIncludesMarkup = (item._uiIncludesMarkup ?? 0) + amt;
