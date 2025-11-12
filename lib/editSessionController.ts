@@ -380,7 +380,7 @@ export async function rehydrateEditSession(
     const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0).length;
     if (bakedMarkups.length > 0) {
       const totalTargets = bakedMarkups.reduce((sum, m) => sum + (m.targets?.length || 0), 0);
-      console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, ', totalTargets:', totalTargets, ', unmatched:', unmatchedTargetCount || 0, '}');
+      console.log('[Telemetry] rehydrate:bakedMarkups { rules:', bakedMarkups.length, ', itemsAffected:', itemsWithMarkups, ', totalTargets:', totalTargets, '}');
     }
     
     logEditOperation('edit:loaded', {
@@ -389,8 +389,7 @@ export async function rehydrateEditSession(
       itemCount: suggestedProducts.length,
       total: quotePreview.total_price,
       bakedMarkupsRehydrated: bakedMarkups.length,
-      itemsWithMarkups,
-      unmatchedTargets: unmatchedTargetCount || 0
+      itemsWithMarkups
     });
 
     return {
