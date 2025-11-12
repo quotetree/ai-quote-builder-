@@ -1083,6 +1083,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       total_price: newTotal
     });
     
+    console.log('[Telemetry] markup:remove { markupId:', markupId, '}');
     console.log('[Markup] delete:success { markupId:', markupId, ', newSubtotal:', newSubtotal, ', newTotal:', newTotal, ', remainingMarkups:', updatedMarkups.length, '}');
     toast.success(`Removed ${markup.label} - totals updated`);
   }
@@ -1511,84 +1512,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     });
     
     toast.success("Markup added and baked into prices");
-  }
-
-  // Remove baked markup
-  function removeBakedMarkup(markupId: string) {
-    if (!quotePreview) return;
-    
-    // Find the markup config
-    const markupConfig = (quotePreview.bakedMarkups || []).find(m => m.id === markupId);
-    if (!markupConfig) return;
-    
-    // Remove adjustments from items
-    const updatedItems = quotePreview.line_items.map(item => {
-      if (!item.bakedAdjustments) return item;
-      
-      // Find this markup's delta
-      const markupBreakdown = item.bakedAdjustments.breakdown?.find(b => b.markupId === markupId);
-      if (!markupBreakdown) return item;
-      
-      // Subtract the delta from line_total only (keep unit_price original)
-      const newLineTotal = bankersRound(item.line_total - markupBreakdown.delta, 2);
-      // DO NOT change unit_price - it should stay original
-      
-      // Remove from breakdown
-      const newBreakdown = (item.bakedAdjustments.breakdown || []).filter(b => b.markupId !== markupId);
-      const newMarkupTotal = bankersRound((item.bakedAdjustments.markupTotal || 0) - markupBreakdown.delta, 2);
-      
-      return {
-        ...item,
-        line_total: newLineTotal,
-        // unit_price stays ORIGINAL - not modified
-        bakedAdjustments: newBreakdown.length > 0 ? {
-          markupTotal: newMarkupTotal,
-          breakdown: newBreakdown
-        } : undefined
-      };
-    });
-    
-    // Recalculate totals
-    const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
-    
-    // Update charges to reflect new base
-    const updatedCharges = (quotePreview.charges || []).map(charge => {
-      const chargeApplicableItems = matchItemsBySelector(
-        updatedItems,
-        charge.applies_to,
-        charge.excluded_products || []
-      );
-      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
-      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
-      
-      return {
-        ...charge,
-        calculated_amount: chargeAmount,
-        applies_to_total: chargeBase,
-        applies_to_count: chargeApplicableItems.length
-      };
-    });
-    
-    const totalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    
-    // Remove markup config
-    const updatedMarkups = (quotePreview.bakedMarkups || []).filter(m => m.id !== markupId);
-    
-    setQuotePreview({
-      ...quotePreview,
-      line_items: updatedItems,
-      subtotal: newSubtotal,
-      charges: updatedCharges,
-      bakedMarkups: updatedMarkups,
-      total_price: newSubtotal + totalCharges - (quotePreview.discount_amount || 0)
-    });
-    
-    // Telemetry: markup:remove
-    console.log('[Telemetry] markup:remove { markupId:', markupId, '}');
-    
-    console.log('[Markup] Removed baked markup:', { markupId });
-    
-    toast.success("Markup removed");
   }
 
   // Edit quantity for a preview product
