@@ -94,14 +94,18 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     } catch (error: any) {
       toast.dismiss();
       
-      console.error('[LogPanel] Edit error details:', {
-        error,
-        message: error?.message,
+      // Properly serialize error for logging (Supabase errors are complex objects)
+      const errorInfo = {
+        message: error?.message || String(error),
         code: error?.code,
         details: error?.details,
         hint: error?.hint,
-        stack: error?.stack
-      });
+        stack: error?.stack,
+        keys: error ? Object.keys(error) : [],
+        stringified: JSON.stringify(error, Object.getOwnPropertyNames(error))
+      };
+      
+      console.error('[LogPanel] Edit error details:', errorInfo);
       
       // Check for database schema errors
       if (error?.code === '42P01' || error?.message?.includes('relation') || error?.message?.includes('does not exist')) {

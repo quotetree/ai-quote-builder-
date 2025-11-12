@@ -74,22 +74,25 @@ export async function startEditSession(
       throw new Error("Not authenticated");
     }
 
-    // Fetch the quote with all its items (explicitly include baked_markups!)
+    // Fetch the quote with all its items (* includes baked_markups, charges, discounts)
     console.log('[EditSession] Fetching quote:', quoteId);
     const { data: quote, error: quoteError } = await supabase
       .from("quotes")
       .select(`
         *,
-        items:quote_items(*),
-        baked_markups,
-        charges,
-        discounts
+        items:quote_items(*)
       `)
       .eq("id", quoteId)
       .single();
 
     if (quoteError) {
-      console.error('[EditSession] Error fetching quote:', quoteError);
+      console.error('[EditSession] Error fetching quote:', {
+        message: quoteError.message,
+        code: quoteError.code,
+        details: quoteError.details,
+        hint: quoteError.hint,
+        raw: JSON.stringify(quoteError)
+      });
       throw quoteError;
     }
     if (!quote) throw new Error("Quote not found");
