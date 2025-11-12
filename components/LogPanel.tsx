@@ -94,11 +94,17 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     } catch (error: any) {
       toast.dismiss();
       
-      // Use error inspector to get full details (prevents empty {} logs)
-      const { inspectErr } = await import('@/lib/util/errorTools');
-      const errorInfo = inspectErr(error);
-      
-      console.error('[LogPanel] Edit error details:', errorInfo);
+      // Log error with real details (not empty {})
+      console.error('[LogPanel] Edit error details:', {
+        message: error?.message || String(error),
+        type: typeof error,
+        keys: error && typeof error === 'object' ? Object.keys(error) : [],
+        stack: error?.stack,
+        code: error?.code,
+        hint: error?.hint,
+        details: error?.details,
+        raw: error instanceof Error ? error.message : JSON.stringify(error)
+      });
       
       // Check for database schema errors
       if (error?.code === '42P01' || error?.message?.includes('relation') || error?.message?.includes('does not exist')) {
