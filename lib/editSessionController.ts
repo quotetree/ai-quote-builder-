@@ -284,14 +284,31 @@ export async function rehydrateEditSession(
       console.log('[EditSession] Annotating items with markup amounts from', bakedMarkups.length, 'markup configs');
       
       // Build simple map: lineItemId -> sum of all markup amounts
+      // Try both targets array AND audited.perItemDeltas (fallback)
       for (const markup of bakedMarkups) {
         const targets = markup.targets || [];
+        const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
+        
+        let matchedFromTargets = false;
+        
+        // First try targets array
         for (const target of targets) {
           const itemId = (target as any).item_id || (target as any).lineItemId;
           const amount = (target as any).amount || 0;
           
           if (itemId && amount > 0) {
             markupByItemId[itemId] = (markupByItemId[itemId] || 0) + amount;
+            matchedFromTargets = true;
+          }
+        }
+        
+        // Fallback: use audited.perItemDeltas if no targets matched
+        if (!matchedFromTargets && Object.keys(auditedDeltas).length > 0) {
+          console.log('[EditSession] Using audited.perItemDeltas as fallback for markup:', markup.label);
+          for (const [itemId, amount] of Object.entries(auditedDeltas)) {
+            if (amount && typeof amount === 'number' && amount > 0) {
+              markupByItemId[itemId] = (markupByItemId[itemId] || 0) + amount;
+            }
           }
         }
       }
