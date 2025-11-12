@@ -10,6 +10,8 @@
  */
 
 import { createClient } from "@/lib/supabase/client";
+import { logErr, inspectErr } from '@/lib/util/errorTools';
+import { normalizeBakedMarkups, rehydrateBakedMarkupsIntoItems } from '@/lib/quote/bakedMarkups';
 import { 
   Quote, 
   QuoteItem, 
@@ -146,6 +148,10 @@ export async function startEditSession(
       bakedMarkups: bakedMarkups.map((m: any) => ({ label: m.label, percent: m.percent, total: m.audited?.totalMarkup }))
     });
 
+    // Normalize baked_markups (handle null, wrong shape, camelCase legacy)
+    const quoteForNormalize: any = { ...quote, baked_markups: bakedMarkups };
+    normalizeBakedMarkups(quoteForNormalize);
+    
     // Create snapshot of current state
     const snapshot: QuoteSnapshot = {
       quote: {
@@ -154,7 +160,7 @@ export async function startEditSession(
       } as Quote,
       items: (quote.items || []) as QuoteItem[],
       charges: charges,
-      bakedMarkups: bakedMarkups
+      bakedMarkups: quoteForNormalize.baked_markups  // Use normalized version
     };
     
     console.log('[EditSession] Snapshot created:', {
@@ -208,12 +214,16 @@ export async function startEditSession(
     };
 
   } catch (error: any) {
+    const info = logErr('startEditSession', error);
     logEditOperation('edit:error', { 
       operation: 'startEditSession',
       quoteId, 
-      error: error.message 
+      error: info.message,
+      code: info.code,
+      hint: info.hint
     });
-    throw error;
+    // Throw enriched error so LogPanel sees real details
+    throw new Error(`[EditSession] ${info.message || 'Unknown error'} :: ${info.code || ''} :: ${info.hint || ''}`);
   }
 }
 
@@ -243,6 +253,14 @@ export async function rehydrateEditSession(
 
     const snapshot = session.snapshot as QuoteSnapshot;
     
+    // Normalize and rehydrate baked_markups before processing
+    const snapshotForRehydrate: any = {
+      items: snapshot.items || [],
+      baked_markups: snapshot.bakedMarkups || []
+    };
+    normalizeBakedMarkups(snapshotForRehydrate);
+    rehydrateBakedMarkupsIntoItems(snapshotForRehydrate);
+    
     console.log('[EditSession] Rehydrating snapshot:', {
       sessionId,
       itemCount: snapshot.items?.length || 0,
@@ -253,85 +271,24 @@ export async function rehydrateEditSession(
       bakedMarkups: snapshot.bakedMarkups?.map((m: any) => ({ label: m.label, percent: m.percent })) || []
     });
 
-    // Convert quote items to suggested products format
-    let suggestedProducts: ProductSuggestion[] = snapshot.items.map((item) => ({
+    // Convert quote items to suggested products format (use rehydrated items with bakedAdjustments)
+    let suggestedProducts: ProductSuggestion[] = snapshotForRehydrate.items.map((item: any) => ({
       id: item.product_id || undefined,
       product_name: item.product_name,
       description: item.description || "",
-      quantity: Number(item.quantity),
-      unit_price: Number(item.unit_price),
-      line_total: Number(item.line_total),
+      quantity: Number(item.quantity || 0) || 0,
+      unit_price: Number(item.unit_price || 0) || 0,
+      line_total: Number(item.line_total || 0) || 0,
       selected: true,
-      discount_percent: Number(item.discount_percent || 0),
-      bakedAdjustments: undefined // Will rebuild from markup configs
+      discount_percent: Number(item.discount_percent || 0) || 0,
+      bakedAdjustments: item.bakedAdjustments // Already set by rehydrateBakedMarkupsIntoItems
     }));
 
-    // REHYDRATE: Read persisted baked_markups and populate __includesMarkupCents on each item
-    // This is ANNOTATION ONLY - prices already have markup baked in from save
+    // Items already have bakedAdjustments from rehydrateBakedMarkupsIntoItems above
+    // Now restore baseline prices (items should display WITHOUT markup, then show "+ Markup" below)
     const bakedMarkups = snapshot.bakedMarkups || [];
     
-    console.log('[EditSession] 🔍 REHYDRATION:', {
-      bakedMarkupsCount: bakedMarkups.length,
-      itemCount: suggestedProducts.length
-    });
-    
     if (bakedMarkups.length > 0) {
-      // Build item lookup map
-      const itemById = new Map(suggestedProducts.map(i => [i.id, i]));
-      
-      // Walk every persisted markup and apply its targets as UI hints
-      for (const markup of bakedMarkups) {
-        const targets = (markup as any).targets || [];
-        const perItemDeltas = (markup as any).audited?.perItemDeltas || {};
-        
-        console.log('[EditSession] Processing markup:', {
-          label: (markup as any).label,
-          targetCount: targets.length,
-          perItemDeltasKeys: Object.keys(perItemDeltas)
-        });
-        
-        for (const target of targets) {
-          // Handle both snake_case (from DB) and camelCase (in memory)
-          const itemId = (target as any).item_id || (target as any).itemId;
-          const stableKey = (target as any).stable_key || (target as any).stableKey;
-          
-          // Amount is stored in perItemDeltas keyed by stable_key
-          const amount = perItemDeltas[stableKey] || 0;
-          
-          if (amount <= 0) continue;
-          
-          const item = itemById.get(itemId);
-          if (!item) {
-            console.warn('[EditSession] Target item not found:', { itemId, stableKey });
-            continue;
-          }
-          
-          // Accumulate markup amount as a UI hint (multiple markups can affect same item)
-          if (!item.bakedAdjustments) {
-            item.bakedAdjustments = { markupTotal: 0, breakdown: [] };
-          }
-          
-          item.bakedAdjustments.markupTotal = (item.bakedAdjustments.markupTotal || 0) + amount;
-          item.bakedAdjustments.breakdown = item.bakedAdjustments.breakdown || [];
-          item.bakedAdjustments.breakdown.push({
-            markupId: (markup as any).id,
-            delta: amount
-          });
-          
-          console.log('[EditSession] Annotated item:', {
-            name: item.product_name,
-            id: itemId,
-            stableKey,
-            addedAmount: amount,
-            totalMarkup: item.bakedAdjustments.markupTotal
-          });
-        }
-      }
-      
-      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
-      console.log('[EditSession] ✓ Rehydrated', itemsWithMarkups.length, 'items with markup annotations');
-      
-      // Fix old quotes: restore baseline prices (items should display WITHOUT markup, then show "+ Markup" below)
       suggestedProducts = suggestedProducts.map(item => {
         if (!item.bakedAdjustments || !item.bakedAdjustments.markupTotal) return item;
         
@@ -350,6 +307,9 @@ export async function rehydrateEditSession(
           // bakedAdjustments stays - UI will show "Includes Markup: +$X"
         };
       });
+      
+      const itemsWithMarkups = suggestedProducts.filter(i => i.bakedAdjustments && (i.bakedAdjustments.markupTotal || 0) > 0);
+      console.log('[EditSession] ✓ Restored baselines for', itemsWithMarkups.length, 'items with markups');
     }
 
     // Build quote preview
@@ -422,12 +382,16 @@ export async function rehydrateEditSession(
     };
 
   } catch (error: any) {
+    const info = logErr('rehydrateEditSession', error);
     logEditOperation('edit:error', { 
       operation: 'rehydrateEditSession',
       sessionId, 
-      error: error.message 
+      error: info.message,
+      code: info.code,
+      hint: info.hint
     });
-    throw error;
+    // Throw enriched error so UI sees real details
+    throw new Error(`[Rehydrate] ${info.message || 'Unknown error'} :: ${info.code || ''} :: ${info.hint || ''}`);
   }
 }
 
