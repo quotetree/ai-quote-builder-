@@ -312,31 +312,29 @@ export async function rehydrateEditSession(
           });
         }
         
-        // If we have audited deltas, use those exact amounts
+        // Use audited deltas to distribute markup
         const auditedDeltas = (markup as any).audited?.perItemDeltas || {};
+        
         if (Object.keys(auditedDeltas).length > 0) {
-          // For each item, check ALL possible markup amounts to see which one fits
+          // Simply distribute the audited amounts proportionally across ALL items
+          // based on their current line_total (which already has markup baked in)
+          const deltasArray = Object.values(auditedDeltas).filter(v => typeof v === 'number' && v > 0) as number[];
+          const totalMarkupAmount = deltasArray.reduce((sum, v) => sum + v, 0);
+          const totalLineTotal = suggestedProducts.reduce((sum, i) => sum + i.line_total, 0);
+          
+          // Each item gets markup proportional to its share of the total
           for (const item of suggestedProducts) {
-            if (!item.id) continue;
+            if (!item.id || item.line_total <= 0) continue;
             
-            // Try each audited delta to see if it matches this item
-            for (const [oldItemId, amount] of Object.entries(auditedDeltas)) {
-              if (!amount || typeof amount !== 'number' || amount <= 0) continue;
-              
-              // Check: does line_total - markup ≈ qty × unit_price?
-              // This means: line_total has markup baked in
-              const baselineTotal = item.line_total - amount;
-              const expectedTotal = item.quantity * item.unit_price;
-              
-              // If they match (within $1), this item has this markup!
-              if (Math.abs(baselineTotal - expectedTotal) < 1.0) {
-                markupByItemId[item.id] = (markupByItemId[item.id] || 0) + amount;
-                break; // Found the match for this item
-              }
+            const proportion = item.line_total / totalLineTotal;
+            const itemMarkupAmount = totalMarkupAmount * proportion;
+            
+            if (itemMarkupAmount > 0.01) { // Only if significant
+              markupByItemId[item.id] = (markupByItemId[item.id] || 0) + itemMarkupAmount;
             }
           }
         } else if (matchedItems.length > 0) {
-          // Distribute proportionally
+          // Fallback: distribute proportionally across matched items
           const totalBase = matchedItems.reduce((sum, i) => sum + i.line_total, 0);
           for (const item of matchedItems) {
             const proportion = item.line_total / totalBase;
