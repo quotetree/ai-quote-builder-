@@ -73,6 +73,7 @@ export interface ProductSuggestion {
   discount_percent?: number; // Percentage as decimal (0.10 = 10%)
   bakedAdjustments?: BakedAdjustment; // Baked markup adjustments applied to this item
   stableKey?: string; // Deterministic key for cross-version mapping (hash of name+price+id)
+  poolId?: string | null;
 }
 
 export interface ChargeConfig {
