@@ -70,6 +70,38 @@ const formatPercent = (value: number | null | undefined) => {
   return `${formatter.format(percentValue)}%`;
 };
 
+const safeNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+const getTaxInfo = (quote: any) => {
+  const fallbackRate = safeNumber(quote?.tax_rate);
+  const fallbackAmount = safeNumber(quote?.tax_amount);
+
+  const charges = Array.isArray(quote?.charges) ? quote.charges : [];
+  const taxCharges = charges.filter((charge: any) =>
+    (charge?.name || "").toString().toLowerCase().includes("tax")
+  );
+
+  const aggregatedRate = taxCharges.reduce((sum: number, charge: any) => sum + safeNumber(charge?.rate), 0);
+  const aggregatedAmount = taxCharges.reduce(
+    (sum: number, charge: any) => sum + safeNumber(charge?.calculated_amount),
+    0
+  );
+
+  return {
+    rate: aggregatedRate > 0 ? aggregatedRate : fallbackRate,
+    amount: aggregatedAmount > 0 ? roundToCents(aggregatedAmount) : roundToCents(fallbackAmount),
+  };
+};
+
 export async function POST(req: NextRequest) {
   try {
     const { quoteId } = await req.json();
@@ -208,6 +240,8 @@ export async function POST(req: NextRequest) {
     const totalsX = pageWidth - 70;
     let currentY = finalY;
 
+    const { rate: taxRate, amount: taxAmount } = getTaxInfo(quote);
+
     doc.text("Subtotal:", totalsX, currentY);
     doc.text(formatCurrency(quote.subtotal), pageWidth - 20, currentY, { align: "right" });
 
@@ -224,22 +258,13 @@ export async function POST(req: NextRequest) {
 
     currentY += 7;
     doc.text("Tax:", totalsX, currentY);
-    doc.text(formatCurrency(quote.tax_amount), pageWidth - 20, currentY, { align: "right" });
+    doc.text(formatCurrency(taxAmount), pageWidth - 20, currentY, { align: "right" });
 
     currentY += 10;
     doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
     doc.text("Total:", totalsX, currentY);
     doc.text(formatCurrency(quote.total_price), pageWidth - 20, currentY, { align: "right" });
-
-    // Projected Profit (if available)
-    if (quote.profit_margin > 0) {
-      currentY += 10;
-      doc.setFontSize(11);
-      doc.setTextColor(34, 197, 94); // Green
-      doc.text("Projected Margin:", totalsX, currentY);
-      doc.text(formatCurrency(quote.profit_margin), pageWidth - 20, currentY, { align: "right" });
-    }
 
     // Footer
     doc.setFontSize(9);

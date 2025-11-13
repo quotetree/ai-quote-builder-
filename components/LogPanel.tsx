@@ -6,6 +6,101 @@ import { useQuotes } from "@/hooks/useQuotes";
 import { Quote } from "@/types/database";
 import toast from "react-hot-toast";
 
+type QuoteWithExtras = Quote & {
+  baked_markups?: any[];
+  bakedMarkups?: any[];
+  charges?: any[];
+};
+
+const safeNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+const getMarkupAmount = (quote: QuoteWithExtras): number => {
+  const markups = quote.baked_markups ?? quote.bakedMarkups;
+  if (!Array.isArray(markups) || markups.length === 0) return 0;
+
+  const total = markups.reduce((sum, markup) => {
+    if (!markup) return sum;
+
+    const auditedTotal = safeNumber(markup?.audited?.totalMarkup);
+    if (auditedTotal > 0) {
+      return sum + auditedTotal;
+    }
+
+    const directTotal = safeNumber(markup?.totalMarkup ?? markup?.total_markup);
+    if (directTotal > 0) {
+      return sum + directTotal;
+    }
+
+    if (Array.isArray(markup?.targets)) {
+      const targetTotal = markup.targets.reduce((targetSum: number, target: any) => {
+        const cents = safeNumber(target?.amountCents ?? target?.amount_cents);
+        return targetSum + cents / 100;
+      }, 0);
+
+      if (targetTotal > 0) {
+        return sum + targetTotal;
+      }
+    }
+
+    if (markup?.audited?.perItemDeltas) {
+      const perItemTotal = Object.values(markup.audited.perItemDeltas).reduce((deltaSum: number, value: any) => {
+        return deltaSum + safeNumber(value);
+      }, 0);
+
+      if (perItemTotal > 0) {
+        return sum + perItemTotal;
+      }
+    }
+
+    return sum;
+  }, 0);
+
+  return roundToCents(total);
+};
+
+const getTaxInfo = (quote: QuoteWithExtras) => {
+  const fallbackRate = safeNumber((quote as any).tax_rate);
+  const fallbackAmount = safeNumber((quote as any).tax_amount);
+
+  const charges = Array.isArray(quote.charges) ? quote.charges : [];
+  const taxCharges = charges.filter((charge) => {
+    const name = (charge?.name || "").toString().toLowerCase();
+    return name.includes("tax");
+  });
+
+  const summedRate = taxCharges.reduce((sum: number, charge: any) => sum + safeNumber(charge?.rate), 0);
+  const summedAmount = taxCharges.reduce(
+    (sum: number, charge: any) => sum + safeNumber(charge?.calculated_amount),
+    0
+  );
+
+  return {
+    rate: summedRate > 0 ? summedRate : fallbackRate,
+    amount: summedAmount > 0 ? roundToCents(summedAmount) : roundToCents(fallbackAmount),
+  };
+};
+
+const formatPercent = (rateDecimal: number): string => {
+  if (!rateDecimal || Number.isNaN(rateDecimal)) return "0%";
+  const percentValue = rateDecimal * 100;
+  return `${percentValue.toLocaleString(undefined, {
+    minimumFractionDigits: percentValue % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 2,
+  })}%`;
+};
+
+const formatCurrency = (value: number): string =>
+  roundToCents(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 interface LogPanelProps {
   projectId: string;
 }
@@ -198,7 +293,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     Total
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Margin
+                    Markup
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Date
@@ -228,7 +323,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                       ${quote.total_price.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      ${quote.profit_margin.toLocaleString()}
+                      ${formatCurrency(getMarkupAmount(quote as QuoteWithExtras))}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(quote.created_at).toLocaleDateString()}
@@ -306,22 +401,38 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             </div>
             <div className="p-6">
               <div className="grid grid-cols-2 gap-4 mb-6">
-                <div>
-                  <p className="text-sm text-gray-500">Subtotal</p>
-                  <p className="text-xl font-semibold">${selectedQuote.subtotal.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Tax ({selectedQuote.tax_rate}%)</p>
-                  <p className="text-xl font-semibold">${selectedQuote.tax_amount.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Total</p>
-                  <p className="text-2xl font-bold text-blue-600">${selectedQuote.total_price.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Profit Margin</p>
-                  <p className="text-2xl font-bold text-green-600">${selectedQuote.profit_margin.toLocaleString()}</p>
-                </div>
+                {(() => {
+                  const { rate, amount } = getTaxInfo(selectedQuote as QuoteWithExtras);
+                  const markupAmount = getMarkupAmount(selectedQuote as QuoteWithExtras);
+                  return (
+                    <>
+                      <div>
+                        <p className="text-sm text-gray-500">Subtotal</p>
+                        <p className="text-xl font-semibold">
+                          ${formatCurrency(selectedQuote.subtotal)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Tax ({formatPercent(rate)})</p>
+                        <p className="text-xl font-semibold">
+                          ${formatCurrency(amount)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Total</p>
+                        <p className="text-2xl font-bold text-blue-600">
+                          ${formatCurrency(selectedQuote.total_price)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Markup</p>
+                        <p className="text-2xl font-bold text-green-600">
+                          ${formatCurrency(markupAmount)}
+                        </p>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
               {selectedQuote.items && selectedQuote.items.length > 0 && (
                 <div>

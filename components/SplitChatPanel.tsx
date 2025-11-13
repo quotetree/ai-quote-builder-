@@ -191,7 +191,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         // DO NOT set suggested products - they should start fresh each session
         // Only quote preview persists
         setSuggestedProducts([]); // Always start with empty suggestions
-        setQuotePreview(data.quote_preview);
+        setQuotePreview(normalizeQuotePreview(data.quote_preview as QuotePreview | null));
         setShowSplitView(data.show_split_view || false);
         
         return data;
@@ -563,7 +563,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           lineItems: workingState.quote_preview?.line_items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || []
         });
         
-        setQuotePreview(workingState.quote_preview);
+        setQuotePreview(normalizeQuotePreview(workingState.quote_preview as QuotePreview | null));
         setShowSplitView(true);
         setActiveTab("preview");
         
@@ -725,22 +725,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         }
       }
       
-      // Calculate totals
-      const subtotal = dedupedItems.reduce((sum, item) => sum + item.line_total, 0);
-      const tax_rate = quotePreview?.tax_rate || 0;
-      const tax_amount = subtotal * tax_rate;
-      const discount_amount = quotePreview?.discount_amount || 0;
-      const total_price = subtotal + tax_amount - discount_amount;
-
-      const preview: QuotePreview = {
-        line_items: dedupedItems,
-        subtotal,
-        tax_rate,
-        tax_amount,
-        discount_amount,
-        total_price
-      };
-
+      const preview = buildQuotePreviewUpdate(dedupedItems, quotePreview);
       setQuotePreview(preview);
       
       // Log the replacement operation
@@ -775,18 +760,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return;
     }
     
-    // Recalculate totals
-    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
-    const tax_amount = subtotal * quotePreview.tax_rate;
-    const total_price = subtotal + tax_amount - quotePreview.discount_amount;
-    
-    setQuotePreview({
-      ...quotePreview,
-      line_items: updatedItems,
-      subtotal,
-      tax_amount,
-      total_price
-    });
+    const updatedPreview = buildQuotePreviewUpdate(updatedItems, quotePreview);
+    setQuotePreview(updatedPreview);
     
     toast.success("Product removed from preview");
   }
@@ -856,18 +831,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     const originalTotal = updatedItems[index].unit_price * updatedItems[index].quantity;
     updatedItems[index].line_total = originalTotal * (1 - discountDecimal);
     
-    // Recalculate totals
-    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
-    const taxAmount = subtotal * quotePreview.tax_rate;
-    const totalPrice = subtotal + taxAmount - (quotePreview.discount_amount || 0);
-    
-    setQuotePreview({
-      ...quotePreview,
-      line_items: updatedItems,
-      subtotal,
-      tax_amount: taxAmount,
-      total_price: totalPrice
-    });
+    const updatedPreview = buildQuotePreviewUpdate(updatedItems, quotePreview);
+    setQuotePreview(updatedPreview);
   }
 
   // Calculate charge preview
@@ -912,13 +877,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     };
     
     const charges = [...(quotePreview.charges || []), newCharge];
-    const totalCharges = charges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    
-    setQuotePreview({
-      ...quotePreview,
-      charges,
-      total_price: quotePreview.subtotal + totalCharges - (quotePreview.discount_amount || 0)
-    });
+    const updatedPreview = buildQuotePreviewUpdate(quotePreview.line_items, quotePreview, { charges });
+    setQuotePreview(updatedPreview);
     
     // Reset form
     setCurrentCharge({
@@ -936,13 +896,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     if (!quotePreview) return;
     
     const charges = (quotePreview.charges || []).filter(c => c.id !== chargeId);
-    const totalCharges = charges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    
-    setQuotePreview({
-      ...quotePreview,
-      charges,
-      total_price: quotePreview.subtotal + totalCharges - (quotePreview.discount_amount || 0)
-    });
+    const updatedPreview = buildQuotePreviewUpdate(quotePreview.line_items, quotePreview, { charges });
+    setQuotePreview(updatedPreview);
     
     toast.success("Charge removed");
   }
@@ -1050,29 +1005,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
     
     // Update charges to reflect new base (taxes may need recalculation)
-    const updatedCharges = (quotePreview.charges || []).map(charge => {
-      const chargeApplicableItems = matchItemsBySelector(
-        updatedItems,
-        charge.applies_to,
-        charge.excluded_products || []
-      );
-      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
-      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
-      
-      return {
-        ...charge,
-        applies_to_total: chargeBase,
-        applies_to_count: chargeApplicableItems.length,
-        calculated_amount: chargeAmount
-      };
-    });
+    const {
+      charges: updatedCharges,
+      totalChargeAmount,
+      taxAmount,
+      taxRate,
+    } = recalculateChargesForLineItems(updatedItems, quotePreview.charges);
     
-    const totalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    const newTotal = bankersRound(newSubtotal + totalCharges - (quotePreview.discount_amount || 0), 2);
+    const discountAmount = quotePreview.discount_amount || 0;
+    const newTotal = bankersRound(newSubtotal + totalChargeAmount - discountAmount, 2);
     
     console.log('[Markup] delete:totals { oldSubtotal:', quotePreview.subtotal, ', newSubtotal:', newSubtotal, ', delta:', quotePreview.subtotal - newSubtotal, '}');
     console.log('[Markup] delete:totals { oldTotal:', quotePreview.total_price, ', newTotal:', newTotal, ', delta:', quotePreview.total_price - newTotal, '}');
-    console.log('[Markup] delete:charges { oldCharges:', quotePreview.charges?.reduce((sum, c) => sum + (c.calculated_amount || 0), 0) || 0, ', newCharges:', totalCharges, '}');
+    console.log('[Markup] delete:charges { oldCharges:', quotePreview.charges?.reduce((sum, c) => sum + (c.calculated_amount || 0), 0) || 0, ', newCharges:', totalChargeAmount, '}');
     
     setQuotePreview({
       ...quotePreview,
@@ -1080,6 +1025,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       bakedMarkups: updatedMarkups,
       charges: updatedCharges,
       subtotal: newSubtotal,
+      tax_amount: taxAmount,
+      tax_rate: taxRate,
       total_price: newTotal
     });
     
@@ -1087,6 +1034,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     console.log('[Markup] delete:success { markupId:', markupId, ', newSubtotal:', newSubtotal, ', newTotal:', newTotal, ', remainingMarkups:', updatedMarkups.length, '}');
     toast.success(`Removed ${markup.label} - totals updated`);
   }
+
+  const safeNumber = (value: unknown): number => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  };
 
   // Banker's rounding (round half to even)
   function bankersRound(value: number, places: number = 2): number {
@@ -1116,6 +1072,122 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     } else {
       return items.filter(item => !excludedProducts.includes(item.product_name));
     }
+  }
+
+  function recalculateChargesForLineItems(
+    items: ProductSuggestion[],
+    charges?: ChargeConfig[] | null
+  ): {
+    charges: ChargeConfig[];
+    totalChargeAmount: number;
+    taxRate: number;
+    taxAmount: number;
+  } {
+    if (!Array.isArray(charges) || charges.length === 0) {
+      return { charges: [], totalChargeAmount: 0, taxRate: 0, taxAmount: 0 };
+    }
+
+    const updatedCharges = charges
+      .filter(Boolean)
+      .map((charge) => {
+        const rate = safeNumber(charge.rate);
+        const excluded = charge.excluded_products || [];
+        const applicableItems = matchItemsBySelector(items, charge.applies_to, excluded);
+        const chargeBase = applicableItems.reduce((sum, item) => sum + item.line_total, 0);
+        const chargeAmount = bankersRound(chargeBase * rate, 2);
+
+        return {
+          ...charge,
+          rate,
+          calculated_amount: chargeAmount,
+          applies_to_total: bankersRound(chargeBase, 2),
+          applies_to_count: applicableItems.length,
+        };
+      });
+
+    const totalChargeAmount = updatedCharges.reduce(
+      (sum, charge) => sum + safeNumber(charge.calculated_amount),
+      0
+    );
+
+    const taxCharges = updatedCharges.filter((charge) =>
+      (charge.name || "").toLowerCase().includes("tax")
+    );
+
+    const taxRate = taxCharges.reduce((sum, charge) => sum + safeNumber(charge.rate), 0);
+    const taxAmount = taxCharges.reduce(
+      (sum, charge) => sum + safeNumber(charge.calculated_amount),
+      0
+    );
+
+    return {
+      charges: updatedCharges,
+      totalChargeAmount: bankersRound(totalChargeAmount, 2),
+      taxRate,
+      taxAmount: bankersRound(taxAmount, 2),
+    };
+  }
+
+  function buildQuotePreviewUpdate(
+    items: ProductSuggestion[],
+    previous: QuotePreview | null,
+    overrides: Partial<QuotePreview> = {}
+  ): QuotePreview {
+    const subtotal = bankersRound(
+      items.reduce((sum, item) => sum + item.line_total, 0),
+      2
+    );
+
+    const discountAmount = overrides.discount_amount ?? previous?.discount_amount ?? 0;
+    const incomingCharges =
+      overrides.charges ??
+      previous?.charges ??
+      (Array.isArray(overrides.charges) ? overrides.charges : undefined);
+
+    const {
+      charges: recalculatedCharges,
+      totalChargeAmount,
+      taxAmount,
+      taxRate,
+    } = recalculateChargesForLineItems(items, incomingCharges as ChargeConfig[] | undefined);
+
+    const totalPrice = bankersRound(subtotal + totalChargeAmount - discountAmount, 2);
+
+    const result: QuotePreview = {
+      line_items: items,
+      subtotal,
+      discount_amount: discountAmount,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total_price: totalPrice,
+    };
+
+    const bakedMarkups = overrides.bakedMarkups ?? previous?.bakedMarkups;
+    if (Array.isArray(bakedMarkups) && bakedMarkups.length > 0) {
+      result.bakedMarkups = bakedMarkups;
+    } else if (Array.isArray(overrides.bakedMarkups) && overrides.bakedMarkups.length === 0) {
+      result.bakedMarkups = [];
+    } else if (Array.isArray(previous?.bakedMarkups) && (previous?.bakedMarkups?.length || 0) > 0) {
+      result.bakedMarkups = previous?.bakedMarkups;
+    }
+
+    if (recalculatedCharges.length > 0 || (Array.isArray(incomingCharges) && incomingCharges.length === 0)) {
+      result.charges = recalculatedCharges;
+    }
+
+    return result;
+  }
+
+  function normalizeQuotePreview(preview: QuotePreview | null): QuotePreview | null {
+    if (!preview || !Array.isArray(preview.line_items)) {
+      return preview;
+    }
+
+    return buildQuotePreviewUpdate(preview.line_items, preview, {
+      charges: preview.charges || [],
+      bakedMarkups: preview.bakedMarkups || [],
+      discount_amount: safeNumber(preview.discount_amount),
+    });
   }
 
   // Calculate markup preview
@@ -1440,43 +1512,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       };
     });
     
-    // Recalculate totals
     const newSubtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
-    const totalCharges = (quotePreview.charges || []).reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    
-    // Update charges to reflect new base
-    const updatedCharges = (quotePreview.charges || []).map(charge => {
-      const chargeApplicableItems = matchItemsBySelector(
-        updatedItems,
-        charge.applies_to,
-        charge.excluded_products || []
-      );
-      const chargeBase = chargeApplicableItems.reduce((sum, item) => sum + item.line_total, 0);
-      const chargeAmount = bankersRound(chargeBase * charge.rate, 2);
-      
-      return {
-        ...charge,
-        calculated_amount: chargeAmount,
-        applies_to_total: chargeBase,
-        applies_to_count: chargeApplicableItems.length
-      };
-    });
-    
-    const updatedTotalCharges = updatedCharges.reduce((sum, c) => sum + (c.calculated_amount || 0), 0);
-    
+
     // Update bakedMarkups array - replace if editing, append if new
     const updatedBakedMarkups = editingMarkupId
       ? (quotePreview.bakedMarkups || []).map(m => m.id === editingMarkupId ? newMarkup : m)
       : [...(quotePreview.bakedMarkups || []), newMarkup];
-    
-    setQuotePreview({
-      ...quotePreview,
-      line_items: updatedItems,
-      subtotal: newSubtotal,
-      charges: updatedCharges,
+
+    const updatedPreview = buildQuotePreviewUpdate(updatedItems, quotePreview, {
       bakedMarkups: updatedBakedMarkups,
-      total_price: newSubtotal + updatedTotalCharges - (quotePreview.discount_amount || 0)
+      charges: quotePreview.charges || [],
     });
+
+    setQuotePreview(updatedPreview);
     
     // Telemetry
     if (editingMarkupId) {
@@ -1525,18 +1573,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     item.quantity = newQuantity;
     item.line_total = item.unit_price * newQuantity;
     
-    // Recalculate totals
-    const subtotal = updatedItems.reduce((sum, item) => sum + item.line_total, 0);
-    const tax_amount = subtotal * quotePreview.tax_rate;
-    const total_price = subtotal + tax_amount - quotePreview.discount_amount;
-    
-    setQuotePreview({
-      ...quotePreview,
-      line_items: updatedItems,
-      subtotal,
-      tax_amount,
-      total_price
-    });
+    const updatedPreview = buildQuotePreviewUpdate(updatedItems, quotePreview);
+    setQuotePreview(updatedPreview);
   }
 
   // Drag and drop handlers
