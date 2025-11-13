@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { 
   Menu, 
@@ -8,7 +8,6 @@ import {
   Search, 
   BookOpen, 
   FolderPlus,
-  User,
   LogOut,
   ChevronRight
 } from "lucide-react";
@@ -17,6 +16,7 @@ import { createClient } from "@/lib/supabase/client";
 import Image from "next/image";
 import PriceBookModal from "./PriceBookModal";
 import { useSidebar } from "@/contexts/SidebarContext";
+import PersonalizationModal from "./PersonalizationModal";
 
 interface NewSidebarProps {
   userEmail?: string;
@@ -27,10 +27,19 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const { isOpen, closeSidebar, openSidebar } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
   const [priceBookOpen, setPriceBookOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [personalizationOpen, setPersonalizationOpen] = useState(false);
+  const [profile, setProfile] = useState<{
+    company_name: string | null;
+    company_address: string | null;
+    company_logo_url: string | null;
+  } | null>(null);
   const { projects, loading, fetchProjects } = useProjects();
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountButtonRef = useRef<HTMLButtonElement | null>(null);
 
   // Refresh projects when pathname changes
   useEffect(() => {
@@ -50,8 +59,63 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
     };
   }, []);
 
+  const loadProfile = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("company_name, company_address, company_logo_url")
+        .eq("id", user.id)
+        .single();
+
+      if (!error && data) {
+        setProfile(data);
+      }
+    } catch (error) {
+      console.error("Failed to load profile", error);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        accountMenuRef.current &&
+        !accountMenuRef.current.contains(target) &&
+        accountButtonRef.current &&
+        !accountButtonRef.current.contains(target)
+      ) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountMenuOpen]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    setAccountMenuOpen(false);
     router.push("/");
   };
 
@@ -203,17 +267,34 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         <div className={`border-t border-gray-200 ${isOpen ? "p-3" : "p-2 flex flex-col items-center"}`}>
           {isOpen ? (
             <>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-medium">
-                  {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{userName || userEmail}</p>
-                  <p className="text-xs text-gray-500">Free</p>
-                </div>
-                <button className="text-xs px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors">
-                  Upgrade
+              <div className="mb-3">
+                <button
+                  ref={accountButtonRef}
+                  onClick={() => setAccountMenuOpen((prev) => !prev)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-left"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-medium">
+                    {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {profile?.company_name || userName || userEmail}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {userEmail}
+                    </p>
+                  </div>
+                  <ChevronRight
+                    size={16}
+                    className={`text-gray-400 transition-transform ${accountMenuOpen ? "rotate-90" : ""}`}
+                  />
                 </button>
+                <div className="flex items-center justify-between px-3 mt-2">
+                  <span className="text-xs text-gray-500">Free</span>
+                  <button className="text-xs px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors">
+                    Upgrade
+                  </button>
+                </div>
               </div>
               <button
                 onClick={handleSignOut}
@@ -225,6 +306,8 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
             </>
           ) : (
             <button
+              ref={accountButtonRef}
+              onClick={() => setAccountMenuOpen((prev) => !prev)}
               className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
               title={userName || userEmail || "User"}
             >
@@ -235,6 +318,50 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
           )}
         </div>
       </aside>
+
+      {accountMenuOpen && (
+        <div
+          ref={accountMenuRef}
+          className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-200 w-72"
+          style={{
+            left: isOpen ? 24 : 68,
+            bottom: 120,
+          }}
+        >
+          <div className="px-4 py-3 border-b border-gray-200">
+            <p className="text-sm font-semibold text-gray-900">
+              {profile?.company_name || userName || "Workspace"}
+            </p>
+            <p className="text-xs text-gray-500 truncate">{userEmail}</p>
+          </div>
+          <div className="py-2">
+            <button
+              onClick={() => {
+                setAccountMenuOpen(false);
+                setPersonalizationOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <span>Personalization</span>
+              <ChevronRight size={14} className="text-gray-400" />
+            </button>
+            <button
+              disabled
+              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 cursor-not-allowed"
+            >
+              <span>Workspace settings</span>
+              <span className="text-xs uppercase tracking-wide">Soon</span>
+            </button>
+            <button
+              disabled
+              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 cursor-not-allowed"
+            >
+              <span>Add teammates</span>
+              <span className="text-xs uppercase tracking-wide">Soon</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Search Modal */}
       {searchOpen && (
@@ -288,6 +415,14 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
       <PriceBookModal
         isOpen={priceBookOpen}
         onClose={() => setPriceBookOpen(false)}
+      />
+
+      <PersonalizationModal
+        isOpen={personalizationOpen}
+        onClose={() => setPersonalizationOpen(false)}
+        onUpdated={(updated) => {
+          setProfile(updated);
+        }}
       />
     </>
   );
