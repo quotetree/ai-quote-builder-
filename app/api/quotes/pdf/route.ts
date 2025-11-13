@@ -200,13 +200,18 @@ export async function POST(req: NextRequest) {
     const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
 
     const tableData =
-      quote.items?.map((item: any) => [
-        item.product_name || item.product_number || "-",
-        formatCurrency(item.unit_price),
-        formatPercent(item.discount_percent),
-        formatQuantity(item.quantity),
-        formatCurrency(item.line_total),
-      ]) || [];
+      quote.items?.map((item: any) => {
+        // Calculate effective unit price from line_total (includes markup, discounts, etc.)
+        const effectiveUnitPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
+        
+        return [
+          item.product_name || item.product_number || "-",
+          formatCurrency(effectiveUnitPrice),
+          formatPercent(item.discount_percent),
+          formatQuantity(item.quantity),
+          formatCurrency(item.line_total),
+        ];
+      }) || [];
 
     autoTable(doc, {
       startY: tableStartY,
