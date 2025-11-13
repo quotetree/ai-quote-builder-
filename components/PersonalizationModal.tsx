@@ -152,11 +152,13 @@ export default function PersonalizationModal({
 
         if (uploadError) throw uploadError;
 
-        const { data: publicUrlData, error: publicUrlError } = await supabase.storage
+        const { data: publicUrlData } = await supabase.storage
           .from("company-assets")
           .getPublicUrl(fileName);
 
-        if (publicUrlError) throw publicUrlError;
+        if (!publicUrlData?.publicUrl) {
+          throw new Error("Failed to retrieve public URL for uploaded logo");
+        }
 
         uploadedLogoUrl = publicUrlData.publicUrl;
       } else if (logoRemoved) {
