@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 export default function DashboardPage() {
   const [projectName, setProjectName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [projectInputFocused, setProjectInputFocused] = useState(false);
   const { createProject } = useProjects();
   const router = useRouter();
 
@@ -28,6 +29,8 @@ export default function DashboardPage() {
         // Force a router refresh to update the sidebar
         router.refresh();
         router.push(`/projects/${project.id}`);
+        setProjectName("");
+        setProjectInputFocused(false);
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create project");
@@ -64,7 +67,17 @@ export default function DashboardPage() {
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Project Name"
+              onFocus={(event) => {
+                setProjectInputFocused(true);
+                // Select existing text to allow quick replacement
+                event.target.select();
+              }}
+              onBlur={() => {
+                if (!projectName.trim()) {
+                  setProjectInputFocused(false);
+                }
+              }}
+              placeholder={projectInputFocused ? "" : "Project Name"}
               disabled={creating}
               className="w-full pl-12 pr-4 py-4 bg-gray-100 rounded-xl text-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-all disabled:opacity-50"
             />

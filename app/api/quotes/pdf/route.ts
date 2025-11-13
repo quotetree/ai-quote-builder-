@@ -3,6 +3,73 @@ import { createClient } from "@/lib/supabase/server";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+type ImageFormat = "PNG" | "JPEG" | "WEBP";
+
+interface ImageAsset {
+  dataUrl: string;
+  format: ImageFormat;
+}
+
+async function fetchImageDataUrl(url: string): Promise<ImageAsset | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+
+    const contentType = response.headers.get("content-type") || "image/png";
+    let format: ImageFormat = "PNG";
+    if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+      format = "JPEG";
+    } else if (contentType.includes("webp")) {
+      format = "WEBP";
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+    const dataUrl = `data:${contentType};base64,${base64}`;
+
+    // Get image dimensions using a simple approach with Image.getSize
+    // For server-side, we'll use a library or extract from buffer
+    // For now, we'll return dimensions that can be calculated by jsPDF
+    return {
+      dataUrl,
+      format,
+    };
+  } catch (error) {
+    console.warn("Unable to load company logo for PDF:", error);
+    return null;
+  }
+}
+
+const formatCurrency = (value: number | null | undefined) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value ?? 0);
+
+const formatQuantity = (value: number | null | undefined) => {
+  const number = value ?? 0;
+  if (Number.isInteger(number)) {
+    return new Intl.NumberFormat("en-US").format(number);
+  }
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(number);
+};
+
+const formatPercent = (value: number | null | undefined) => {
+  if (value === null || value === undefined) return "";
+  if (Math.abs(value) < 0.0001) return "";
+  const percentValue = value * 100;
+  const formatter = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: percentValue % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 2,
+  });
+  return `${formatter.format(percentValue)}%`;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const { quoteId } = await req.json();
@@ -30,7 +97,7 @@ export async function POST(req: NextRequest) {
       .select(`
         *,
         items:quote_items(*),
-        project:projects(project_name)
+        project:projects(*)
       `)
       .eq("id", quoteId)
       .eq("user_id", user.id)
@@ -47,65 +114,92 @@ export async function POST(req: NextRequest) {
       .eq("id", user.id)
       .single();
 
+    const logoAsset = profile?.company_logo_url
+      ? await fetchImageDataUrl(profile.company_logo_url)
+      : null;
+
     // Generate PDF
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    // Header - Company Logo and Info
-    doc.setFontSize(20);
-    doc.setTextColor(37, 99, 235); // Blue
-    doc.text(profile?.company_name || "Company Name", 20, 20);
+    const headerStartY = 20;
+    let leftColumnBottom = headerStartY;
 
-    doc.setFontSize(10);
-    doc.setTextColor(100, 100, 100);
-    if (profile?.company_address) {
-      doc.text(profile.company_address, 20, 28);
+    if (logoAsset) {
+      // Set maximum height for logo (25mm) and calculate width proportionally
+      const maxLogoHeight = 25;
+      const imgProps = doc.getImageProperties(logoAsset.dataUrl);
+      const aspectRatio = imgProps.width / imgProps.height;
+      const logoHeight = maxLogoHeight;
+      const logoWidth = logoHeight * aspectRatio;
+      
+      // Add logo at x=20 (left margin), aligned with address below
+      doc.addImage(logoAsset.dataUrl, logoAsset.format, 20, headerStartY, logoWidth, logoHeight);
+      leftColumnBottom = headerStartY + logoHeight + 4;
+    } else {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.setTextColor(0, 63, 171);
+      doc.text(profile?.company_name || "Company Name", 20, headerStartY + 12);
+      leftColumnBottom = headerStartY + 20;
     }
 
-    // Quote Number and Date
+    // Address and Quote Number on same baseline
+    const addressStartY = leftColumnBottom;
+    
+    if (profile?.company_address) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      const addressLines = doc.splitTextToSize(profile.company_address, pageWidth / 2 - 20);
+      doc.text(addressLines, 20, addressStartY);
+      leftColumnBottom = addressStartY + addressLines.length * 6 + 6;
+    } else {
+      leftColumnBottom = addressStartY + 6;
+    }
+
+    // Quote Number - aligned with first line of address
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(12);
     doc.setTextColor(0, 0, 0);
-    doc.text(`Quote #${quote.quote_number}`, pageWidth - 20, 20, { align: "right" });
-    doc.text(`Date: ${new Date(quote.created_at).toLocaleDateString()}`, pageWidth - 20, 27, { align: "right" });
-    if (quote.expiration_date) {
-      doc.text(`Expires: ${new Date(quote.expiration_date).toLocaleDateString()}`, pageWidth - 20, 34, { align: "right" });
-    }
+    doc.text(`Quote Number: ${quote.quote_number}`, pageWidth - 20, addressStartY, { align: "right" });
 
-    // Quote Title
-    doc.setFontSize(16);
-    doc.text(quote.quote_name, 20, 45);
+    // Start table right after header section
+    const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
 
-    // Project Name
-    doc.setFontSize(10);
-    doc.setTextColor(100, 100, 100);
-    doc.text(`Project: ${(quote.project as any).project_name}`, 20, 52);
-
-    // Line Items Table
-    const tableData = quote.items?.map((item: any) => [
-      item.product_number || "-",
-      item.product_name,
-      item.quantity.toString(),
-      `$${item.unit_price.toFixed(2)}`,
-      item.discount_percent > 0 ? `${item.discount_percent}%` : "-",
-      `$${item.line_total.toFixed(2)}`,
-    ]) || [];
+    const tableData =
+      quote.items?.map((item: any) => [
+        item.product_name || item.product_number || "-",
+        formatCurrency(item.unit_price),
+        formatPercent(item.discount_percent),
+        formatQuantity(item.quantity),
+        formatCurrency(item.line_total),
+      ]) || [];
 
     autoTable(doc, {
-      startY: 60,
-      head: [["Product #", "Description", "Qty", "Unit Price", "Discount", "Total"]],
-      body: tableData,
-      theme: "striped",
+      startY: tableStartY,
+      head: [["Product", "Unit Price", "Discount", "Quantity", "Total Price"]],
+      body: tableData.length > 0 ? tableData : [["No items", "", "", "", ""]],
+      theme: "grid",
       headStyles: {
-        fillColor: [37, 99, 235],
+        fillColor: [62, 62, 62],
         textColor: 255,
+        halign: "center",
       },
       styles: {
         fontSize: 9,
+        textColor: [50, 50, 50],
+      },
+      columnStyles: {
+        1: { halign: "right" },
+        2: { halign: "center" },
+        3: { halign: "center" },
+        4: { halign: "right" },
       },
     });
 
     // Calculate final Y position after table
-    const finalY = (doc as any).lastAutoTable.finalY + 10;
+    const finalY = ((doc as any).lastAutoTable?.finalY || tableStartY) + 10;
 
     // Totals
     doc.setFontSize(11);
@@ -115,23 +209,28 @@ export async function POST(req: NextRequest) {
     let currentY = finalY;
 
     doc.text("Subtotal:", totalsX, currentY);
-    doc.text(`$${quote.subtotal.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
+    doc.text(formatCurrency(quote.subtotal), pageWidth - 20, currentY, { align: "right" });
 
-    if (quote.discount_amount > 0) {
+    if ((quote.discount_amount ?? 0) > 0) {
       currentY += 7;
-      doc.text(`Discount (${quote.discount_rate}%):`, totalsX, currentY);
-      doc.text(`-$${quote.discount_amount.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
+      const discountLabel = formatPercent(quote.discount_rate);
+      doc.text(
+        `Discount${discountLabel ? ` (${discountLabel})` : ""}:`,
+        totalsX,
+        currentY
+      );
+      doc.text(`-${formatCurrency(quote.discount_amount)}`, pageWidth - 20, currentY, { align: "right" });
     }
 
     currentY += 7;
-    doc.text(`Tax (${quote.tax_rate}%):`, totalsX, currentY);
-    doc.text(`$${quote.tax_amount.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
+    doc.text("Tax:", totalsX, currentY);
+    doc.text(formatCurrency(quote.tax_amount), pageWidth - 20, currentY, { align: "right" });
 
     currentY += 10;
     doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
     doc.text("Total:", totalsX, currentY);
-    doc.text(`$${quote.total_price.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
+    doc.text(formatCurrency(quote.total_price), pageWidth - 20, currentY, { align: "right" });
 
     // Projected Profit (if available)
     if (quote.profit_margin > 0) {
@@ -139,7 +238,7 @@ export async function POST(req: NextRequest) {
       doc.setFontSize(11);
       doc.setTextColor(34, 197, 94); // Green
       doc.text("Projected Margin:", totalsX, currentY);
-      doc.text(`$${quote.profit_margin.toFixed(2)}`, pageWidth - 20, currentY, { align: "right" });
+      doc.text(formatCurrency(quote.profit_margin), pageWidth - 20, currentY, { align: "right" });
     }
 
     // Footer
