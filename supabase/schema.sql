@@ -71,6 +71,16 @@ CREATE TABLE chat_messages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Project folders (Drive hierarchy)
+CREATE TABLE project_folders (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  project_id UUID REFERENCES projects(id) ON DELETE CASCADE NOT NULL,
+  parent_folder_id UUID REFERENCES project_folders(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Project documents (Drive)
 CREATE TABLE project_documents (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -80,7 +90,20 @@ CREATE TABLE project_documents (
   file_size BIGINT NOT NULL,
   storage_path TEXT NOT NULL,
   uploaded_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  folder_id UUID REFERENCES project_folders(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Project notes (rich text)
+CREATE TABLE project_notes (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  project_id UUID REFERENCES projects(id) ON DELETE CASCADE NOT NULL,
+  folder_id UUID REFERENCES project_folders(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  content JSONB DEFAULT '{}'::jsonb,
+  plain_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Quotes (versions in Log)
@@ -149,6 +172,8 @@ ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE project_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quote_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analytics_events ENABLE ROW LEVEL SECURITY;
@@ -201,13 +226,36 @@ CREATE POLICY "Users can delete items in own quotes" ON quote_items FOR DELETE
 CREATE POLICY "Users can view own analytics" ON analytics_events FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert own analytics" ON analytics_events FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- Document policies
+-- Document & Drive policies
 CREATE POLICY "Users can view docs in own projects" ON project_documents FOR SELECT 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can insert docs in own projects" ON project_documents FOR INSERT 
   WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can update docs in own projects" ON project_documents FOR UPDATE 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can delete docs in own projects" ON project_documents FOR DELETE 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
+
+CREATE POLICY "Users can view own folders" ON project_folders FOR SELECT 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can insert own folders" ON project_folders FOR INSERT 
+  WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can update own folders" ON project_folders FOR UPDATE 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can delete own folders" ON project_folders FOR DELETE 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
+
+CREATE POLICY "Users can view own notes" ON project_notes FOR SELECT 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can insert own notes" ON project_notes FOR INSERT 
+  WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can update own notes" ON project_notes FOR UPDATE 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Users can delete own notes" ON project_notes FOR DELETE 
+  USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
 
 -- Functions for updated_at timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -224,4 +272,6 @@ CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON products FOR EACH ROW
 CREATE TRIGGER update_projects_updated_at BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_quotes_updated_at BEFORE UPDATE ON quotes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_product_families_updated_at BEFORE UPDATE ON product_families FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_project_folders_updated_at BEFORE UPDATE ON project_folders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_project_notes_updated_at BEFORE UPDATE ON project_notes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

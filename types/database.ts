@@ -163,7 +163,31 @@ export interface ProjectDocument {
   file_size: number;
   storage_path: string;
   uploaded_by: string | null;
+  folder_id?: string | null;
   created_at: string;
+}
+
+export interface ProjectFolder {
+  id: string;
+  project_id: string;
+  parent_folder_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectNote {
+  id: string;
+  project_id: string;
+  folder_id: string | null;
+  title: string;
+  content: {
+    html?: string;
+    text?: string;
+  } | null;
+  plain_text: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Quote {

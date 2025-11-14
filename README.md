@@ -121,12 +121,18 @@ Or use the Supabase CLI:
 supabase db push
 ```
 
-5. **Create Supabase storage bucket**
+5. **Create Supabase storage bucket & policies**
 
 In your Supabase project dashboard:
 - Go to **Storage**
 - Create a new bucket named `project-files`
 - Set it to **Private** (authenticated users only)
+- Run the SQL in `supabase/migrations/20241113_add_project_files_storage_policies.sql`
+  inside the SQL Editor to grant authenticated users upload/view/delete access
+  to their own objects in that bucket
+- Run `supabase/migrations/20241113_create_drive_folders_notes.sql` and
+  `supabase/migrations/20241113_add_project_document_update_policy.sql` to add
+  nested folders, notes, and document rename permissions
 
 6. **Run the development server**
 

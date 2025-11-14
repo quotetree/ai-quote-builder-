@@ -147,6 +147,28 @@ npm run dev
 
 ## Other Common Issues
 
+### Drive upload fails with "new row violates row-level security policy"
+
+**Symptoms**: Clicking **Upload File** in the Drive tab immediately shows the
+error `new row violates row-level security policy`.
+
+**Fix**:
+1. Open Supabase **SQL Editor**.
+2. Run the contents of `supabase/migrations/20241113_add_project_files_storage_policies.sql`.
+   This creates the `project-files` bucket (if it does not exist) and grants authenticated
+   users permission to upload/read/delete their own files.
+3. If you created the bucket earlier, double-check it is private and named exactly `project-files`.
+4. Retry the upload.
+
+### Drive rename fails with "Document not found or you no longer have access."
+
+**Symptoms**: When renaming a document, toast shows “Document not found or you no longer have access.”
+
+**Fix**:
+1. Run the SQL in `supabase/migrations/20241113_add_project_document_update_policy.sql` so RLS allows updates to `project_documents`.
+2. Alternatively rerun `supabase schema.sql` or run `supabase db push` to sync policies.
+3. Refresh the Drive tab and try again.
+
 ### Chat Messages Not Showing
 
 **Symptoms**: Send message, nothing appears
@@ -217,6 +239,7 @@ Before reporting an issue:
 ---
 
 **Updated Error Handling**: The chat now shows specific error messages instead of generic "Failed to get AI response". You should see the actual problem now!
+
 
 
 
