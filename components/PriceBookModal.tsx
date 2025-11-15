@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown } from "lucide-react";
+import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, Download } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
 import { Product } from "@/types/database";
@@ -40,6 +40,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   const [unmappedColumnsCount, setUnmappedColumnsCount] = useState(0);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+  const productFamilyNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    productFamilies.forEach((family) => {
+      if (family?.id) {
+        map.set(family.id, family.name);
+      }
+    });
+    return map;
+  }, [productFamilies]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -156,6 +165,69 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     } finally {
       setBulkDeleteLoading(false);
     }
+  };
+
+  const handleExportSelected = () => {
+    if (!selectedProductIds.length) return;
+
+    const selectedProducts = products.filter((product) =>
+      selectedProductIds.includes(product.id)
+    );
+
+    if (!selectedProducts.length) {
+      toast.error("No products selected for export");
+      return;
+    }
+
+    const headers = [
+      "Product Name",
+      "Product Code",
+      "Product Family",
+      "Product Brand",
+      "Product Type",
+      "List Price",
+      "Sales Price",
+      "Product Description",
+    ];
+
+    const escapeCsvValue = (value: string | number | null | undefined) => {
+      if (value === null || value === undefined) return "";
+      const stringValue = String(value).replace(/"/g, '""');
+      return /[",\n]/.test(stringValue) ? `"${stringValue}"` : stringValue;
+    };
+
+    const rows = selectedProducts.map((product) => [
+      product.product_name,
+      product.product_number,
+      productFamilyNameMap.get(product.product_family_id || "") || "",
+      product.product_brand,
+      product.product_type,
+      product.list_price,
+      product.sales_price,
+      product.description,
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => row.map(escapeCsvValue).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().split("T")[0];
+    link.href = url;
+    link.download = `products-export-${date}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast.success(
+      `${selectedProducts.length} product${
+        selectedProducts.length === 1 ? "" : "s"
+      } exported`
+    );
   };
 
   if (!isOpen) return null;
@@ -463,16 +535,25 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
               Manage Families
             </button>
             {selectedProductIds.length > 0 && (
-              <button
-                onClick={handleDeleteSelected}
-                disabled={bulkDeleteLoading}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                <Trash2 size={18} />
-                {bulkDeleteLoading
-                  ? "Deleting..."
-                  : `Delete Selected (${selectedProductIds.length})`}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportSelected}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors inline-flex items-center gap-2 font-medium"
+                >
+                  <Download size={18} />
+                  Export
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={bulkDeleteLoading}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={18} />
+                  {bulkDeleteLoading
+                    ? "Deleting..."
+                    : `Delete Selected (${selectedProductIds.length})`}
+                </button>
+              </div>
             )}
             <div className="flex-1" />
             <span className="text-sm text-gray-600">
