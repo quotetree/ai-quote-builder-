@@ -145,7 +145,7 @@ export default function ProjectWorkspace({ projectId, projectName }: ProjectWork
         <div className={activeTab === "chat" ? "h-full" : "hidden"}>
           <SplitChatPanel projectId={projectId} projectName={projectName} />
         </div>
-        <div className={activeTab === "drive" ? "h-full" : "hidden"}>
+        <div className={activeTab === "drive" ? "h-full overflow-y-auto" : "hidden"}>
           <DrivePanel projectId={projectId} />
         </div>
         <div className={activeTab === "log" ? "h-full" : "hidden"}>

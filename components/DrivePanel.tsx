@@ -18,6 +18,21 @@ const FONT_SIZE_COMMAND_MAP: Record<string, string> = {
   "32px": "7",
 };
 
+const getSelectionFontSize = (editor: HTMLDivElement | null): string | null => {
+  if (!editor) return null;
+  const selection = document.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const focusNode = selection.focusNode || selection.anchorNode;
+  if (!focusNode || !editor.contains(focusNode)) return null;
+  const target =
+    focusNode.nodeType === Node.TEXT_NODE
+      ? (focusNode.parentElement as HTMLElement)
+      : (focusNode as HTMLElement);
+  if (!target) return null;
+  const computed = window.getComputedStyle(target).fontSize;
+  return computed || null;
+};
+
 const createSegmentId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
@@ -272,6 +287,11 @@ interface DocumentCardMeta {
   accentText: string;
 }
 
+type RenameTarget =
+  | { type: "file"; record: ProjectDocument }
+  | { type: "folder"; record: ProjectFolder }
+  | { type: "note"; record: ProjectNote };
+
 const getDocumentMeta = (doc: ProjectDocument): DocumentCardMeta => {
   const mime = doc.file_type?.toLowerCase() || "";
   const extension = getFileExtension(doc.file_name);
@@ -373,6 +393,11 @@ const stripHtml = (html: string) => {
 const truncate = (value: string, max = 120) =>
   value.length > max ? `${value.slice(0, max)}…` : value;
 
+const sanitizeFileName = (value: string | null | undefined, fallback: string) => {
+  const target = value?.trim() ? value.trim() : fallback;
+  return target.replace(/[\\/:*?"<>|]/g, "_");
+};
+
 export default function DrivePanel({ projectId }: DrivePanelProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
@@ -388,7 +413,9 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     createInitialPreviewState(),
   );
   const [menuOpenDocId, setMenuOpenDocId] = useState<string | null>(null);
-  const [renamingDoc, setRenamingDoc] = useState<ProjectDocument | null>(null);
+  const [menuOpenFolderId, setMenuOpenFolderId] = useState<string | null>(null);
+  const [menuOpenNoteId, setMenuOpenNoteId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameLoading, setRenameLoading] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
@@ -401,6 +428,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const noteEditorRef = useRef<HTMLDivElement | null>(null);
   const [editorInitializedFor, setEditorInitializedFor] = useState<string | null>(null);
   const [noteFontSize, setNoteFontSize] = useState(DEFAULT_FONT_SIZE);
+  const manualFontSizeRef = useRef(false);
   const [noteSegments, setNoteSegments] = useState<NoteSegment[]>([]);
 
   const applyEditorCommand = (command: string, value?: string) => {
@@ -714,9 +742,11 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const closeActiveNote = () => {
     setActiveNote(null);
     setEditorInitializedFor(null);
+    manualFontSizeRef.current = false;
   };
 
   const handleFontSizeChange = (value: string) => {
+    manualFontSizeRef.current = true;
     setNoteFontSize(value);
     if (!noteEditorRef.current) return;
     noteEditorRef.current.focus();
@@ -746,6 +776,27 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const handleEditorInput = () => {
     updateSegmentsFromEditor();
   };
+
+  useEffect(() => {
+    if (!activeNote || !noteEditorRef.current) return undefined;
+    const handleSelectionChange = () => {
+      if (!noteEditorRef.current) return;
+      if (manualFontSizeRef.current) {
+        manualFontSizeRef.current = false;
+        return;
+      }
+      const selectionFont = getSelectionFontSize(noteEditorRef.current);
+      if (selectionFont && selectionFont !== noteFontSize) {
+        setNoteFontSize(selectionFont);
+      }
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    handleSelectionChange();
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [activeNote, noteFontSize]);
 
   async function saveNoteDraft(editor: NoteEditorState) {
     try {
@@ -785,6 +836,69 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       }
     } catch (error: any) {
       toast.error("Failed to delete note");
+    }
+  }
+
+  async function deleteFolder(folder: ProjectFolder) {
+    if (!confirm(`Delete folder "${folder.name}"?`)) return;
+    try {
+      await supabase.from("project_folders").delete().eq("id", folder.id);
+      setFolders((prev) => prev.filter((f) => f.id !== folder.id));
+      setFolderStack((prev) => prev.filter((f) => f.id !== folder.id));
+      toast.success("Folder deleted");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete folder");
+    }
+  }
+
+  function handleDownloadNote(note: ProjectNote) {
+    const fileName = `${sanitizeFileName(note.title || "untitled-note", "untitled-note")}.html`;
+    const html = note.content?.html || note.plain_text || "";
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadFolderContents(folderId: string) {
+    const { data: docs, error: docsError } = await supabase
+      .from("project_documents")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("folder_id", folderId);
+    if (docsError) throw docsError;
+    for (const doc of docs || []) {
+      await handleDownload(doc);
+    }
+
+    const { data: folderNotes, error: notesError } = await supabase
+      .from("project_notes")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("folder_id", folderId);
+    if (notesError) throw notesError;
+    folderNotes?.forEach((note) => handleDownloadNote(note));
+
+    const { data: childFolders, error: childError } = await supabase
+      .from("project_folders")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("parent_folder_id", folderId);
+    if (childError) throw childError;
+    for (const child of childFolders || []) {
+      await downloadFolderContents(child.id);
+    }
+  }
+
+  async function handleDownloadFolder(folder: ProjectFolder) {
+    try {
+      await downloadFolderContents(folder.id);
+      toast.success("Folder downloads started");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download folder");
     }
   }
 
@@ -1009,43 +1123,77 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
   };
 
-  function startRename(doc: ProjectDocument) {
+  const getRenameTargetName = (target: RenameTarget | null) => {
+    if (!target) return "";
+    if (target.type === "file") return target.record.file_name;
+    if (target.type === "folder") return target.record.name;
+    return target.record.title || "Untitled Note";
+  };
+
+  function openRename(target: RenameTarget) {
     setMenuOpenDocId(null);
-    setRenamingDoc(doc);
-    setRenameValue(doc.file_name);
+    setMenuOpenFolderId(null);
+    setMenuOpenNoteId(null);
+    setRenameTarget(target);
+    setRenameValue(getRenameTargetName(target));
   }
 
   const closeRename = () => {
     if (renameLoading) return;
-    setRenamingDoc(null);
+    setRenameTarget(null);
     setRenameValue("");
   };
 
   const handleRenameSubmit = async () => {
-    if (!renamingDoc) return;
+    if (!renameTarget) return;
     const trimmed = renameValue.trim();
     if (!trimmed) {
-      toast.error("File name cannot be empty");
+      toast.error("Name cannot be empty");
       return;
     }
 
     setRenameLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("project_documents")
-        .update({ file_name: trimmed })
-        .eq("id", renamingDoc.id)
-        .select()
-        .maybeSingle();
+      if (renameTarget.type === "file") {
+        const { data, error } = await supabase
+          .from("project_documents")
+          .update({ file_name: trimmed })
+          .eq("id", renameTarget.record.id)
+          .select()
+          .maybeSingle();
 
-      if (error) throw error;
-      if (!data) throw new Error("Document not found or you no longer have access.");
-
-      setDocuments((prev) => prev.map((doc) => (doc.id === data.id ? data : doc)));
-      toast.success("File renamed");
+        if (error) throw error;
+        if (!data) throw new Error("Document not found or you no longer have access.");
+        setDocuments((prev) => prev.map((doc) => (doc.id === data.id ? data : doc)));
+      } else if (renameTarget.type === "folder") {
+        const { data, error } = await supabase
+          .from("project_folders")
+          .update({ name: trimmed })
+          .eq("id", renameTarget.record.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setFolders((prev) => prev.map((folder) => (folder.id === data.id ? data : folder)));
+        setFolderStack((prev) =>
+          prev.map((folder) => (folder.id === data.id ? data : folder)),
+        );
+      } else {
+        const { data, error } = await supabase
+          .from("project_notes")
+          .update({ title: trimmed })
+          .eq("id", renameTarget.record.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setNotes((prev) => prev.map((note) => (note.id === data.id ? data : note)));
+        setActiveNote((prev) =>
+          prev && prev.note.id === data.id ? { ...prev, title: data.title, note: data } : prev,
+        );
+      }
+      toast.success("Item renamed");
       closeRename();
     } catch (error: any) {
-      toast.error(error.message || "Failed to rename file");
+      toast.error(error.message || "Failed to rename item");
     } finally {
       setRenameLoading(false);
     }
@@ -1134,63 +1282,107 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     );
   };
 
-  const renderNoteCards = () => (
-    notes.map((note) => (
-      <div
-        key={note.id}
-        draggable
-        onDragStart={() => setDragItem({ id: note.id, type: "note" })}
-        onDragEnd={() => setDragItem(null)}
-        onDoubleClick={() => openNote(note)}
-        className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer group"
-      >
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-yellow-100 text-yellow-600 flex items-center justify-center">
-              <StickyNote size={18} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {note.title || "Untitled Note"}
-              </p>
-              <p className="text-xs text-gray-500">
-                {new Date(note.updated_at).toLocaleString()}
-              </p>
-            </div>
+  const renderNoteCard = (note: ProjectNote) => (
+    <div
+      key={`note-${note.id}`}
+      draggable
+      onDragStart={() => setDragItem({ id: note.id, type: "note" })}
+      onDragEnd={() => setDragItem(null)}
+      onClick={() => openNote(note)}
+      onDoubleClick={() => openNote(note)}
+      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer group"
+    >
+      <div className="flex items-start justify-between mb-4 gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-yellow-100 text-yellow-600 flex items-center justify-center">
+            <StickyNote size={18} />
           </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              {note.title || "Untitled Note"}
+            </p>
+            <p className="text-xs text-gray-500">
+              {new Date(note.updated_at).toLocaleString()}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-right">
+          <span className="text-xs text-blue-600 dark:text-blue-400">Click to open</span>
+          <button
+            type="button"
+            aria-label="Note actions"
+            className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenDocId(null);
+              setMenuOpenFolderId(null);
+              setMenuOpenNoteId((prev) => (prev === note.id ? null : note.id));
+            }}
+          >
+            <MoreVertical size={18} />
+          </button>
+        </div>
+      </div>
+      <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
+        {truncate(note.plain_text || "") || "Start typing to add content"}
+      </p>
+      {menuOpenNoteId === note.id && (
+        <div className="absolute top-3 right-3 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-44 py-2">
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              openNote(note);
+              openRename({ type: "note", record: note });
             }}
-            className="text-blue-600 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
           >
-            Open
+            <Pencil size={16} />
+            Rename
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenNoteId(null);
+              handleDownloadNote(note);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+          >
+            <Download size={16} />
+            Download
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenNoteId(null);
+              deleteNote(note.id);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+          >
+            <Trash2 size={16} />
+            Delete
           </button>
         </div>
-        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
-          {truncate(note.plain_text || "") || "Start typing to add content"}
-        </p>
-      </div>
-    ))
+      )}
+    </div>
   );
 
-  const renderFolderCards = () => (
-    folders.map((folder) => (
-      <div
-        key={folder.id}
-        draggable
-        onDragStart={() => setDragItem({ id: folder.id, type: "folder" })}
-        onDragEnd={() => setDragItem(null)}
-        onDoubleClick={() => enterFolder(folder)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
-          handleDropOnFolder(folder);
-        }}
-        className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer"
-      >
+  const renderFolderCard = (folder: ProjectFolder) => (
+    <div
+      key={`folder-${folder.id}`}
+      draggable
+      onDragStart={() => setDragItem({ id: folder.id, type: "folder" })}
+      onDragEnd={() => setDragItem(null)}
+      onDoubleClick={() => enterFolder(folder)}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        handleDropOnFolder(folder);
+      }}
+      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer"
+    >
+      <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
             <Folder size={18} />
@@ -1204,107 +1396,189 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
             </p>
           </div>
         </div>
-      </div>
-    ))
-  );
-
-  const renderFileCards = () => (
-    documents.map((doc) => {
-      const meta = getDocumentMeta(doc);
-      const pathParts = doc.file_name.split("/");
-      const simpleName = pathParts.pop() || doc.file_name;
-      return (
-        <div
-          key={doc.id}
-          role="button"
-          tabIndex={0}
-          draggable
-          onDragStart={() => setDragItem({ id: doc.id, type: "file" })}
-          onDragEnd={() => setDragItem(null)}
-          onClick={() => handlePreview(doc)}
-          className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer group"
+        <button
+          type="button"
+          aria-label="Folder actions"
+          className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          onClick={(event) => {
+            event.stopPropagation();
+            setMenuOpenDocId(null);
+            setMenuOpenNoteId(null);
+            setMenuOpenFolderId((prev) => (prev === folder.id ? null : folder.id));
+          }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center text-base font-semibold ${meta.accentBg} ${meta.accentText}`}
-            >
-              {meta.icon}
-            </div>
-            <button
-              type="button"
-              aria-label="File actions"
-              onClick={(event) => {
-                event.stopPropagation();
-                setMenuOpenDocId((prev) => (prev === doc.id ? null : doc.id));
-              }}
-              className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
-              <MoreVertical size={18} />
-            </button>
-            {menuOpenDocId === doc.id && (
-              <div className="absolute top-3 right-3 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-44 py-2">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    startRename(doc);
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
-                >
-                  <Pencil size={16} />
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuOpenDocId(null);
-                    handleDownload(doc);
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
-                >
-                  <Download size={16} />
-                  Download
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuOpenDocId(null);
-                    handleDelete(doc);
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="mt-6">
-            <p className="text-xs uppercase tracking-wide text-gray-500">
-              {meta.label}
-            </p>
-            <h3 className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" title={doc.file_name}>
-              {simpleName}
-            </h3>
-          </div>
-          <div className="mt-4 text-xs text-gray-500">
-            {doc.file_type || "Unknown type"}
-          </div>
-          <div className="mt-6 flex items-center justify-between text-xs text-gray-500">
-            <span>{formatFileSize(doc.file_size)}</span>
-            <span>{new Date(doc.created_at).toLocaleDateString()}</span>
-          </div>
-          <div className="mt-4 text-sm text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
-            Click to preview
-          </div>
+          <MoreVertical size={18} />
+        </button>
+      </div>
+      {menuOpenFolderId === folder.id && (
+        <div className="absolute top-3 right-3 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-44 py-2">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              openRename({ type: "folder", record: folder });
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+          >
+            <Pencil size={16} />
+            Rename
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenFolderId(null);
+              handleDownloadFolder(folder);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+          >
+            <Download size={16} />
+            Download
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenFolderId(null);
+              deleteFolder(folder);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+          >
+            <Trash2 size={16} />
+            Delete
+          </button>
         </div>
-      );
-    })
+      )}
+    </div>
   );
 
-  const hasItems = folders.length + notes.length + documents.length > 0;
+  const renderFileCard = (doc: ProjectDocument) => {
+    const meta = getDocumentMeta(doc);
+    const pathParts = doc.file_name.split("/");
+    const simpleName = pathParts.pop() || doc.file_name;
+    return (
+      <div
+        key={`file-${doc.id}`}
+        role="button"
+        tabIndex={0}
+        draggable
+        onDragStart={() => setDragItem({ id: doc.id, type: "file" })}
+        onDragEnd={() => setDragItem(null)}
+        onClick={() => handlePreview(doc)}
+        className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer group"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center text-base font-semibold ${meta.accentBg} ${meta.accentText}`}
+          >
+            {meta.icon}
+          </div>
+          <button
+            type="button"
+            aria-label="File actions"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenFolderId(null);
+              setMenuOpenNoteId(null);
+              setMenuOpenDocId((prev) => (prev === doc.id ? null : doc.id));
+            }}
+            className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            <MoreVertical size={18} />
+          </button>
+          {menuOpenDocId === doc.id && (
+            <div className="absolute top-3 right-3 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-44 py-2">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openRename({ type: "file", record: doc });
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+              >
+                <Pencil size={16} />
+                Rename
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpenDocId(null);
+                  handleDownload(doc);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+              >
+                <Download size={16} />
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpenDocId(null);
+                  handleDelete(doc);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="mt-6">
+          <p className="text-xs uppercase tracking-wide text-gray-500">
+            {meta.label}
+          </p>
+          <h3 className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" title={doc.file_name}>
+            {simpleName}
+          </h3>
+        </div>
+        <div className="mt-4 text-xs text-gray-500">
+          {doc.file_type || "Unknown type"}
+        </div>
+        <div className="mt-6 flex items-center justify-between text-xs text-gray-500">
+          <span>{formatFileSize(doc.file_size)}</span>
+          <span>{new Date(doc.created_at).toLocaleDateString()}</span>
+        </div>
+        <div className="mt-4 text-sm text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
+          Click to preview
+        </div>
+      </div>
+    );
+  };
+
+  type DriveItem =
+    | { type: "folder"; record: ProjectFolder; timestamp: number }
+    | { type: "note"; record: ProjectNote; timestamp: number }
+    | { type: "file"; record: ProjectDocument; timestamp: number };
+
+  const driveItems = useMemo(() => {
+    const items: DriveItem[] = [];
+    folders.forEach((folder) => {
+      const timestamp = folder.updated_at
+        ? new Date(folder.updated_at).getTime()
+        : Date.now();
+      items.push({ type: "folder", record: folder, timestamp });
+    });
+    notes.forEach((note) => {
+      const timestamp = note.updated_at ? new Date(note.updated_at).getTime() : Date.now();
+      items.push({ type: "note", record: note, timestamp });
+    });
+    documents.forEach((doc) => {
+      const timestamp = doc.created_at ? new Date(doc.created_at).getTime() : Date.now();
+      items.push({ type: "file", record: doc, timestamp });
+    });
+    return items.sort((a, b) => b.timestamp - a.timestamp);
+  }, [folders, notes, documents]);
+
+  const renderDriveCard = (item: DriveItem) => {
+    if (item.type === "folder") return renderFolderCard(item.record);
+    if (item.type === "note") return renderNoteCard(item.record);
+    return renderFileCard(item.record);
+  };
+
+  const hasItems = driveItems.length > 0;
 
   return (
     <div className="h-full bg-gray-50 dark:bg-gray-950 p-6">
@@ -1421,9 +1695,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {renderFolderCards()}
-          {renderNoteCards()}
-          {renderFileCards()}
+          {driveItems.map((item) => renderDriveCard(item))}
         </div>
       )}
 
@@ -1516,7 +1788,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         </div>
       )}
 
-      {renamingDoc && (
+      {renameTarget && (
         <div
           className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center px-4"
           onClick={closeRename}
@@ -1525,9 +1797,15 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
             className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-md p-6"
             onClick={(event) => event.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-2">Rename file</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {renameTarget.type === "file"
+                ? "Rename file"
+                : renameTarget.type === "folder"
+                  ? "Rename folder"
+                  : "Rename note"}
+            </h3>
             <p className="text-sm text-gray-500 mb-4">
-              Enter a new name for “{renamingDoc.file_name}”.
+              Enter a new name for “{getRenameTargetName(renameTarget)}”.
             </p>
             <input
               type="text"
