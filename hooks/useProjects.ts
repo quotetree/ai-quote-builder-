@@ -2,6 +2,10 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Project } from "@/types/database";
 
+type FetchProjectsOptions = {
+  silent?: boolean;
+};
+
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,9 +16,14 @@ export function useProjects() {
     fetchProjects();
   }, []);
 
-  async function fetchProjects() {
+  async function fetchProjects(options?: FetchProjectsOptions) {
+    const shouldShowLoading = !options?.silent;
+
     try {
-      setLoading(true);
+      if (shouldShowLoading) {
+        setLoading(true);
+      }
+
       const { data, error } = await supabase
         .from("projects")
         .select("*")
@@ -27,7 +36,9 @@ export function useProjects() {
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (shouldShowLoading) {
+        setLoading(false);
+      }
     }
   }
 

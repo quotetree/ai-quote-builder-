@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
@@ -18,7 +18,15 @@ interface PriceBookModalProps {
 type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping" | "product-detail";
 
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
-  const { products, loading, createProduct, updateProduct, deleteProduct, bulkCreateProducts } = useProducts();
+  const {
+    products,
+    loading,
+    createProduct,
+    updateProduct,
+    deleteProduct,
+    deleteProducts,
+    bulkCreateProducts,
+  } = useProducts();
   const { productFamilies, createProductFamily, updateProductFamily, deleteProductFamily } = useProductFamilies();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -30,6 +38,20 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   const [showFamilyManager, setShowFamilyManager] = useState(false);
   const [showUnmappedWarning, setShowUnmappedWarning] = useState(false);
   const [unmappedColumnsCount, setUnmappedColumnsCount] = useState(0);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedProductIds([]);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setSelectedProductIds((prev) =>
+      prev.filter((id) => products.some((product) => product.id === id))
+    );
+  }, [products]);
 
   // Improved search filtering with useMemo for performance and consistency
   // MUST be called before the early return to follow Rules of Hooks
@@ -75,6 +97,66 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     
     return filtered;
   }, [products, searchQuery]);
+
+  const visibleProductIds = useMemo(
+    () => filteredProducts.map((product) => product.id),
+    [filteredProducts]
+  );
+  const allVisibleSelected =
+    visibleProductIds.length > 0 &&
+    visibleProductIds.every((id) => selectedProductIds.includes(id));
+  const anyVisibleSelected = visibleProductIds.some((id) =>
+    selectedProductIds.includes(id)
+  );
+  const indeterminateSelection = anyVisibleSelected && !allVisibleSelected;
+
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    setSelectedProductIds((prev) => {
+      if (allVisibleSelected) {
+        return prev.filter((id) => !visibleProductIds.includes(id));
+      }
+
+      const next = new Set(prev);
+      visibleProductIds.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!selectedProductIds.length) return;
+
+    const idsToDelete = [...selectedProductIds];
+    const confirmMessage =
+      idsToDelete.length === 1
+        ? "Are you sure you want to delete this product?"
+        : `Are you sure you want to delete ${idsToDelete.length} selected products?`;
+
+    if (!confirm(confirmMessage)) return;
+
+    setBulkDeleteLoading(true);
+    try {
+      await deleteProducts(idsToDelete);
+      toast.success(
+        `${idsToDelete.length} product${
+          idsToDelete.length === 1 ? "" : "s"
+        } deleted`
+      );
+      setSelectedProductIds([]);
+    } catch (error) {
+      console.error("Failed to delete selected products", error);
+      toast.error("Failed to delete selected products");
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -380,6 +462,18 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             >
               Manage Families
             </button>
+            {selectedProductIds.length > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                disabled={bulkDeleteLoading}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                <Trash2 size={18} />
+                {bulkDeleteLoading
+                  ? "Deleting..."
+                  : `Delete Selected (${selectedProductIds.length})`}
+              </button>
+            )}
             <div className="flex-1" />
             <span className="text-sm text-gray-600">
               {searchQuery ? (
@@ -416,6 +510,11 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
                   }
                 }
               }}
+              selectedProductIds={selectedProductIds}
+              onToggleProductSelection={toggleProductSelection}
+              onToggleSelectAll={handleToggleSelectAll}
+              isAllVisibleSelected={allVisibleSelected}
+              isSomeVisibleSelected={indeterminateSelection}
             />
           )}
 
@@ -524,6 +623,11 @@ function ProductsTable({
   onEdit,
   onDelete,
   productFamilies,
+  selectedProductIds,
+  onToggleProductSelection,
+  onToggleSelectAll,
+  isAllVisibleSelected,
+  isSomeVisibleSelected,
 }: {
   products: Product[];
   loading: boolean;
@@ -531,8 +635,20 @@ function ProductsTable({
   onEdit: (product: Product) => void;
   onDelete: (productId: string) => void;
   productFamilies: any[];
+  selectedProductIds: string[];
+  onToggleProductSelection: (productId: string) => void;
+  onToggleSelectAll: () => void;
+  isAllVisibleSelected: boolean;
+  isSomeVisibleSelected: boolean;
 }) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = isSomeVisibleSelected;
+    }
+  }, [isSomeVisibleSelected, isAllVisibleSelected]);
 
   const getFamilyName = (familyId: string | null) => {
     if (!familyId) return "—";
@@ -568,6 +684,16 @@ function ProductsTable({
       <table className="w-full">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
+            <th className="px-4 py-3 w-12">
+              <input
+                type="checkbox"
+                ref={selectAllRef}
+                checked={isAllVisibleSelected}
+                onChange={onToggleSelectAll}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                aria-label="Select all products"
+              />
+            </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Product Name
             </th>
@@ -591,6 +717,15 @@ function ProductsTable({
         <tbody className="bg-white divide-y divide-gray-200">
           {products.map((product) => (
             <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+              <td className="px-4 py-4 w-12 align-top">
+                <input
+                  type="checkbox"
+                  checked={selectedProductIds.includes(product.id)}
+                  onChange={() => onToggleProductSelection(product.id)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  aria-label={`Select product ${product.product_name}`}
+                />
+              </td>
               <td className="px-6 py-4">
                 <div className="flex flex-col">
                   <button

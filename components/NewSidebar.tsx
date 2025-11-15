@@ -41,15 +41,15 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Refresh projects when pathname changes
+  // Refresh projects when pathname changes without clearing list UI
   useEffect(() => {
-    fetchProjects();
+    fetchProjects({ silent: true });
   }, [pathname]);
 
   // Listen for project update events
   useEffect(() => {
     const handleProjectUpdate = () => {
-      fetchProjects();
+      fetchProjects({ silent: true });
     };
     
     window.addEventListener('projectUpdated', handleProjectUpdate);

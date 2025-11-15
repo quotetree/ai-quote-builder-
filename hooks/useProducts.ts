@@ -119,11 +119,33 @@ export function useProducts() {
   }
 
   async function deleteProduct(id: string) {
+    if (!id) return;
     try {
       const { error } = await supabase.from("products").delete().eq("id", id);
 
       if (error) throw error;
-      setProducts(products.filter((p) => p.id !== id));
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    }
+  }
+
+  async function deleteProducts(ids: string[]) {
+    if (!ids.length) return;
+
+    const CHUNK_SIZE = 500;
+    const idSet = new Set(ids);
+
+    try {
+      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
+        const { error } = await supabase.from("products").delete().in("id", chunk);
+
+        if (error) throw error;
+      }
+
+      setProducts((prev) => prev.filter((p) => !idSet.has(p.id)));
     } catch (err: any) {
       setError(err.message);
       throw err;
@@ -242,6 +264,7 @@ export function useProducts() {
     createProduct,
     updateProduct,
     deleteProduct,
+    deleteProducts,
     bulkCreateProducts,
   };
 }
