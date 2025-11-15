@@ -18,6 +18,13 @@ const FONT_SIZE_COMMAND_MAP: Record<string, string> = {
   "32px": "7",
 };
 
+const resolveCommandFontSize = (commandValue: string) => {
+  const entry = Object.entries(FONT_SIZE_COMMAND_MAP).find(
+    ([, cmdValue]) => cmdValue === commandValue,
+  );
+  return entry ? entry[0] : null;
+};
+
 const getSelectionFontSize = (editor: HTMLDivElement | null): string | null => {
   if (!editor) return null;
   const selection = document.getSelection();
@@ -30,7 +37,48 @@ const getSelectionFontSize = (editor: HTMLDivElement | null): string | null => {
       : (focusNode as HTMLElement);
   if (!target) return null;
   const computed = window.getComputedStyle(target).fontSize;
-  return computed || null;
+  if (!computed) return null;
+  const matched = Object.keys(FONT_SIZE_COMMAND_MAP).find((size) =>
+    computed.startsWith(size),
+  );
+  if (matched) return matched;
+  const parsed = parseFloat(computed);
+  if (Number.isFinite(parsed)) {
+    return `${Math.round(parsed)}px`;
+  }
+  return computed;
+};
+
+const ALIGN_COMMAND_MAP: Record<TextAlignValue, string> = {
+  left: "justifyLeft",
+  center: "justifyCenter",
+  right: "justifyRight",
+};
+
+const ALIGN_ICON_MAP: Record<TextAlignValue, typeof AlignLeft> = {
+  left: AlignLeft,
+  center: AlignCenter,
+  right: AlignRight,
+};
+
+const getSelectionAlignment = (editor: HTMLDivElement | null): TextAlignValue => {
+  if (!editor) return "left";
+  const selection = document.getSelection();
+  if (!selection || selection.rangeCount === 0) return "left";
+  let focusNode = selection.focusNode || selection.anchorNode;
+  if (!focusNode) return "left";
+  if (focusNode.nodeType === Node.TEXT_NODE) {
+    focusNode = focusNode.parentElement || focusNode;
+  }
+  while (focusNode && focusNode instanceof Node && focusNode !== editor && !(focusNode as HTMLElement).style) {
+    focusNode = (focusNode as HTMLElement).parentElement;
+  }
+  if (!(focusNode instanceof HTMLElement)) return "left";
+  const computed = window.getComputedStyle(focusNode).textAlign;
+  if (!computed) return "left";
+  if (computed.includes("center")) return "center";
+  if (computed.includes("right") || computed.includes("end")) return "right";
+  return "left";
 };
 
 const createSegmentId = () =>
@@ -118,7 +166,13 @@ import {
   Link as LinkIcon,
   Table,
   Plus,
+  Highlighter,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  ChevronDown,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import {
   ProjectDocument,
@@ -134,6 +188,7 @@ interface DrivePanelProps {
 type DirectoryFile = File & { webkitRelativePath?: string };
 type ViewerMode = "image" | "pdf" | "office" | "text" | "other";
 type DriveItemType = "file" | "folder" | "note";
+type TextAlignValue = "left" | "center" | "right";
 
 interface UploadProgress {
   current: number;
@@ -161,6 +216,11 @@ interface NoteEditorState {
 interface DragItem {
   id: string;
   type: DriveItemType;
+}
+
+interface TableHoverState {
+  cell: HTMLTableCellElement;
+  rect: DOMRect;
 }
 
 const NOTE_AUTOSAVE_DELAY = 900;
@@ -398,6 +458,8 @@ const sanitizeFileName = (value: string | null | undefined, fallback: string) =>
   return target.replace(/[\\/:*?"<>|]/g, "_");
 };
 
+const NOTE_HIGHLIGHT_COLOR = "#fff3b0";
+
 export default function DrivePanel({ projectId }: DrivePanelProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
@@ -430,27 +492,336 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const [noteFontSize, setNoteFontSize] = useState(DEFAULT_FONT_SIZE);
   const manualFontSizeRef = useRef(false);
   const [noteSegments, setNoteSegments] = useState<NoteSegment[]>([]);
+  const selectionRef = useRef<Range | null>(null);
+  const [tableHoverState, setTableHoverState] = useState<TableHoverState | null>(null);
+  const tableHoverLockRef = useRef(false);
+  const lastCaretPositionRef = useRef<{ node: Node | null; offset: number } | null>(null);
+  const [isBulletListActive, setIsBulletListActive] = useState(false);
+  const [textAlign, setTextAlign] = useState<TextAlignValue>("left");
+  const manualAlignRef = useRef(false);
+  const [showAlignMenu, setShowAlignMenu] = useState(false);
+  const [alignMenuPosition, setAlignMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const alignMenuRef = useRef<HTMLDivElement | null>(null);
+  const alignButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const normalizeTableElement = (table: HTMLTableElement) => {
+    table.classList.add("note-table");
+    table.style.tableLayout = "fixed";
+    table.style.width = "100%";
+    table.style.maxWidth = "100%";
+    table.style.borderCollapse = "collapse";
+    table.querySelectorAll("td,th").forEach((cellNode) => {
+      const cell = cellNode as HTMLTableCellElement;
+      cell.style.wordBreak = "break-word";
+      cell.style.overflowWrap = "anywhere";
+      cell.style.verticalAlign = "top";
+    });
+  };
+
+  const ensureTablesNormalized = () => {
+    if (!noteEditorRef.current) return;
+    const tables = noteEditorRef.current.querySelectorAll("table");
+    tables.forEach((table) => normalizeTableElement(table as HTMLTableElement));
+  };
+
+  const normalizeFontElements = (preferredSize?: string) => {
+    if (!noteEditorRef.current) return;
+    const fonts = noteEditorRef.current.querySelectorAll("font[size]");
+    fonts.forEach((fontEl) => {
+      const sizeAttr = fontEl.getAttribute("size") || "";
+      const resolved =
+        resolveCommandFontSize(sizeAttr) ||
+        preferredSize ||
+        window.getComputedStyle(fontEl as HTMLElement).fontSize ||
+        DEFAULT_FONT_SIZE;
+      fontEl.removeAttribute("size");
+      (fontEl as HTMLElement).style.fontSize = resolved;
+    });
+  };
+
+  const applyFontSizeToCaretContainer = (size?: string) => {
+    if (!noteEditorRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    let node: Node | null = selection.focusNode || selection.anchorNode;
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      node = node.parentElement;
+    }
+    const appliedSize = size || noteFontSize || DEFAULT_FONT_SIZE;
+    while (node && node instanceof HTMLElement && node !== noteEditorRef.current) {
+      if (node.style) {
+        node.style.fontSize = appliedSize;
+        return;
+      }
+      node = node.parentElement;
+    }
+  };
+
+  const captureSelectionSnapshot = () => {
+    const selection = window.getSelection();
+    if (
+      !selection ||
+      selection.rangeCount === 0 ||
+      !noteEditorRef.current ||
+      !noteEditorRef.current.contains(selection.anchorNode)
+    ) {
+      return;
+    }
+    selectionRef.current = selection.getRangeAt(0).cloneRange();
+    
+    // Track caret position to detect when it actually moves
+    const currentNode = selection.anchorNode;
+    const currentOffset = selection.anchorOffset;
+    const lastPos = lastCaretPositionRef.current;
+    
+    if (!lastPos || lastPos.node !== currentNode || lastPos.offset !== currentOffset) {
+      // Caret has actually moved to a new position
+      if (manualFontSizeRef.current) {
+        manualFontSizeRef.current = false;
+      }
+      lastCaretPositionRef.current = { node: currentNode, offset: currentOffset };
+    }
+  };
+
+  const restoreSelection = () => {
+    const selection = window.getSelection();
+    if (!selection || !selectionRef.current) return false;
+    selection.removeAllRanges();
+    selection.addRange(selectionRef.current);
+    return true;
+  };
+
+  const ensureEditorSelection = () => {
+    if (!noteEditorRef.current) return false;
+    noteEditorRef.current.focus();
+    if (!restoreSelection()) {
+      const range = document.createRange();
+      range.selectNodeContents(noteEditorRef.current);
+      range.collapse(false);
+      const selection = window.getSelection();
+      if (!selection) return false;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      selectionRef.current = range.cloneRange();
+    }
+    return true;
+  };
+
+  const findAncestorElement = (
+    node: Node | null,
+    predicate: (element: HTMLElement) => boolean,
+  ): HTMLElement | null => {
+    while (node && node !== noteEditorRef.current) {
+      if (node instanceof HTMLElement && predicate(node)) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  };
+
+  const unwrapElement = (element: HTMLElement) => {
+    const parent = element.parentNode;
+    if (!parent) return;
+    while (element.firstChild) {
+      parent.insertBefore(element.firstChild, element);
+    }
+    parent.removeChild(element);
+  };
+
+  const getActiveTableCell = () => {
+    if (!noteEditorRef.current) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    let node = selection.anchorNode as Node | null;
+    return findAncestorElement(
+      node,
+      (el) => el.tagName === "TD" || el.tagName === "TH",
+    ) as HTMLTableCellElement | null;
+  };
+
+  const isInBulletList = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return false;
+    const listItem = findAncestorElement(selection.anchorNode, (el) => el.tagName === "LI");
+    if (!listItem) return false;
+    const list = listItem.parentElement;
+    return list?.tagName === "UL";
+  };
+
+  const toggleBulletList = () => {
+    if (!ensureEditorSelection()) return;
+
+    // Use the browser's native command which handles Enter key behavior automatically
+    document.execCommand("insertUnorderedList", false);
+
+    updateSegmentsFromEditor();
+    captureSelectionSnapshot();
+
+    // Update active state after toggling
+    setIsBulletListActive(isInBulletList());
+  };
 
   const applyEditorCommand = (command: string, value?: string) => {
     if (!noteEditorRef.current) return;
-    noteEditorRef.current.focus();
+    ensureEditorSelection();
     document.execCommand(command, false, value);
+    updateSegmentsFromEditor();
+    captureSelectionSnapshot();
   };
 
-  const insertTable = () => {
+  const insertTable = (rows = 2, cols = 2) => {
     if (!noteEditorRef.current) return;
-    const tableHtml =
-      '<table class="border border-gray-300 w-full text-left">' +
-      '<tr><th class="border border-gray-200 px-3 py-2">Header 1</th><th class="border border-gray-200 px-3 py-2">Header 2</th></tr>' +
-      '<tr><td class="border border-gray-200 px-3 py-2"><br></td><td class="border border-gray-200 px-3 py-2"><br></td></tr>' +
-      "</table><p><br></p>";
-    applyEditorCommand("insertHTML", tableHtml);
+    ensureEditorSelection();
+    let html = '<table class="note-table w-full border-collapse border border-gray-300 text-left"><tbody>';
+    for (let r = 0; r < rows; r += 1) {
+      html += "<tr>";
+      for (let c = 0; c < cols; c += 1) {
+        html +=
+          '<td class="border border-gray-200 px-3 py-2 align-top" contenteditable="true"><br></td>';
+      }
+      html += "</tr>";
+    }
+    html += "</tbody></table><p><br></p>";
+    applyEditorCommand("insertHTML", html);
+    ensureTablesNormalized();
+  };
+
+  const getActiveLink = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    return findAncestorElement(selection.anchorNode, (el) => el.tagName === "A");
   };
 
   const insertLink = () => {
-    const url = prompt("Enter URL");
-    if (!url) return;
-    applyEditorCommand("createLink", url);
+    if (!ensureEditorSelection()) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      toast.error("Select text to apply a link.");
+      return;
+    }
+    const existingLink = getActiveLink();
+    const currentUrl = existingLink?.getAttribute("href") ?? "https://";
+    const url = prompt("Enter URL", currentUrl);
+    if (url === null) return;
+    if (!url.trim()) {
+      if (existingLink) {
+        unwrapElement(existingLink);
+        updateSegmentsFromEditor();
+      }
+      return;
+    }
+    const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+    if (existingLink) {
+      existingLink.setAttribute("href", normalizedUrl);
+      existingLink.setAttribute("target", "_blank");
+      existingLink.setAttribute("rel", "noopener noreferrer");
+      existingLink.classList.add("text-blue-600", "underline");
+      updateSegmentsFromEditor();
+      captureSelectionSnapshot();
+      return;
+    }
+
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", normalizedUrl);
+    anchor.setAttribute("target", "_blank");
+    anchor.setAttribute("rel", "noopener noreferrer");
+    anchor.classList.add("text-blue-600", "underline");
+
+    const range = selection.getRangeAt(0);
+    anchor.appendChild(range.extractContents());
+    range.insertNode(anchor);
+    selection.removeAllRanges();
+    const newRange = document.createRange();
+    newRange.selectNodeContents(anchor);
+    newRange.collapse(false);
+    selection.addRange(newRange);
+    captureSelectionSnapshot();
+    updateSegmentsFromEditor();
+  };
+
+  const toggleHighlight = () => {
+    if (!ensureEditorSelection()) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      toast.error("Select text to highlight.");
+      return;
+    }
+
+    const existingHighlight = findAncestorElement(
+      selection.anchorNode,
+      (el) => el.dataset.highlight === "true",
+    );
+
+    if (existingHighlight) {
+      unwrapElement(existingHighlight);
+      updateSegmentsFromEditor();
+      captureSelectionSnapshot();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const span = document.createElement("span");
+    span.dataset.highlight = "true";
+    span.style.backgroundColor = NOTE_HIGHLIGHT_COLOR;
+    span.style.borderRadius = "2px";
+    span.style.padding = "0 2px";
+    try {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+    } catch (error) {
+      const contents = range.cloneContents().textContent;
+      span.textContent = contents ?? "";
+      range.deleteContents();
+      range.insertNode(span);
+    }
+    selection.removeAllRanges();
+    const newRange = document.createRange();
+    newRange.selectNodeContents(span);
+    newRange.collapse(false);
+    selection.addRange(newRange);
+    captureSelectionSnapshot();
+    updateSegmentsFromEditor();
+  };
+
+  const addTableRowBelow = (targetCell?: HTMLTableCellElement) => {
+    const cell = targetCell ?? getActiveTableCell();
+    if (!cell) {
+      toast.error("Place the cursor inside a table cell or hover a cell to add a row.");
+      return;
+    }
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    if (!row || !row.parentElement) return;
+    const clone = row.cloneNode(true) as HTMLTableRowElement;
+    clone.querySelectorAll("td,th").forEach((cell) => {
+      cell.innerHTML = "<br>";
+    });
+    row.parentElement.insertBefore(clone, row.nextSibling);
+    ensureTablesNormalized();
+    updateSegmentsFromEditor();
+    captureSelectionSnapshot();
+  };
+
+  const addTableColumnRight = (targetCell?: HTMLTableCellElement) => {
+    const cell = targetCell ?? getActiveTableCell();
+    if (!cell) {
+      toast.error("Place the cursor inside a table cell or hover a cell to add a column.");
+      return;
+    }
+    const table = cell.closest("table");
+    if (!table) return;
+    const currentRow = cell.parentElement as HTMLTableRowElement | null;
+    if (!currentRow) return;
+    const cellIndex = Array.from(currentRow.children).indexOf(cell);
+    Array.from(table.rows).forEach((row) => {
+      const newCell = (row as HTMLTableRowElement).insertCell(cellIndex + 1);
+      newCell.className = cell.className;
+      newCell.innerHTML = "<br>";
+    });
+    ensureTablesNormalized();
+    updateSegmentsFromEditor();
+    captureSelectionSnapshot();
   };
 
   const folderInputRef = useCallback((node: HTMLInputElement | null) => {
@@ -477,6 +848,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     if (!activeNote || !noteEditorRef.current) {
       setEditorInitializedFor(null);
       setNoteSegments([]);
+      setIsBulletListActive(false);
       return;
     }
     if (editorInitializedFor === activeNote.note.id) return;
@@ -485,14 +857,20 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
           ? activeNote.html
           : "<p><br></p>";
     noteEditorRef.current.innerHTML = html;
+    ensureTablesNormalized();
     noteEditorRef.current.focus();
     setNoteSegments(parseHtmlToSegments(html));
+    captureSelectionSnapshot();
     setEditorInitializedFor(activeNote.note.id);
   }, [activeNote?.note.id, activeNote?.html, editorInitializedFor]);
 
   useEffect(() => {
     if (!activeNote) return;
     setNoteFontSize(DEFAULT_FONT_SIZE);
+    setIsBulletListActive(false);
+    setTableHoverState(null);
+    setTextAlign("left");
+    manualAlignRef.current = false;
   }, [activeNote?.note.id]);
 
 
@@ -749,21 +1127,26 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     manualFontSizeRef.current = true;
     setNoteFontSize(value);
     if (!noteEditorRef.current) return;
-    noteEditorRef.current.focus();
+    ensureEditorSelection();
     const commandValue = FONT_SIZE_COMMAND_MAP[value] || "3";
-    document.execCommand("styleWithCSS", false);
+    document.execCommand("styleWithCSS", true);
     document.execCommand("fontSize", false, commandValue);
-    const fonts = noteEditorRef.current.querySelectorAll("font[size]");
-    fonts.forEach((fontEl) => {
-      const size = fontEl.getAttribute("size");
-      if (!size) return;
-      const resolved = Object.entries(FONT_SIZE_COMMAND_MAP).find(
-        ([, cmd]) => cmd === size,
-      )?.[0];
-      fontEl.removeAttribute("size");
-      (fontEl as HTMLElement).style.fontSize = resolved || value;
-    });
+    document.execCommand("styleWithCSS", false);
+    normalizeFontElements(value);
+    applyFontSizeToCaretContainer(value);
+    ensureTablesNormalized();
     updateSegmentsFromEditor();
+    captureSelectionSnapshot();
+  };
+
+  const handleAlignChange = (value: TextAlignValue) => {
+    manualAlignRef.current = true;
+    setTextAlign(value);
+    if (!ensureEditorSelection()) return;
+    const command = ALIGN_COMMAND_MAP[value];
+    document.execCommand(command, false);
+    updateSegmentsFromEditor();
+    captureSelectionSnapshot();
   };
 
   const updateSegmentsFromEditor = () => {
@@ -774,13 +1157,39 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   };
 
   const handleEditorInput = () => {
+    normalizeFontElements();
+    applyFontSizeToCaretContainer(noteFontSize);
+    ensureTablesNormalized();
     updateSegmentsFromEditor();
+    captureSelectionSnapshot();
   };
 
   useEffect(() => {
     if (!activeNote || !noteEditorRef.current) return undefined;
     const handleSelectionChange = () => {
       if (!noteEditorRef.current) return;
+      const selection = window.getSelection();
+      if (
+        !selection ||
+        selection.rangeCount === 0 ||
+        !noteEditorRef.current.contains(selection.anchorNode)
+      ) {
+        return;
+      }
+      captureSelectionSnapshot();
+
+      // Update bullet list active state when caret moves
+      setIsBulletListActive(isInBulletList());
+
+      if (manualAlignRef.current) {
+        manualAlignRef.current = false;
+      } else {
+        const selectionAlignment = getSelectionAlignment(noteEditorRef.current);
+        if (selectionAlignment && selectionAlignment !== textAlign) {
+          setTextAlign(selectionAlignment);
+        }
+      }
+
       if (manualFontSizeRef.current) {
         manualFontSizeRef.current = false;
         return;
@@ -796,7 +1205,78 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     return () => {
       document.removeEventListener("selectionchange", handleSelectionChange);
     };
-  }, [activeNote, noteFontSize]);
+  }, [activeNote, noteFontSize, textAlign]);
+
+  useEffect(() => {
+    if (!showAlignMenu) return undefined;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        alignButtonRef.current?.contains(target) ||
+        alignMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setShowAlignMenu(false);
+      setAlignMenuPosition(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [showAlignMenu]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!noteEditorRef.current) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) {
+        if (!tableHoverLockRef.current) {
+          setTableHoverState(null);
+        }
+        return;
+      }
+      const cell = target.closest("td,th") as HTMLTableCellElement | null;
+      if (cell && noteEditorRef.current.contains(cell)) {
+        const rect = cell.getBoundingClientRect();
+        setTableHoverState((prev) => {
+          if (
+            prev &&
+            prev.cell === cell &&
+            prev.rect.top === rect.top &&
+            prev.rect.left === rect.left &&
+            prev.rect.width === rect.width &&
+            prev.rect.height === rect.height
+          ) {
+            return prev;
+          }
+          return { cell, rect };
+        });
+        return;
+      }
+      if (!tableHoverLockRef.current) {
+        const table = target.closest("table");
+        if (!table || !noteEditorRef.current.contains(table)) {
+          setTableHoverState(null);
+        }
+      }
+    };
+
+    const handleScroll = () => {
+      setTableHoverState((prev) => {
+        if (!prev) return null;
+        const rect = prev.cell.getBoundingClientRect();
+        return { cell: prev.cell, rect };
+      });
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, []);
 
   async function saveNoteDraft(editor: NoteEditorState) {
     try {
@@ -1881,7 +2361,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                 Close
               </button>
             </div>
-            <div className="flex items-center gap-2 border-b border-gray-200 px-6 py-2 overflow-x-auto text-gray-600">
+            <div className="flex items-center gap-2 border-b border-gray-200 px-6 py-2 overflow-x-auto overflow-y-visible text-gray-600">
               <div className="flex items-center">
                 <label htmlFor="note-font-size" className="sr-only">
                   Font size
@@ -1922,15 +2402,83 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               </button>
               <button
                 type="button"
+                onClick={toggleHighlight}
+                className="p-2 rounded-lg hover:bg-gray-100"
+              >
+                <Highlighter size={16} />
+              </button>
+              <button
+                type="button"
                 onClick={() => applyEditorCommand("strikeThrough")}
                 className="p-2 rounded-lg hover:bg-gray-100"
               >
                 <Strikethrough size={16} />
               </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  ref={alignButtonRef}
+                  onClick={() =>
+                    setShowAlignMenu((prev) => {
+                      const next = !prev;
+                      if (next && alignButtonRef.current) {
+                        const rect = alignButtonRef.current.getBoundingClientRect();
+                        setAlignMenuPosition({
+                          top: rect.bottom + window.scrollY + 8,
+                          left: rect.left + window.scrollX,
+                        });
+                      } else {
+                        setAlignMenuPosition(null);
+                      }
+                      return next;
+                    })
+                  }
+                  className="p-2 rounded-lg hover:bg-gray-100 flex items-center gap-1"
+                  title="Text alignment"
+                >
+                  {(() => {
+                    const Icon = ALIGN_ICON_MAP[textAlign];
+                    return <Icon size={16} />;
+                  })()}
+                  <ChevronDown size={14} />
+                </button>
+                {showAlignMenu &&
+                  alignMenuPosition &&
+                  createPortal(
+                    <div
+                      ref={alignMenuRef}
+                      className="fixed bg-white border border-gray-200 rounded-xl shadow-xl w-36 py-1 z-[9999]"
+                      style={{ top: alignMenuPosition.top, left: alignMenuPosition.left }}
+                    >
+                      {(["left", "center", "right"] as TextAlignValue[]).map((value) => {
+                        const Icon = ALIGN_ICON_MAP[value];
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => {
+                              handleAlignChange(value);
+                              setShowAlignMenu(false);
+                              setAlignMenuPosition(null);
+                            }}
+                            className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-100 ${
+                              textAlign === value ? "text-blue-600 font-semibold" : "text-gray-700"
+                            }`}
+                          >
+                            <Icon size={16} />
+                            <span className="capitalize">{value}</span>
+                          </button>
+                        );
+                      })}
+                    </div>,
+                    document.body,
+                  )}
+              </div>
               <button
                 type="button"
-                onClick={() => applyEditorCommand("insertUnorderedList")}
-                className="p-2 rounded-lg hover:bg-gray-100"
+                onClick={toggleBulletList}
+                className={`p-2 rounded-lg hover:bg-gray-100 ${isBulletListActive ? "bg-blue-100 text-blue-600" : ""}`}
+                title="Bullet list (toggle)"
               >
                 <List size={16} />
               </button>
@@ -1950,7 +2498,9 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               </button>
               <button
                 type="button"
-                onClick={insertTable}
+                onClick={() => {
+                  insertTable();
+                }}
                 className="p-2 rounded-lg hover:bg-gray-100"
               >
                 <Table size={16} />
@@ -1962,14 +2512,76 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                   ref={noteEditorRef}
                   contentEditable
                   suppressContentEditableWarning
-                  className="w-full min-h-[600px] focus:outline-none leading-relaxed"
+                  className="w-full min-h-[600px] focus:outline-none leading-relaxed [&_a]:cursor-pointer [&_a]:text-blue-600 [&_a]:underline [&_a:hover]:text-blue-800 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:space-y-2 [&_li]:leading-relaxed"
                   onInput={handleEditorInput}
+                  onClick={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.tagName !== "A") return;
+
+                    const href = target.getAttribute("href");
+                    if (!href) return;
+
+                    // Hold Shift to keep the editor caret inside the link for editing
+                    if (event.shiftKey) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    window.open(href, "_blank", "noopener,noreferrer");
+                  }}
                 />
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {tableHoverState &&
+        createPortal(
+          <>
+            <button
+              type="button"
+              onMouseEnter={() => {
+                tableHoverLockRef.current = true;
+              }}
+              onMouseLeave={() => {
+                tableHoverLockRef.current = false;
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                addTableRowBelow(tableHoverState.cell);
+              }}
+              className="fixed z-[9999] -translate-y-1/2 bg-white border border-gray-300 rounded-full shadow-lg p-1 text-gray-700 hover:bg-gray-100 flex items-center justify-center"
+              style={{
+                top: tableHoverState.rect.top + tableHoverState.rect.height / 2,
+                left: tableHoverState.rect.left - 18,
+              }}
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              type="button"
+              onMouseEnter={() => {
+                tableHoverLockRef.current = true;
+              }}
+              onMouseLeave={() => {
+                tableHoverLockRef.current = false;
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                addTableColumnRight(tableHoverState.cell);
+              }}
+              className="fixed z-[9999] -translate-x-1/2 bg-white border border-gray-300 rounded-full shadow-lg p-1 text-gray-700 hover:bg-gray-100 flex items-center justify-center"
+              style={{
+                top: tableHoverState.rect.top - 18,
+                left: tableHoverState.rect.left + tableHoverState.rect.width / 2,
+              }}
+            >
+              <Plus size={16} />
+            </button>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }
