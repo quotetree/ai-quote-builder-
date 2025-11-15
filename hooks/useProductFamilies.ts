@@ -77,6 +77,13 @@ export function useProductFamilies() {
 
   async function deleteProductFamily(id: string) {
     try {
+      const { error: updateError } = await supabase
+        .from("products")
+        .update({ product_family_id: null })
+        .eq("product_family_id", id);
+
+      if (updateError) throw updateError;
+
       const { error } = await supabase
         .from("product_families")
         .delete()

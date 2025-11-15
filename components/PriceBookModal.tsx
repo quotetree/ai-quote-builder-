@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, Download } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
-import { Product } from "@/types/database";
+import { Product, ProductFamily } from "@/types/database";
 import { trackProductCreated, trackCsvUpload } from "@/lib/analytics";
 import toast from "react-hot-toast";
 import Papa from "papaparse";
@@ -17,17 +17,26 @@ interface PriceBookModalProps {
 
 type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping" | "product-detail";
 
+const NONE_PRODUCT_FAMILY_LABEL = "-None-";
+
 export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
   const {
     products,
     loading,
+    fetchProducts,
     createProduct,
     updateProduct,
     deleteProduct,
     deleteProducts,
     bulkCreateProducts,
   } = useProducts();
-  const { productFamilies, createProductFamily, updateProductFamily, deleteProductFamily } = useProductFamilies();
+  const {
+    productFamilies,
+    loading: productFamiliesLoading,
+    createProductFamily,
+    updateProductFamily,
+    deleteProductFamily,
+  } = useProductFamilies();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -49,6 +58,16 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     });
     return map;
   }, [productFamilies]);
+
+  const getFamilyDisplayName = useCallback(
+    (familyId: string | null | undefined) => {
+      if (familyId && productFamilyNameMap.has(familyId)) {
+        return productFamilyNameMap.get(familyId) || NONE_PRODUCT_FAMILY_LABEL;
+      }
+      return NONE_PRODUCT_FAMILY_LABEL;
+    },
+    [productFamilyNameMap]
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -167,6 +186,14 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     }
   };
 
+  const deleteFamilyAndRefresh = useCallback(
+    async (familyId: string) => {
+      await deleteProductFamily(familyId);
+      await fetchProducts();
+    },
+    [deleteProductFamily, fetchProducts]
+  );
+
   const handleExportSelected = () => {
     if (!selectedProductIds.length) return;
 
@@ -199,7 +226,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     const rows = selectedProducts.map((product) => [
       product.product_name,
       product.product_number,
-      productFamilyNameMap.get(product.product_family_id || "") || "",
+      getFamilyDisplayName(product.product_family_id),
       product.product_brand,
       product.product_type,
       product.list_price,
@@ -279,7 +306,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
   const handleCsvImportClick = () => {
     // Define which fields are optional in the pricebook
-    const optionalFields = ['product_number', 'product_brand', 'product_type', 'description'];
+    const optionalFields = ['product_family', 'product_number', 'product_brand', 'product_type', 'description'];
     
     // Find which optional fields are NOT mapped (check for both undefined and empty string)
     const unmappedOptionalFields = optionalFields.filter(field => !columnMapping[field] || columnMapping[field] === '');
@@ -426,7 +453,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
           product_name: row[columnMapping.product_name],
             product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
-            product_family_id: familyId,
+            product_family_id: familyId || null,
           description: columnMapping.description ? row[columnMapping.description] : null,
             list_price: listPrice,
             sales_price: salesPrice,
@@ -444,7 +471,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
       // Validate that all products have required fields
       const invalidProducts = productsData.filter(
-        (p) => !p.product_name || p.list_price === null || p.sales_price === null || !p.product_family_id
+        (p) => !p.product_name || p.list_price === null || p.sales_price === null
       );
 
       if (invalidProducts.length > 0) {
@@ -602,6 +629,10 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           {viewMode === "new-product" && (
             <ProductForm
               product={editingProduct}
+            productFamilies={productFamilies}
+            familiesLoading={productFamiliesLoading}
+            onCreateFamily={createProductFamily}
+            onDeleteFamily={deleteFamilyAndRefresh}
               onCancel={() => {
                 setViewMode("list");
                 setEditingProduct(null);
@@ -680,7 +711,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           products={products}
           onClose={() => setShowFamilyManager(false)}
           onUpdate={updateProductFamily}
-          onDelete={deleteProductFamily}
+          onDelete={deleteFamilyAndRefresh}
         />
       )}
 
@@ -715,7 +746,7 @@ function ProductsTable({
   onView: (product: Product) => void;
   onEdit: (product: Product) => void;
   onDelete: (productId: string) => void;
-  productFamilies: any[];
+  productFamilies: ProductFamily[];
   selectedProductIds: string[];
   onToggleProductSelection: (productId: string) => void;
   onToggleSelectAll: () => void;
@@ -732,9 +763,9 @@ function ProductsTable({
   }, [isSomeVisibleSelected, isAllVisibleSelected]);
 
   const getFamilyName = (familyId: string | null) => {
-    if (!familyId) return "—";
+    if (!familyId) return NONE_PRODUCT_FAMILY_LABEL;
     const family = productFamilies.find((f) => f.id === familyId);
-    return family ? family.name : "—";
+    return family ? family.name : NONE_PRODUCT_FAMILY_LABEL;
   };
 
   if (loading) {
@@ -850,7 +881,7 @@ function ProductsTable({
                       className="fixed inset-0 z-10"
                       onClick={() => setExpandedRow(null)}
                     />
-                    <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                    <div className="absolute right-0 bottom-full -mb-0.5 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
                       <button
                         onClick={() => {
                           onEdit(product);
@@ -888,12 +919,19 @@ function ProductForm({
   product,
   onCancel,
   onSave,
+  productFamilies,
+  familiesLoading,
+  onCreateFamily,
+  onDeleteFamily,
 }: {
   product: Product | null;
   onCancel: () => void;
   onSave: (data: Partial<Product>) => void;
+  productFamilies: ProductFamily[];
+  familiesLoading: boolean;
+  onCreateFamily: (name: string, description: string) => Promise<ProductFamily | null | undefined>;
+  onDeleteFamily: (id: string) => Promise<void>;
 }) {
-  const { productFamilies, loading: familiesLoading, createProductFamily } = useProductFamilies();
   const [showFamilyModal, setShowFamilyModal] = useState(false);
   const [formData, setFormData] = useState({
     product_number: product?.product_number || "",
@@ -907,16 +945,45 @@ function ProductForm({
     unit: product?.unit || "ea",
   });
 
+  useEffect(() => {
+    if (
+      formData.product_family_id &&
+      !productFamilies.some((family) => family.id === formData.product_family_id)
+    ) {
+      setFormData((prev) => ({ ...prev, product_family_id: "" }));
+    }
+  }, [formData.product_family_id, productFamilies]);
+
   const handleCreateFamily = async (name: string, description: string) => {
     try {
-      const newFamily = await createProductFamily(name, description);
+      const newFamily = await onCreateFamily(name, description);
       if (newFamily) {
-        setFormData({ ...formData, product_family_id: newFamily.id });
+        setFormData((prev) => ({ ...prev, product_family_id: newFamily.id }));
         toast.success("Product family created!");
         setShowFamilyModal(false);
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create product family");
+    }
+  };
+
+  const handleDeleteFamily = async () => {
+    if (!formData.product_family_id) return;
+
+    const family = productFamilies.find((f) => f.id === formData.product_family_id);
+    const familyLabel = family?.name || "this product family";
+    const confirmed = confirm(
+      `Delete "${familyLabel}"?\n\nAll products assigned to it will be set to ${NONE_PRODUCT_FAMILY_LABEL}.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await onDeleteFamily(formData.product_family_id);
+      toast.success("Product family deleted");
+      setFormData((prev) => ({ ...prev, product_family_id: "" }));
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete product family");
     }
   };
 
@@ -928,10 +995,6 @@ function ProductForm({
       toast.error("Product Name is required");
       return;
     }
-    if (!formData.product_family_id) {
-      toast.error("Product Family is required");
-      return;
-    }
     if (!formData.list_price || formData.list_price <= 0) {
       toast.error("List Price must be greater than 0");
       return;
@@ -941,7 +1004,12 @@ function ProductForm({
       return;
     }
     
-    onSave(formData);
+    const normalizedData = {
+      ...formData,
+      product_family_id: formData.product_family_id || null,
+    };
+
+    onSave(normalizedData);
   };
 
   return (
@@ -1008,7 +1076,7 @@ function ProductForm({
         {/* Product Family */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Product Family <span className="text-red-500">*</span>
+            Product Family
           </label>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -1016,17 +1084,19 @@ function ProductForm({
                 value={formData.product_family_id}
                 onChange={(e) => setFormData({ ...formData, product_family_id: e.target.value })}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
-                required
                 disabled={familiesLoading}
               >
-                <option value="">Select a product family</option>
+                <option value="">{NONE_PRODUCT_FAMILY_LABEL}</option>
                 {productFamilies.map((family) => (
                   <option key={family.id} value={family.id}>
                     {family.name}
                   </option>
                 ))}
               </select>
-              <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+              <ChevronDown
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none"
+                size={20}
+              />
             </div>
             <button
               type="button"
@@ -1035,6 +1105,15 @@ function ProductForm({
               title="Create new product family"
             >
               <Plus size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteFamily}
+              disabled={!formData.product_family_id || familiesLoading}
+              className="px-4 py-2.5 bg-white border border-gray-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Delete selected product family"
+            >
+              <Trash2 size={20} />
             </button>
           </div>
         </div>
@@ -1134,12 +1213,12 @@ function CsvColumnMapping({
 }) {
   const requiredFields = [
     { key: "product_name", label: "Product Name", required: true },
-    { key: "product_family", label: "Product Family", required: true },
     { key: "list_price", label: "List Price", required: true },
     { key: "sales_price", label: "Sales Price", required: true },
   ];
 
   const optionalFields = [
+    { key: "product_family", label: "Product Family", required: false },
     { key: "product_number", label: "Product Code", required: false },
     { key: "product_brand", label: "Product Brand", required: false },
     { key: "product_type", label: "Product Type", required: false },
@@ -1204,7 +1283,7 @@ function CsvColumnMapping({
             <strong>Note:</strong> Please map all required fields (marked with *) before importing.
           </p>
           <p className="text-xs text-yellow-700 mt-2">
-            Product Family is required. Products without a valid family name will not be imported.
+            Products without a mapped Product Family will default to {NONE_PRODUCT_FAMILY_LABEL}.
           </p>
         </div>
       )}
@@ -1332,8 +1411,8 @@ function ProductFamilyManager({
   onUpdate,
   onDelete,
 }: {
-  productFamilies: any[];
-  products: any[];
+  productFamilies: ProductFamily[];
+  products: Product[];
   onClose: () => void;
   onUpdate: (id: string, updates: any) => Promise<any>;
   onDelete: (id: string) => Promise<void>;
@@ -1373,7 +1452,7 @@ function ProductFamilyManager({
     
     let confirmMessage = `Are you sure you want to delete "${family.name}"?`;
     if (productCount > 0) {
-      confirmMessage += `\n\n${productCount} product${productCount === 1 ? '' : 's'} will have their family removed.`;
+      confirmMessage += `\n\n${productCount} product${productCount === 1 ? '' : 's'} will be set to ${NONE_PRODUCT_FAMILY_LABEL}.`;
     }
     
     if (!confirm(confirmMessage)) return;
@@ -1523,7 +1602,7 @@ function ProductDetail({
   onDelete,
 }: {
   product: Product;
-  productFamilies: any[];
+  productFamilies: ProductFamily[];
   onBack: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1608,7 +1687,9 @@ function ProductDetail({
           {/* Row 3: Product Family */}
           <div>
             <label className="block text-sm font-medium text-gray-500 mb-1">Product Family</label>
-            <p className="text-base text-gray-900">{family ? family.name : "—"}</p>
+            <p className="text-base text-gray-900">
+              {family ? family.name : NONE_PRODUCT_FAMILY_LABEL}
+            </p>
             {family && family.description && (
               <p className="text-sm text-gray-600 mt-1">{family.description}</p>
             )}
