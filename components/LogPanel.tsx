@@ -791,7 +791,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                       </div>
                       <div>
                         <p className="text-sm text-gray-500">Tax ({formatPercent(rate)})</p>
-                        <p className="text-xl font-semibold">
+                        <p className="text-xl font-semibold text-blue-600">
                           ${formatCurrency(amount)}
                         </p>
                       </div>
@@ -803,7 +803,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                       </div>
                       <div>
                         <p className="text-sm text-gray-500">Total</p>
-                        <p className="text-2xl font-bold text-blue-600">
+                        <p className="text-2xl font-bold text-gray-900">
                           ${formatCurrency(selectedQuote.total_price)}
                         </p>
                       </div>
