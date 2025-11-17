@@ -797,7 +797,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                       </div>
                       <div>
                         <p className="text-sm text-gray-500">Markup</p>
-                        <p className="text-2xl font-bold text-green-600">
+                        <p className="text-2xl font-bold text-purple-600">
                           ${formatCurrency(markupAmount)}
                         </p>
                       </div>
