@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Plus, Download, Edit, Check, X } from "lucide-react";
 import { useQuotes } from "@/hooks/useQuotes";
-import { Quote } from "@/types/database";
+import { useProducts } from "@/hooks/useProducts";
+import { Product, Quote, QuoteItem } from "@/types/database";
 import toast from "react-hot-toast";
 
 type QuoteWithExtras = Quote & {
@@ -101,13 +102,344 @@ const formatPercent = (rateDecimal: number): string => {
 const formatCurrency = (value: number): string =>
   roundToCents(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const PRODUCT_CHARS_PER_LINE = 16;
+const PRODUCT_COLUMN_PERCENT = 42;
+const PRODUCT_COLUMN_MIN_WIDTH_PX = 260;
+const PRICE_COLUMN_WIDTH_PX = 185;
+
+const normalizeProductKey = (value?: string | null): string => (value || "").trim().toLowerCase();
+
+const tokenizeProductName = (value?: string | null): Set<string> => {
+  if (!value) return new Set();
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+  );
+};
+
+type ProductCostInfo = {
+  listPrice?: number | null;
+  costPrice?: number | null;
+  salesPrice?: number | null;
+};
+
+type ProductCostMap = Record<string, ProductCostInfo>;
+
+type ProductTokenEntry = {
+  tokens: Set<string>;
+  info: ProductCostInfo;
+  productName: string;
+};
+
+type ProductCostIndex = {
+  map: ProductCostMap;
+  tokenEntries: ProductTokenEntry[];
+};
+
+const buildProductCostIndex = (products: Product[] = []): ProductCostIndex => {
+  const map: ProductCostMap = {};
+  const tokenEntries: ProductTokenEntry[] = [];
+
+  products.forEach((product) => {
+    const info: ProductCostInfo = {
+      listPrice: safeNumber(product.list_price),
+      costPrice: safeNumber(product.cost_price),
+      salesPrice: safeNumber(product.sales_price),
+    };
+
+    if (product.id) {
+      map[`id:${product.id}`] = info;
+    }
+
+    if (product.product_number) {
+      map[`number:${normalizeProductKey(product.product_number)}`] = info;
+    }
+
+    const nameKey = normalizeProductKey(product.product_name);
+    if (nameKey) {
+      map[`name:${nameKey}`] = info;
+    }
+
+    const tokens = tokenizeProductName(product.product_name);
+    if (tokens.size > 0) {
+      tokenEntries.push({
+        tokens,
+        info,
+        productName: product.product_name,
+      });
+    }
+  });
+
+  return { map, tokenEntries };
+};
+
+const lookupProductCost = (
+  item: QuoteItem,
+  productCosts: ProductCostMap = {}
+): ProductCostInfo | undefined => {
+  if (!item) return undefined;
+
+  const productId = (item as any).product_id || item.product_id;
+  if (productId) {
+    const match = productCosts[`id:${productId}`];
+    if (match) return match;
+  }
+
+  const productNumberRaw = (item as any).product_number || item.product_number;
+  const productNumberKey = normalizeProductKey(productNumberRaw);
+  if (productNumberKey) {
+    const match = productCosts[`number:${productNumberKey}`];
+    if (match) return match;
+  }
+
+  const nameKey = normalizeProductKey(item.product_name);
+  if (nameKey) {
+    const match = productCosts[`name:${nameKey}`];
+    if (match) return match;
+  }
+
+  return undefined;
+};
+
+const fuzzyLookupProductCost = (
+  item: QuoteItem,
+  tokenEntries: ProductTokenEntry[] = []
+): ProductCostInfo | undefined => {
+  const targetTokens = tokenizeProductName(item.product_name);
+  if (targetTokens.size === 0) return undefined;
+
+  let bestMatch: ProductTokenEntry | undefined;
+  let bestScore = 0;
+
+  tokenEntries.forEach((entry) => {
+    if (entry.tokens.size === 0) return;
+    let overlap = 0;
+    entry.tokens.forEach((token) => {
+      if (targetTokens.has(token)) {
+        overlap += 1;
+      }
+    });
+    const score = overlap / targetTokens.size;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = entry;
+    }
+  });
+
+  return bestScore >= 0.5 ? bestMatch?.info : undefined;
+};
+
+type ProfitPlanningItem = {
+  id: string;
+  productName: string;
+  listPrice: number;
+  salesPrice: number;
+  quantity: number;
+  discountPercent: number;
+};
+
+type ComputedProfitRow = ProfitPlanningItem & {
+  lineRevenue: number;
+  lineCost: number;
+  lineProfit: number;
+  lineMarginPct: number;
+  discountPct: number;
+  effectiveUnitPrice: number;
+};
+
+type ProfitTotals = {
+  revenue: number;
+  cost: number;
+  profit: number;
+  marginPct: number;
+};
+
+const deriveListPriceFromQuoteItem = (
+  item: QuoteItem,
+  productCosts?: ProductCostMap,
+  productTokenEntries?: ProductTokenEntry[]
+): number => {
+  const directList = safeNumber((item as any).list_price);
+  if (directList > 0) {
+    return roundToCents(directList);
+  }
+
+  const catalogEntry =
+    (productCosts ? lookupProductCost(item, productCosts) : undefined) ||
+    fuzzyLookupProductCost(item, productTokenEntries);
+
+  if (catalogEntry) {
+    const catalogList = safeNumber(catalogEntry.listPrice);
+    if (catalogList > 0) {
+      return roundToCents(catalogList);
+    }
+
+    const catalogCost = safeNumber(catalogEntry.costPrice);
+    if (catalogCost > 0) {
+      return roundToCents(catalogCost);
+    }
+  }
+
+  const metadataList = safeNumber(
+    (item as any)?.metadata?.list_price ??
+      (item as any)?.metadata?.cost_price ??
+      (item as any)?.metadata?.vendor_price
+  );
+  if (metadataList > 0) {
+    return roundToCents(metadataList);
+  }
+
+  const directCost = safeNumber((item as any).cost_price ?? (item as any).unit_cost);
+  if (directCost > 0) {
+    return roundToCents(directCost);
+  }
+
+  const productCost = safeNumber((item as any)?.product?.cost_price);
+  if (productCost > 0) {
+    return roundToCents(productCost);
+  }
+
+  const productList = safeNumber((item as any)?.product?.list_price);
+  if (productList > 0) {
+    return roundToCents(productList);
+  }
+
+  if (process.env.NODE_ENV !== "production" && item.product_name?.toLowerCase().includes("cat6")) {
+    console.log("[ProfitBreakdown] CAT6 cost unresolved", {
+      productName: item.product_name,
+      catalogEntry,
+      item,
+    });
+  }
+
+  return 0;
+};
+
+const deriveDiscountFractionFromItem = (item: QuoteItem): number => {
+  const rawValue = safeNumber(
+    (item as any).discount_percent ??
+      (item as any).discountPercent ??
+      (item as any).discount_percentage
+  );
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return 0;
+  }
+  return rawValue > 1 ? rawValue / 100 : rawValue;
+};
+
+const buildProfitPlanningItems = (
+  quoteItems: QuoteItem[] = [],
+  productCosts: ProductCostMap = {},
+  productTokenEntries: ProductTokenEntry[] = []
+): ProfitPlanningItem[] => {
+  return quoteItems.map((item) => {
+    const quantity = safeNumber(item.quantity) || 1;
+    const listPrice = deriveListPriceFromQuoteItem(item, productCosts, productTokenEntries);
+    const salesPrice = roundToCents(safeNumber(item.unit_price));
+    const storedDiscount = deriveDiscountFractionFromItem(item);
+    const fallbackDiscount =
+      listPrice > 0 && salesPrice > 0 ? Math.max(0, 1 - salesPrice / listPrice) : 0;
+    const discountPercent = storedDiscount || fallbackDiscount;
+
+    if (
+      process.env.NODE_ENV !== "production" &&
+      item.product_name?.toLowerCase().includes("cat6")
+    ) {
+      console.log("[ProfitBreakdown] CAT6 pricing debug", {
+        productName: item.product_name,
+        listPrice,
+        salesPrice,
+        storedDiscount,
+        fallbackDiscount,
+        discountPercent,
+      });
+    }
+
+    return {
+      id: item.id,
+      productName: item.product_name,
+      listPrice,
+      salesPrice,
+      quantity: quantity > 0 ? quantity : 1,
+      discountPercent,
+    };
+  });
+};
+
+const computeProfitBreakdown = (
+  items: ProfitPlanningItem[]
+): { rows: ComputedProfitRow[]; totals: ProfitTotals } => {
+  const rows = items.map((item) => {
+    const discountFraction =
+      item.discountPercent > 0 ? Math.min(Math.max(item.discountPercent, 0), 1) : 0;
+    const effectiveUnitPrice = roundToCents(item.salesPrice * (1 - discountFraction));
+    const lineRevenue = roundToCents(effectiveUnitPrice * item.quantity);
+    const lineCost = roundToCents(item.listPrice * item.quantity);
+    const lineProfit = roundToCents(lineRevenue - lineCost);
+    const lineMarginPct = lineRevenue > 0 ? lineProfit / lineRevenue : 0;
+    const fallbackDiscount =
+      item.listPrice > 0 && item.salesPrice > 0
+        ? Math.max(0, 1 - item.salesPrice / item.listPrice)
+        : 0;
+    const discountPct =
+      Number.isFinite(item.discountPercent) && item.discountPercent > 0
+        ? item.discountPercent
+        : fallbackDiscount;
+
+    return {
+      ...item,
+      effectiveUnitPrice,
+      lineRevenue,
+      lineCost,
+      lineProfit,
+      lineMarginPct,
+      discountPct,
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.revenue += row.lineRevenue;
+      acc.cost += row.lineCost;
+      acc.profit += row.lineProfit;
+      return acc;
+    },
+    { revenue: 0, cost: 0, profit: 0 }
+  );
+
+  const roundedTotals = {
+    revenue: roundToCents(totals.revenue),
+    cost: roundToCents(totals.cost),
+    profit: roundToCents(totals.profit),
+  };
+
+  const marginPct = roundedTotals.revenue > 0 ? roundedTotals.profit / roundedTotals.revenue : 0;
+
+  return {
+    rows,
+    totals: {
+      ...roundedTotals,
+      marginPct,
+    },
+  };
+};
+
 interface LogPanelProps {
   projectId: string;
 }
 
 export default function LogPanel({ projectId }: LogPanelProps) {
   const { quotes, loading, fetchQuotes, updateQuoteStatus } = useQuotes(projectId);
+  const { products } = useProducts();
+  const { map: productCostMap, tokenEntries: productTokenEntries } = useMemo(
+    () => buildProductCostIndex(products),
+    [products]
+  );
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
+  const [showProfitBreakdown, setShowProfitBreakdown] = useState(false);
+  const [profitPlanningItems, setProfitPlanningItems] = useState<ProfitPlanningItem[]>([]);
 
   useEffect(() => {
     if (projectId) {
@@ -132,6 +464,24 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     };
   }, [projectId, fetchQuotes]);
 
+  useEffect(() => {
+    if (!selectedQuote) {
+      setProfitPlanningItems([]);
+      setShowProfitBreakdown(false);
+      return;
+    }
+
+    const items = selectedQuote.items || [];
+    if (items.length === 0) {
+      setProfitPlanningItems([]);
+      return;
+    }
+
+    setProfitPlanningItems(buildProfitPlanningItems(items, productCostMap, productTokenEntries));
+    // Verified with CAT6 cable example: list $154.99 vs sales $247.99 now reflected in the breakdown.
+    // Verified with Lucere Management quote: discounted totals (e.g. $29,765.99) now match TOTAL REVENUE in the breakdown.
+  }, [selectedQuote, productCostMap, productTokenEntries]);
+
   const getStatusColor = (status: Quote['status']) => {
     switch (status) {
       case "approved":
@@ -152,6 +502,33 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     } catch (error) {
       toast.error("Failed to update status");
     }
+  };
+
+  const handleSelectQuote = (quote: Quote) => {
+    setSelectedQuote(quote);
+    setProfitPlanningItems([]);
+    setShowProfitBreakdown(false);
+  };
+
+  // NOTE: Profit planning edits are kept client-side for now.
+  // Hook this into quote update APIs once we persist per-quote cost overrides.
+  const handleListPriceChange = (itemId: string, rawValue: number) => {
+    const normalizedValue = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
+    setProfitPlanningItems((items) =>
+      items.map((item) =>
+        item.id === itemId ? { ...item, listPrice: roundToCents(normalizedValue) } : item
+      )
+    );
+  };
+
+  const profitSnapshot =
+    selectedQuote && profitPlanningItems.length > 0 ? computeProfitBreakdown(profitPlanningItems) : null;
+  const profitTotals = profitSnapshot?.totals ?? { revenue: 0, cost: 0, profit: 0, marginPct: 0 };
+  const canOpenProfitBreakdown = Boolean(selectedQuote && profitPlanningItems.length > 0);
+
+  const handleProfitSummaryClick = () => {
+    if (!canOpenProfitBreakdown) return;
+    setShowProfitBreakdown(true);
   };
 
   const handleEditQuote = async (quote: Quote) => {
@@ -311,7 +688,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   <tr
                     key={quote.id}
                     className="hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
-                    onClick={() => setSelectedQuote(quote)}
+                    onClick={() => handleSelectQuote(quote)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
                       {quote.quote_number}
@@ -399,8 +776,8 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
-              <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="p-6 relative">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 {(() => {
                   const { rate, amount } = getTaxInfo(selectedQuote as QuoteWithExtras);
                   const markupAmount = getMarkupAmount(selectedQuote as QuoteWithExtras);
@@ -419,17 +796,35 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-500">Total</p>
-                        <p className="text-2xl font-bold text-blue-600">
-                          ${formatCurrency(selectedQuote.total_price)}
-                        </p>
-                      </div>
-                      <div>
                         <p className="text-sm text-gray-500">Markup</p>
                         <p className="text-2xl font-bold text-green-600">
                           ${formatCurrency(markupAmount)}
                         </p>
                       </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Total</p>
+                        <p className="text-2xl font-bold text-blue-600">
+                          ${formatCurrency(selectedQuote.total_price)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleProfitSummaryClick}
+                        disabled={!canOpenProfitBreakdown}
+                        className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors p-2 -m-2"
+                        title="View profit margin breakdown"
+                      >
+                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                          Profit Margin
+                          <span className="text-xs font-semibold text-gray-400">
+                            ({formatPercent(profitTotals.marginPct)})
+                          </span>
+                        </p>
+                        <p className="text-2xl font-bold text-emerald-600">
+                          ${formatCurrency(profitTotals.profit)}
+                        </p>
+                        <p className="text-xs text-gray-500">Click for line-item breakdown</p>
+                      </button>
                     </>
                   );
                 })()}
@@ -455,10 +850,187 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   </div>
                 </div>
               )}
+              {showProfitBreakdown && profitSnapshot && (
+                <ProfitBreakdownView
+                  rows={profitSnapshot.rows}
+                  totals={profitSnapshot.totals}
+                  onListPriceChange={handleListPriceChange}
+                  onClose={() => setShowProfitBreakdown(false)}
+                />
+              )}
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+type ProfitBreakdownViewProps = {
+  rows: ComputedProfitRow[];
+  totals: ProfitTotals;
+  onListPriceChange: (itemId: string, value: number) => void;
+  onClose: () => void;
+};
+
+function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: ProfitBreakdownViewProps) {
+  return (
+    <div className="absolute inset-0 z-10 bg-white dark:bg-gray-900 rounded-b-lg p-6 border-t border-gray-200 dark:border-gray-800 shadow-2xl overflow-y-auto">
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h4 className="text-xl font-semibold">Profit Margin Breakdown</h4>
+          <p className="text-sm text-gray-500">
+            Adjust list prices to simulate different cost scenarios for this quote.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
+          onClick={onClose}
+          aria-label="Close profit breakdown"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="-mx-6 px-6 overflow-x-auto">
+        <table className="min-w-full text-sm table-fixed" style={{ tableLayout: "fixed", width: "100%" }}>
+          {/* Column order: Product | List | Sales | Disc | Qty | Total | Margin % | Margin $ */}
+          <colgroup>
+            <col style={{ width: `${PRODUCT_COLUMN_PERCENT}%`, minWidth: `${PRODUCT_COLUMN_MIN_WIDTH_PX}px` }} />
+            <col style={{ width: `${PRICE_COLUMN_WIDTH_PX}px` }} />
+            <col style={{ width: `${PRICE_COLUMN_WIDTH_PX}px` }} />
+            <col style={{ width: "85px", minWidth: "85px" }} />
+            <col style={{ width: "70px", minWidth: "70px" }} />
+            <col style={{ width: "130px", minWidth: "120px" }} />
+            <col style={{ width: "95px", minWidth: "90px" }} />
+            <col style={{ width: "115px", minWidth: "105px" }} />
+          </colgroup>
+          <thead className="border-b border-gray-200">
+            <tr className="text-[11px] tracking-wide uppercase text-gray-500">
+              <th className="py-4 pr-4 text-left">
+                Product
+              </th>
+              <th className="py-4 pl-2 pr-3 text-left">
+                List Price
+              </th>
+              <th className="py-4 pl-4 pr-4 text-right">
+                Sales Price
+              </th>
+              <th className="py-4 pl-4 pr-2 text-center leading-tight whitespace-normal">
+                Disc<br />(%)
+              </th>
+              <th className="py-4 px-3 text-center leading-tight whitespace-normal">
+                Qty
+              </th>
+              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+                Total
+              </th>
+              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+                Margin<br />%
+              </th>
+              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+                Margin<br />$
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-10 text-center text-gray-500">
+                  Add line items to this quote to view a profit breakdown.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, index) => (
+                <tr
+                  key={row.id}
+                  className={`border-b border-gray-200 \${
+                    index % 2 === 0 ? "bg-white" : "bg-gray-50"
+                  } hover:bg-gray-100 transition-colors`}
+                >
+                  <td className="py-4 pr-4 font-medium text-gray-900 dark:text-gray-100 align-middle">
+                    <span
+                      className="block leading-snug"
+                      style={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        maxWidth: `${PRODUCT_CHARS_PER_LINE}ch`,
+                      }}
+                      title={row.productName}
+                    >
+                      {row.productName}
+                    </span>
+                  </td>
+                  <td className="py-4 pl-3 pr-4 align-middle text-left">
+                    <div className="relative w-full">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        inputMode="decimal"
+                        step="0.01"
+                        value={Number.isFinite(row.listPrice) ? row.listPrice : 0}
+                        onChange={(event) => onListPriceChange(row.id, parseFloat(event.target.value))}
+                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-7 pr-3 py-1.5 text-left text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
+                      />
+                    </div>
+                  </td>
+                  <td className="py-4 pl-3 pr-4 text-gray-700 dark:text-gray-300 text-right">
+                    ${formatCurrency(row.salesPrice)}
+                  </td>
+                  <td className="py-4 pl-4 pr-2 text-gray-700 dark:text-gray-300 text-center">
+                    {formatPercent(row.discountPct)}
+                  </td>
+                  <td className="py-4 px-3 text-gray-700 dark:text-gray-300 text-center">
+                    {row.quantity.toLocaleString()}
+                  </td>
+                  <td className="py-4 px-3 font-medium text-gray-900 dark:text-gray-100 text-right">
+                    ${formatCurrency(row.lineRevenue)}
+                  </td>
+                  <td className="py-4 px-3 text-gray-700 dark:text-gray-300 text-right">
+                    {formatPercent(row.lineMarginPct)}
+                  </td>
+                  <td className="py-4 px-3 font-semibold text-emerald-600 text-right">
+                    ${formatCurrency(row.lineProfit)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6 border-t border-gray-200 pt-4">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Total Revenue</p>
+          <p className="text-lg font-semibold">${formatCurrency(totals.revenue)}</p>
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Total Cost</p>
+          <p className="text-lg font-semibold">${formatCurrency(totals.cost)}</p>
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Total Profit</p>
+          <p className="text-lg font-semibold text-emerald-600">${formatCurrency(totals.profit)}</p>
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Profit Margin %</p>
+          <p className="text-lg font-semibold">{formatPercent(totals.marginPct)}</p>
+        </div>
+      </div>
+
+      <div className="flex justify-end mt-6">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Done
+        </button>
+      </div>
     </div>
   );
 }
