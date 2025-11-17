@@ -2495,22 +2495,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           <div className="border-b border-gray-200 bg-white flex justify-between items-center px-4 py-2.5">
             {/* Edit Mode Indicator */}
             {editMode && editSessionId && (
-              <div className="flex items-center gap-2">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800">
-                  <Edit2 size={12} />
-                  <span>Editing v{editVersion} → v{editVersion! + 1}</span>
-                </div>
-                <button
-                  className="group relative inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                  title={`Session: ${editSessionId}`}
-                >
-                  <FileText size={12} />
-                  <span className="hidden md:inline">Session: {editSessionId.slice(0, 8)}...</span>
-                  {/* Tooltip */}
-                  <div className="absolute left-0 top-full mt-1 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                    {editSessionId}
-                  </div>
-                </button>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800">
+                <Edit2 size={12} />
+                <span>Editing v{editVersion} → v{editVersion! + 1}</span>
               </div>
             )}
             
