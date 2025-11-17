@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { Plus, Download, Edit, Check, X } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2 } from "lucide-react";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useProducts } from "@/hooks/useProducts";
 import { Product, Quote, QuoteItem } from "@/types/database";
@@ -431,7 +431,7 @@ interface LogPanelProps {
 }
 
 export default function LogPanel({ projectId }: LogPanelProps) {
-  const { quotes, loading, fetchQuotes, updateQuoteStatus } = useQuotes(projectId);
+  const { quotes, loading, fetchQuotes, updateQuoteStatus, updateQuote, deleteQuote, duplicateQuote } = useQuotes(projectId);
   const { products } = useProducts();
   const { map: productCostMap, tokenEntries: productTokenEntries } = useMemo(
     () => buildProductCostIndex(products),
@@ -440,12 +440,34 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [showProfitBreakdown, setShowProfitBreakdown] = useState(false);
   const [profitPlanningItems, setProfitPlanningItems] = useState<ProfitPlanningItem[]>([]);
+  const [showActionsMenu, setShowActionsMenu] = useState<string | null>(null);
+  const [showRenameModal, setShowRenameModal] = useState<string | null>(null);
+  const [newQuoteName, setNewQuoteName] = useState("");
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
 
   useEffect(() => {
     if (projectId) {
       fetchQuotes(projectId);
     }
   }, [projectId]);
+
+  // Close actions menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showActionsMenu) {
+        const target = event.target as HTMLElement;
+        // Check if click is outside the actions menu
+        if (!target.closest('.actions-menu') && !target.closest('button[title="More actions"]')) {
+          setShowActionsMenu(null);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showActionsMenu]);
 
   // Listen for quote creation events to refresh the log automatically
   useEffect(() => {
@@ -621,6 +643,55 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     }
   };
 
+  const handleDuplicateQuote = async (quoteId: string) => {
+    try {
+      setShowActionsMenu(null);
+      toast.loading("Duplicating quote...");
+      await duplicateQuote(quoteId);
+      toast.dismiss();
+      toast.success("Quote duplicated successfully");
+    } catch (error: any) {
+      toast.dismiss();
+      toast.error(error?.message || "Failed to duplicate quote");
+    }
+  };
+
+  const handleRenameQuote = async (quoteId: string) => {
+    if (!newQuoteName.trim()) {
+      toast.error("Quote name cannot be empty");
+      return;
+    }
+
+    try {
+      await updateQuote(quoteId, newQuoteName.trim());
+      toast.success("Quote renamed successfully");
+      setShowRenameModal(null);
+      setNewQuoteName("");
+      setShowActionsMenu(null);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to rename quote");
+    }
+  };
+
+  const handleDeleteQuote = async (quoteId: string, quoteName: string) => {
+    if (!confirm(`Are you sure you want to delete "${quoteName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteQuote(quoteId);
+      toast.success("Quote deleted successfully");
+      setShowActionsMenu(null);
+      
+      // Close detail modal if the deleted quote was selected
+      if (selectedQuote?.id === quoteId) {
+        setSelectedQuote(null);
+      }
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to delete quote");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -722,7 +793,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                       </select>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 items-center">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -744,6 +815,67 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                         >
                           <Edit size={16} />
                         </button>
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setMenuPosition({
+                                top: rect.bottom + 4,
+                                right: window.innerWidth - rect.right,
+                              });
+                              setShowActionsMenu(showActionsMenu === quote.id ? null : quote.id);
+                            }}
+                            className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                            title="More actions"
+                          >
+                            <MoreVertical size={16} />
+                          </button>
+                          {showActionsMenu === quote.id && (
+                            <div 
+                              className="actions-menu fixed bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-2 min-w-[180px]"
+                              style={{
+                                zIndex: 9999,
+                                top: `${menuPosition.top}px`,
+                                right: `${menuPosition.right}px`,
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDuplicateQuote(quote.id);
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
+                              >
+                                <Copy size={16} className="flex-shrink-0" />
+                                <span>Duplicate Quote</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNewQuoteName(quote.quote_name);
+                                  setShowRenameModal(quote.id);
+                                  setShowActionsMenu(null);
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
+                              >
+                                <FileEdit size={16} className="flex-shrink-0" />
+                                <span>Rename Quote</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteQuote(quote.id, quote.quote_name);
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
+                              >
+                                <Trash2 size={16} className="flex-shrink-0" />
+                                <span>Delete Quote</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -858,6 +990,70 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   onClose={() => setShowProfitBreakdown(false)}
                 />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Quote Modal */}
+      {showRenameModal && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setShowRenameModal(null);
+            setNewQuoteName("");
+          }}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Rename Quote</h3>
+              <button
+                onClick={() => {
+                  setShowRenameModal(null);
+                  setNewQuoteName("");
+                }}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Quote Name
+              </label>
+              <input
+                type="text"
+                value={newQuoteName}
+                onChange={(e) => setNewQuoteName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && showRenameModal) {
+                    handleRenameQuote(showRenameModal);
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                placeholder="Enter quote name"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowRenameModal(null);
+                  setNewQuoteName("");
+                }}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showRenameModal && handleRenameQuote(showRenameModal)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Rename
+              </button>
             </div>
           </div>
         </div>
