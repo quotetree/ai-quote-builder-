@@ -103,9 +103,9 @@ const formatCurrency = (value: number): string =>
   roundToCents(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const PRODUCT_CHARS_PER_LINE = 16;
-const PRODUCT_COLUMN_PERCENT = 42;
-const PRODUCT_COLUMN_MIN_WIDTH_PX = 260;
-const PRICE_COLUMN_WIDTH_PX = 185;
+const PRODUCT_COLUMN_PERCENT = 28;
+const PRODUCT_COLUMN_MIN_WIDTH_PX = 200;
+const PRICE_COLUMN_WIDTH_PX = 110;
 
 const normalizeProductKey = (value?: string | null): string => (value || "").trim().toLowerCase();
 
@@ -1096,36 +1096,36 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: Profi
             <col style={{ width: `${PRODUCT_COLUMN_PERCENT}%`, minWidth: `${PRODUCT_COLUMN_MIN_WIDTH_PX}px` }} />
             <col style={{ width: `${PRICE_COLUMN_WIDTH_PX}px` }} />
             <col style={{ width: `${PRICE_COLUMN_WIDTH_PX}px` }} />
-            <col style={{ width: "85px", minWidth: "85px" }} />
             <col style={{ width: "70px", minWidth: "70px" }} />
-            <col style={{ width: "130px", minWidth: "120px" }} />
-            <col style={{ width: "95px", minWidth: "90px" }} />
-            <col style={{ width: "115px", minWidth: "105px" }} />
+            <col style={{ width: "60px", minWidth: "60px" }} />
+            <col style={{ width: "100px", minWidth: "95px" }} />
+            <col style={{ width: "85px", minWidth: "80px" }} />
+            <col style={{ width: "100px", minWidth: "95px" }} />
           </colgroup>
           <thead className="border-b border-gray-200">
             <tr className="text-[11px] tracking-wide uppercase text-gray-500">
-              <th className="py-4 pr-4 text-left">
+              <th className="py-3 pr-2 text-left">
                 Product
               </th>
-              <th className="py-4 pl-2 pr-3 text-left">
+              <th className="py-3 px-1 text-left">
                 List Price
               </th>
-              <th className="py-4 pl-4 pr-4 text-right">
+              <th className="py-3 px-1 text-right">
                 Sales Price
               </th>
-              <th className="py-4 pl-4 pr-2 text-center leading-tight whitespace-normal">
+              <th className="py-3 px-1 text-center leading-tight whitespace-normal">
                 Disc<br />(%)
               </th>
-              <th className="py-4 px-3 text-center leading-tight whitespace-normal">
+              <th className="py-3 px-1 text-center leading-tight whitespace-normal">
                 Qty
               </th>
-              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+              <th className="py-3 px-1 text-right leading-tight whitespace-normal">
                 Total
               </th>
-              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+              <th className="py-3 px-1 text-right leading-tight whitespace-normal">
                 Margin<br />%
               </th>
-              <th className="py-4 px-3 text-right leading-tight whitespace-normal">
+              <th className="py-3 pl-1 text-right leading-tight whitespace-normal">
                 Margin<br />$
               </th>
             </tr>
@@ -1145,9 +1145,9 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: Profi
                     index % 2 === 0 ? "bg-white" : "bg-gray-50"
                   } hover:bg-gray-100 transition-colors`}
                 >
-                  <td className="py-4 pr-4 font-medium text-gray-900 dark:text-gray-100 align-middle">
+                  <td className="py-3 pr-2 font-medium text-gray-900 dark:text-gray-100 align-middle">
                     <span
-                      className="block leading-snug"
+                      className="block leading-snug text-xs"
                       style={{
                         display: "-webkit-box",
                         WebkitLineClamp: 2,
@@ -1160,9 +1160,9 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: Profi
                       {row.productName}
                     </span>
                   </td>
-                  <td className="py-4 pl-3 pr-4 align-middle text-left">
+                  <td className="py-3 px-1 align-middle text-left">
                     <div className="relative w-full">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
                       <input
                         type="number"
                         min={0}
@@ -1170,26 +1170,26 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: Profi
                         step="0.01"
                         value={Number.isFinite(row.listPrice) ? row.listPrice : 0}
                         onChange={(event) => onListPriceChange(row.id, parseFloat(event.target.value))}
-                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-7 pr-3 py-1.5 text-left text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
+                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-left text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
                       />
                     </div>
                   </td>
-                  <td className="py-4 pl-3 pr-4 text-gray-700 dark:text-gray-300 text-right">
+                  <td className="py-3 px-1 text-gray-700 dark:text-gray-300 text-right text-xs">
                     ${formatCurrency(row.salesPrice)}
                   </td>
-                  <td className="py-4 pl-4 pr-2 text-gray-700 dark:text-gray-300 text-center">
+                  <td className="py-3 px-1 text-gray-700 dark:text-gray-300 text-center text-xs">
                     {formatPercent(row.discountPct)}
                   </td>
-                  <td className="py-4 px-3 text-gray-700 dark:text-gray-300 text-center">
+                  <td className="py-3 px-1 text-gray-700 dark:text-gray-300 text-center text-xs">
                     {row.quantity.toLocaleString()}
                   </td>
-                  <td className="py-4 px-3 font-medium text-gray-900 dark:text-gray-100 text-right">
+                  <td className="py-3 px-1 font-medium text-gray-900 dark:text-gray-100 text-right text-xs">
                     ${formatCurrency(row.lineRevenue)}
                   </td>
-                  <td className="py-4 px-3 text-gray-700 dark:text-gray-300 text-right">
+                  <td className="py-3 px-1 text-emerald-600 text-right text-xs font-medium">
                     {formatPercent(row.lineMarginPct)}
                   </td>
-                  <td className="py-4 px-3 font-semibold text-emerald-600 text-right">
+                  <td className="py-3 pl-1 font-semibold text-emerald-600 text-right text-xs">
                     ${formatCurrency(row.lineProfit)}
                   </td>
                 </tr>
