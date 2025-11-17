@@ -21,7 +21,15 @@ export function useQuotes(projectId?: string) {
         .from("quotes")
         .select(`
           *,
-          items:quote_items(*)
+          items:quote_items(
+            *,
+            product:products!quote_items_product_id_fkey(
+              id,
+              product_name,
+              list_price,
+              cost_price
+            )
+          )
         `)
         .eq("project_id", projId)
         .order("created_at", { ascending: false });

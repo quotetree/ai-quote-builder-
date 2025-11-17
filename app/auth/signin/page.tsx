@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 export default function SignIn() {
@@ -11,6 +11,7 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -26,7 +27,13 @@ export default function SignIn() {
 
       if (error) throw error;
 
-      router.push("/dashboard");
+      const requestedRedirect = searchParams.get("redirectTo");
+      const nextPath =
+        requestedRedirect && requestedRedirect.startsWith("/")
+          ? requestedRedirect
+          : "/dashboard";
+
+      router.push(nextPath);
       router.refresh();
     } catch (error: any) {
       setError(error.message);

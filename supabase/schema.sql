@@ -58,7 +58,9 @@ CREATE TABLE projects (
   product_families UUID[], -- Array of product_family IDs
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'deleted')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  share_token TEXT UNIQUE,
+  share_token_created_at TIMESTAMPTZ
 );
 
 -- Chat messages
@@ -165,6 +167,25 @@ CREATE INDEX idx_quote_items_quote_id ON quote_items(quote_id);
 CREATE INDEX idx_analytics_user_id ON analytics_events(user_id);
 CREATE INDEX idx_analytics_event_type ON analytics_events(event_type);
 
+-- Helper to verify organization-level share access
+CREATE OR REPLACE FUNCTION can_access_shared_project(target_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM projects p
+    JOIN profiles owner ON owner.id = p.user_id
+    JOIN profiles viewer ON viewer.id = auth.uid()
+    WHERE p.id = target_project_id
+      AND p.share_token IS NOT NULL
+      AND owner.company_name IS NOT NULL
+      AND viewer.company_name IS NOT NULL
+      AND owner.company_name = viewer.company_name
+  );
+$$;
+
 -- Row Level Security (RLS) Policies
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_families ENABLE ROW LEVEL SECURITY;
@@ -199,18 +220,36 @@ CREATE POLICY "Users can view own projects" ON projects FOR SELECT USING (auth.u
 CREATE POLICY "Users can insert own projects" ON projects FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can update own projects" ON projects FOR UPDATE USING (auth.uid() = user_id);
 CREATE POLICY "Users can delete own projects" ON projects FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "Org members can view shared projects" ON projects FOR SELECT USING (
+  share_token IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM profiles owner
+    JOIN profiles viewer ON viewer.id = auth.uid()
+    WHERE owner.id = projects.user_id
+      AND owner.company_name IS NOT NULL
+      AND viewer.company_name IS NOT NULL
+      AND owner.company_name = viewer.company_name
+  )
+);
 
 -- Chat messages policies (through project ownership)
 CREATE POLICY "Users can view messages in own projects" ON chat_messages FOR SELECT 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = chat_messages.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can insert messages in own projects" ON chat_messages FOR INSERT 
   WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = chat_messages.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Org members can manage shared project messages" ON chat_messages FOR ALL
+  USING (can_access_shared_project(project_id))
+  WITH CHECK (can_access_shared_project(project_id));
 
 -- Quotes policies
 CREATE POLICY "Users can view own quotes" ON quotes FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert own quotes" ON quotes FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can update own quotes" ON quotes FOR UPDATE USING (auth.uid() = user_id);
 CREATE POLICY "Users can delete own quotes" ON quotes FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "Org members can manage shared project quotes" ON quotes FOR ALL
+  USING (can_access_shared_project(project_id))
+  WITH CHECK (can_access_shared_project(project_id));
 
 -- Quote items policies (through quote ownership)
 CREATE POLICY "Users can view items in own quotes" ON quote_items FOR SELECT 
@@ -221,6 +260,23 @@ CREATE POLICY "Users can update items in own quotes" ON quote_items FOR UPDATE
   USING (EXISTS (SELECT 1 FROM quotes WHERE quotes.id = quote_items.quote_id AND quotes.user_id = auth.uid()));
 CREATE POLICY "Users can delete items in own quotes" ON quote_items FOR DELETE 
   USING (EXISTS (SELECT 1 FROM quotes WHERE quotes.id = quote_items.quote_id AND quotes.user_id = auth.uid()));
+CREATE POLICY "Org members can manage shared quote items" ON quote_items FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM quotes q
+      WHERE q.id = quote_items.quote_id
+        AND can_access_shared_project(q.project_id)
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM quotes q
+      WHERE q.id = quote_items.quote_id
+        AND can_access_shared_project(q.project_id)
+    )
+  );
 
 -- Analytics policies
 CREATE POLICY "Users can view own analytics" ON analytics_events FOR SELECT USING (auth.uid() = user_id);
@@ -236,6 +292,9 @@ CREATE POLICY "Users can update docs in own projects" ON project_documents FOR U
   WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can delete docs in own projects" ON project_documents FOR DELETE 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_documents.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Org members can manage shared project documents" ON project_documents FOR ALL
+  USING (can_access_shared_project(project_id))
+  WITH CHECK (can_access_shared_project(project_id));
 
 CREATE POLICY "Users can view own folders" ON project_folders FOR SELECT 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
@@ -246,6 +305,9 @@ CREATE POLICY "Users can update own folders" ON project_folders FOR UPDATE
   WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can delete own folders" ON project_folders FOR DELETE 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_folders.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Org members can manage shared project folders" ON project_folders FOR ALL
+  USING (can_access_shared_project(project_id))
+  WITH CHECK (can_access_shared_project(project_id));
 
 CREATE POLICY "Users can view own notes" ON project_notes FOR SELECT 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
@@ -256,6 +318,9 @@ CREATE POLICY "Users can update own notes" ON project_notes FOR UPDATE
   WITH CHECK (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
 CREATE POLICY "Users can delete own notes" ON project_notes FOR DELETE 
   USING (EXISTS (SELECT 1 FROM projects WHERE projects.id = project_notes.project_id AND projects.user_id = auth.uid()));
+CREATE POLICY "Org members can manage shared project notes" ON project_notes FOR ALL
+  USING (can_access_shared_project(project_id))
+  WITH CHECK (can_access_shared_project(project_id));
 
 -- Functions for updated_at timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()

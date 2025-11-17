@@ -49,6 +49,8 @@ export interface Project {
   status: 'active' | 'archived' | 'deleted';
   created_at: string;
   updated_at: string;
+  share_token?: string | null;
+  share_token_created_at?: string | null;
 }
 
 export interface ChatMessage {
@@ -232,6 +234,10 @@ export interface QuoteItem {
   unit_price: number;
   discount_percent: number;
   line_total: number;
+  product?: Product | null;
+  list_price?: number | null;
+  cost_price?: number | null;
+  unit_cost?: number | null;
   sort_order: number;
   created_at: string;
 }

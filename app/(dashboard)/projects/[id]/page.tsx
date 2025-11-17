@@ -17,15 +17,20 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, project_name")
+    .select("id, project_name, user_id")
     .eq("id", id)
-    .eq("user_id", user.id)
     .single();
 
   if (!project) {
-    redirect("/projects/new");
+    redirect("/dashboard");
   }
 
-  return <ProjectWorkspace projectId={project.id} projectName={project.project_name} />;
+  return (
+    <ProjectWorkspace
+      projectId={project.id}
+      projectName={project.project_name}
+      isOwner={project.user_id === user.id}
+    />
+  );
 }
 

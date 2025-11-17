@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageSquare, FolderOpen, FileText, Settings, Trash2, Edit2 } from "lucide-react";
+import { MessageSquare, FolderOpen, FileText, Settings, Trash2, Edit2, Share2, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import SplitChatPanel from "./SplitChatPanel";
 import DrivePanel from "./DrivePanel";
@@ -14,16 +14,21 @@ type TabType = "chat" | "drive" | "log";
 interface ProjectWorkspaceProps {
   projectId: string;
   projectName: string;
+  isOwner?: boolean;
 }
 
-export default function ProjectWorkspace({ projectId, projectName }: ProjectWorkspaceProps) {
+export default function ProjectWorkspace({ projectId, projectName, isOwner = true }: ProjectWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<TabType>("chat");
   const [showSettings, setShowSettings] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState(projectName);
   const [currentProjectName, setCurrentProjectName] = useState(projectName);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareLoading, setShareLoading] = useState(false);
   const { updateProject, deleteProject } = useProjects();
   const router = useRouter();
+  const canManageProject = isOwner;
 
   const handleRenameProject = async () => {
     if (!newProjectName.trim()) {
@@ -57,6 +62,49 @@ export default function ProjectWorkspace({ projectId, projectName }: ProjectWork
     }
   };
 
+  const handleShareProject = async () => {
+    if (!canManageProject) {
+      return;
+    }
+
+    setShareLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/share`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.error || "Unable to generate share link");
+      }
+
+      const data = await response.json();
+      setShareUrl(data.shareUrl);
+      setShareModalOpen(true);
+      try {
+        await navigator?.clipboard?.writeText(data.shareUrl);
+        toast.success("Share link copied to clipboard");
+      } catch {
+        toast.success("Share link ready to copy");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Unable to generate share link");
+    } finally {
+      setShareLoading(false);
+      setShowSettings(false);
+    }
+  };
+
+  const copyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator?.clipboard?.writeText(shareUrl);
+      toast.success("Share link copied to clipboard");
+    } catch {
+      toast.error("Unable to copy link");
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* Breadcrumb Header */}
@@ -66,44 +114,54 @@ export default function ProjectWorkspace({ projectId, projectName }: ProjectWork
           <span>/</span>
           <span className="text-gray-900 font-medium">{currentProjectName}</span>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <Settings size={18} className="text-gray-600" />
-          </button>
-          
-          {/* Settings Dropdown */}
-          {showSettings && (
-            <>
-              <div 
-                className="fixed inset-0 z-10" 
-                onClick={() => setShowSettings(false)}
-              />
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
-                <button
-                  onClick={() => {
-                    setNewProjectName(projectName);
-                    setShowRenameModal(true);
-                    setShowSettings(false);
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <Edit2 size={16} />
-                  Rename Project
-                </button>
-                <button
-                  onClick={handleDeleteProject}
-                  className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                >
-                  <Trash2 size={16} />
-                  Delete Project
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        {canManageProject && (
+          <div className="relative">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Settings size={18} className="text-gray-600" />
+            </button>
+            
+            {/* Settings Dropdown */}
+            {showSettings && (
+              <>
+                <div 
+                  className="fixed inset-0 z-10" 
+                  onClick={() => setShowSettings(false)}
+                />
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                  <button
+                    onClick={handleShareProject}
+                    disabled={shareLoading}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <Share2 size={16} />
+                    {shareLoading ? "Generating link..." : "Share Project"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNewProjectName(projectName);
+                      setShowRenameModal(true);
+                      setShowSettings(false);
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <Edit2 size={16} />
+                    Rename Project
+                  </button>
+                  <button
+                    onClick={handleDeleteProject}
+                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Delete Project
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tab Navigation - Horizontal Tabs */}
@@ -185,6 +243,41 @@ export default function ProjectWorkspace({ projectId, projectName }: ProjectWork
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Link Modal */}
+      {shareModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg">
+            <h2 className="text-xl font-semibold mb-2">Share Project</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Send this link to anyone in your organization to open the project instantly.
+            </p>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={shareUrl}
+                readOnly
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <button
+                onClick={copyShareUrl}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                <Copy size={16} />
+                Copy
+              </button>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShareModalOpen(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

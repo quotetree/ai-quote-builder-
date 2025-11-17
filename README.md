@@ -238,6 +238,8 @@ OPENAI_API_KEY=sk-your-openai-key
 
 # Site URL
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
+# Optional: canonical domain used in generated share links
+NEXT_PUBLIC_SHARE_BASE_URL=https://quotetree.ai
 ```
 
 ---
@@ -302,6 +304,7 @@ Add these in **Settings → Environment Variables**:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OPENAI_API_KEY`
 - `NEXT_PUBLIC_SITE_URL` (your Vercel domain)
+- `NEXT_PUBLIC_SHARE_BASE_URL` (optional share link domain)
 
 ---
 
