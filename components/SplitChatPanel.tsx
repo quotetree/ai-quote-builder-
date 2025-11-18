@@ -2619,6 +2619,35 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {messages.length === 0 && !loading && (
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
+              <div className="max-w-md space-y-4">
+                <div className="text-6xl mb-4">💬</div>
+                <h3 className="text-2xl font-semibold text-gray-900">
+                  Ready to Create Your Quote
+                </h3>
+                <p className="text-gray-600 text-base leading-relaxed">
+                  Start a conversation with AI to generate a professional quote for your project. 
+                  Describe your requirements, and I'll help you build a detailed quote with products, 
+                  pricing, and all the details you need.
+                </p>
+                <div className="pt-4 space-y-2">
+                  <p className="text-sm font-medium text-gray-700">Try asking:</p>
+                  <div className="space-y-2 text-sm text-gray-600">
+                    <p className="bg-gray-50 rounded-lg px-4 py-2 text-left">
+                      "Create a quote for security cameras and installation"
+                    </p>
+                    <p className="bg-gray-50 rounded-lg px-4 py-2 text-left">
+                      "I need a quote for network infrastructure setup"
+                    </p>
+                    <p className="bg-gray-50 rounded-lg px-4 py-2 text-left">
+                      "Build me a quote with 10 access points and cabling"
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {messages.map((message) => (
             <div
               key={message.id}
