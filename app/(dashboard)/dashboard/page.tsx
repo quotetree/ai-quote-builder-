@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, X, FileText } from "lucide-react";
 import { useProjects } from "@/hooks/useProjects";
 import { trackProjectCreated } from "@/lib/analytics";
 import toast from "react-hot-toast";
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const { createProject } = useProjects();
   const router = useRouter();
   const supabase = createClient();
@@ -22,6 +23,28 @@ export default function DashboardPage() {
   const sanitizeFileName = (name: string) => {
     const trimmed = name?.trim() || "untitled";
     return trimmed.replace(/[^a-zA-Z0-9.\-_ ]/g, "").replace(/\s+/g, "-");
+  };
+
+  useEffect(() => {
+    const urls: Record<string, string> = {};
+    selectedFiles.forEach((file) => {
+      if (file.type.startsWith("image/")) {
+        const key = `${file.name}-${file.lastModified}`;
+        urls[key] = URL.createObjectURL(file);
+      }
+    });
+    setPreviewUrls(urls);
+
+    return () => {
+      Object.values(urls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [selectedFiles]);
+
+  const formatFileSize = (bytes: number) => {
+    if (!Number.isFinite(bytes)) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,6 +74,8 @@ export default function DashboardPage() {
   const uploadFilesToProject = async (projectId: string) => {
     if (selectedFiles.length === 0) return;
 
+    const filesToUpload = [...selectedFiles];
+
     setUploadingFiles(true);
     try {
       const {
@@ -67,7 +92,7 @@ export default function DashboardPage() {
       let successCount = 0;
       const failures: string[] = [];
 
-      for (const file of selectedFiles) {
+      for (const file of filesToUpload) {
         const safeName = sanitizeFileName(file.name || "file");
         const storagePath = `${projectId}/initial-upload/${batchKey}-${safeName}`;
 
@@ -178,8 +203,55 @@ export default function DashboardPage() {
 
         {/* Project Name Input */}
         <div className="mb-8">
-          <div className="relative">
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+          <div
+            className={`bg-gray-100 rounded-2xl border ${
+              projectInputFocused ? "border-gray-300" : "border-transparent"
+            } transition-all`}
+          >
+            {selectedFiles.length > 0 && (
+              <div className="px-4 pt-4 flex flex-wrap gap-3">
+                {selectedFiles.map((file, index) => {
+                  const previewKey = `${file.name}-${file.lastModified}`;
+                  const previewUrl = previewUrls[previewKey];
+                  return (
+                  <div
+                    key={`${file.name}-${file.size}-${index}`}
+                    className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm max-w-full"
+                  >
+                    {previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt={file.name}
+                        className="w-10 h-10 rounded-md object-cover border border-gray-200"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-md bg-gray-100 flex items-center justify-center border border-gray-200">
+                        <FileText size={18} className="text-gray-500" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(file.size)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSelectedFile(index)}
+                      className="text-gray-400 hover:text-red-500 transition"
+                      title="Remove file"
+                    >
+                      <X size={14} />
+                      <span className="sr-only">Remove file</span>
+                    </button>
+                  </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex items-center gap-3 px-4 py-3">
               <button
                 type="button"
                 onClick={handleFileButtonClick}
@@ -196,60 +268,27 @@ export default function DashboardPage() {
                 className="hidden"
                 onChange={handleFilesSelected}
               />
+              <input
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                onKeyPress={handleKeyPress}
+                onFocus={(event) => {
+                  setProjectInputFocused(true);
+                  // Select existing text to allow quick replacement
+                  event.target.select();
+                }}
+                onBlur={() => {
+                  if (!projectName.trim()) {
+                    setProjectInputFocused(false);
+                  }
+                }}
+                placeholder={projectInputFocused ? "" : "Project Name"}
+                disabled={creating}
+                className="flex-1 bg-transparent border-none text-lg placeholder-gray-400 focus:outline-none disabled:opacity-50 py-1"
+              />
             </div>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              onKeyPress={handleKeyPress}
-              onFocus={(event) => {
-                setProjectInputFocused(true);
-                // Select existing text to allow quick replacement
-                event.target.select();
-              }}
-              onBlur={() => {
-                if (!projectName.trim()) {
-                  setProjectInputFocused(false);
-                }
-              }}
-              placeholder={projectInputFocused ? "" : "Project Name"}
-              disabled={creating}
-              className="w-full pl-14 pr-4 py-4 bg-gray-100 rounded-xl text-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-all disabled:opacity-50"
-            />
           </div>
-          {selectedFiles.length > 0 && (
-            <div className="mt-4 bg-gray-50 border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-gray-700">
-                  Files to upload ({selectedFiles.length})
-                </p>
-                <button
-                  type="button"
-                  onClick={resetFileSelection}
-                  className="text-xs text-gray-500 hover:text-red-500 transition"
-                >
-                  Clear all
-                </button>
-              </div>
-              <ul className="space-y-1 max-h-40 overflow-y-auto text-sm text-gray-700">
-                {selectedFiles.map((file, index) => (
-                  <li
-                    key={`${file.name}-${file.size}-${index}`}
-                    className="flex items-center justify-between gap-4"
-                  >
-                    <span className="truncate">{file.name}</span>
-                    <button
-                      type="button"
-                      className="text-xs text-gray-500 hover:text-red-500 transition"
-                      onClick={() => removeSelectedFile(index)}
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
 
         {/* Create Button */}
