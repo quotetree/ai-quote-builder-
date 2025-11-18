@@ -798,7 +798,7 @@ PRODUCT_DATA_END
 ✓ If a search returns no results, tell the user and ask for different keywords
 ✓ Keep responses focused and brief (2-3 paragraphs max)
 
-${conversationSummary ? `\n## Current Conversation Context:\n${conversationSummary}` : ''}
+${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSummary : ''}
 
 ## 🚨 FINAL CHECKLIST BEFORE YOU RESPOND:
 1. Did you search for products? YES → Check what the search returned
