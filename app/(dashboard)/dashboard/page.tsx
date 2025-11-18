@@ -52,7 +52,7 @@ export default function DashboardPage() {
         <div className="text-center mb-12">
           <h1 className="text-4xl font-semibold mb-4">New project</h1>
           <p className="text-gray-500">
-            Projects give ChatGPT shared context across chats and files, all in one place.
+            Projects keep your chat history, product selections, and quotes all in one place.
           </p>
         </div>
 
