@@ -1721,16 +1721,24 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     }
   }
 
-  function handleDragLeave() {
-    // Clear auto-scroll interval
+  function handleDragLeave(e: React.DragEvent) {
+    // Only clear if we're actually leaving the draggable area (not just moving between child elements)
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (relatedTarget && e.currentTarget.contains(relatedTarget)) {
+      return; // Still inside the drag area, don't clear
+    }
+    
+    // Clear auto-scroll interval only
     if (autoScrollInterval.current) {
       clearInterval(autoScrollInterval.current);
       autoScrollInterval.current = null;
     }
+    // Don't clear dragOverIndex or dropPosition here - let drop handler use them
   }
 
   function handleDrop(e: React.DragEvent, dropIndex: number) {
     e.preventDefault();
+    e.stopPropagation();
     
     // Clear auto-scroll interval
     if (autoScrollInterval.current) {
@@ -1745,11 +1753,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return;
     }
     
-    // Calculate final drop position based on dropPosition state
+    // Recalculate drop position based on current mouse position for accuracy
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const currentDropPosition = e.clientY < midpoint ? 'before' : 'after';
+    
+    // Calculate final drop position
     let finalDropIndex = dropIndex;
     
     // If dropping 'after', increment the index
-    if (dropPosition === 'after') {
+    if (currentDropPosition === 'after') {
       finalDropIndex = dropIndex + 1;
     }
     
@@ -2952,7 +2965,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                               draggable
                               onDragStart={() => handleDragStart(index)}
                               onDragOver={(e) => handleDragOver(e, index)}
-                              onDragLeave={handleDragLeave}
+                              onDragLeave={(e) => handleDragLeave(e)}
                               onDrop={(e) => handleDrop(e, index)}
                               onDragEnd={handleDragEnd}
                               className={`group bg-gray-50 rounded-lg p-4 border-2 transition-all cursor-move ${
