@@ -9,30 +9,54 @@ export function normalizeBakedMarkups(quote: any) {
   }
   
   // Ensure correct shape
-  quote.baked_markups = (quote.baked_markups as any[]).filter(Boolean).map((bm: any) => ({
-    id: String(bm.id ?? cryptoRandomId()),
-    label: String(bm.label ?? 'Markup'),
-    percent: Number(bm.percent ?? 0),
-    baseSelector: bm.baseSelector ?? { include: 'all' },
-    addToSelector: bm.addToSelector ?? { include: 'all' },
-    distribution: bm.distribution ?? 'proportional',
-    rounding: bm.rounding ?? { mode: 'bankers', places: 2 },
-    targets: Array.isArray(bm.targets)
-      ? bm.targets.filter(Boolean).map((t: any) => ({
-          item_id: t.item_id ?? t.itemId ?? undefined,
-          itemId: t.itemId ?? t.item_id ?? undefined,
-          stable_key: String(t.stable_key ?? t.stableKey ?? ''),
-          amountCents: typeof t.amountCents === 'number'
-            ? Math.round(t.amountCents)
-            : typeof t.amount_cents === 'number'
-              ? Math.round(t.amount_cents)
-              : undefined
-        }))
-      : [],
-    audited: bm.audited ?? { base: 0, totalMarkup: 0, perItemDeltas: {} },
-    createdAt: String(bm.createdAt ?? new Date().toISOString()),
-    createdBy: bm.createdBy ?? 'system',
-  })) as BakedMarkupConfig[];
+  quote.baked_markups = (quote.baked_markups as any[]).filter(Boolean).map((bm: any) => {
+    const normalizedPercent = typeof bm.percent === 'number'
+      ? Number(bm.percent)
+      : Number(bm.percent ?? 0);
+    const normalizedLumpSum =
+      typeof bm.lumpSumAmount === 'number'
+        ? Number(bm.lumpSumAmount)
+        : bm.calculation?.type === 'amount' && typeof bm.calculation?.value === 'number'
+          ? Number(bm.calculation.value)
+          : typeof bm.calculation?.amount === 'number'
+            ? Number(bm.calculation.amount)
+            : undefined;
+    const normalizedMode: 'percent' | 'amount' =
+      bm.calculationMode === 'amount'
+        ? 'amount'
+        : bm.calculationMode === 'percent'
+          ? 'percent'
+          : normalizedLumpSum && normalizedLumpSum > 0
+            ? 'amount'
+            : 'percent';
+    
+    return {
+      id: String(bm.id ?? cryptoRandomId()),
+      label: String(bm.label ?? 'Markup'),
+      percent: normalizedPercent,
+      calculationMode: normalizedMode,
+      lumpSumAmount: normalizedLumpSum,
+      baseSelector: bm.baseSelector ?? { include: 'all' },
+      addToSelector: bm.addToSelector ?? { include: 'all' },
+      distribution: bm.distribution ?? 'proportional',
+      rounding: bm.rounding ?? { mode: 'bankers', places: 2 },
+      targets: Array.isArray(bm.targets)
+        ? bm.targets.filter(Boolean).map((t: any) => ({
+            item_id: t.item_id ?? t.itemId ?? undefined,
+            itemId: t.itemId ?? t.item_id ?? undefined,
+            stable_key: String(t.stable_key ?? t.stableKey ?? ''),
+            amountCents: typeof t.amountCents === 'number'
+              ? Math.round(t.amountCents)
+              : typeof t.amount_cents === 'number'
+                ? Math.round(t.amount_cents)
+                : undefined
+          }))
+        : [],
+      audited: bm.audited ?? { base: 0, totalMarkup: 0, perItemDeltas: {} },
+      createdAt: String(bm.createdAt ?? new Date().toISOString()),
+      createdBy: bm.createdBy ?? 'system',
+    };
+  }) as BakedMarkupConfig[];
 }
 
 export function rehydrateBakedMarkupsIntoItems(quote: any) {

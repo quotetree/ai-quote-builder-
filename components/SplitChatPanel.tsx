@@ -48,6 +48,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [currentMarkup, setCurrentMarkup] = useState<{
     name: string;
     rate: string;
+    lumpSum: string;
     baseAppliesTo: 'all' | 'exclude_products';
     baseSelectedProducts: string[];
     addToAppliesTo: 'all' | 'exclude_products';
@@ -58,6 +59,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   }>({
     name: 'Markup',
     rate: '',
+    lumpSum: '',
     baseAppliesTo: 'all',
     baseSelectedProducts: [],
     addToAppliesTo: 'all',
@@ -912,12 +914,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       return;
     }
     
-    console.log('[Markup] edit:open { markupId:', markupId, ', label:', markup.label, ', percent:', markup.percent, '}');
+    console.log('[Markup] edit:open { markupId:', markupId, ', label:', markup.label, ', percent:', markup.percent, ', mode:', markup.calculationMode, ', lumpSum:', markup.lumpSumAmount, '}');
+    
+    const isLumpSumMarkup = (markup.calculationMode === 'amount') || (!!markup.lumpSumAmount && markup.lumpSumAmount > 0);
     
     // Convert stored markup config back to form state
     setCurrentMarkup({
       name: markup.label,
-      rate: ((markup.percent || 0) * 100).toString(),
+      rate: isLumpSumMarkup ? '' : (((markup.percent || 0) * 100).toString()),
+      lumpSum: isLumpSumMarkup
+        ? (markup.lumpSumAmount ?? markup.audited?.totalMarkup ?? 0).toString()
+        : '',
       baseAppliesTo: markup.baseSelector.include === 'all' ? 'all' : 'exclude_products',
       baseSelectedProducts: markup.baseSelector.exclude || [],
       addToAppliesTo: markup.addToSelector.include === 'all' ? 'all' : 'exclude_products',
@@ -1192,7 +1199,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
   // Calculate markup preview
   function calculateMarkupPreview() {
-    if (!quotePreview) return { baseCount: 0, baseTotal: 0, addToCount: 0, addToTotal: 0, markupAmount: 0 };
+    if (!quotePreview) {
+      return {
+        baseCount: 0,
+        baseTotal: 0,
+        addToCount: 0,
+        addToTotal: 0,
+        markupAmount: 0,
+        mode: currentMarkup.lumpSum ? 'amount' : 'percent',
+        effectiveRate: 0
+      };
+    }
     
     const baseItems = matchItemsBySelector(
       quotePreview.line_items,
@@ -1210,14 +1227,18 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     const addToTotal = addToItems.reduce((sum, item) => sum + item.line_total, 0);
     
     const rateDecimal = parseFloat(currentMarkup.rate) / 100 || 0;
-    const markupAmount = bankersRound(baseTotal * rateDecimal, 2);
+    const lumpSumValue = bankersRound(parseFloat(currentMarkup.lumpSum || '0') || 0, 2);
+    const useLumpSum = lumpSumValue > 0;
+    const markupAmount = useLumpSum ? lumpSumValue : bankersRound(baseTotal * rateDecimal, 2);
     
     return {
       baseCount: baseItems.length,
       baseTotal,
       addToCount: addToItems.length,
       addToTotal,
-      markupAmount
+      markupAmount,
+      mode: useLumpSum ? 'amount' : 'percent',
+      effectiveRate: baseTotal > 0 ? markupAmount / baseTotal : 0
     };
   }
 
@@ -1225,9 +1246,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   async function addBakedMarkupToQuote() {
     if (!quotePreview) return;
     
-    const rateDecimal = parseFloat(currentMarkup.rate) / 100;
-    if (isNaN(rateDecimal) || rateDecimal <= 0) {
-      toast.error("Please enter a valid percentage");
+    const rateDecimal = parseFloat(currentMarkup.rate) / 100 || 0;
+    const lumpSumValue = bankersRound(parseFloat(currentMarkup.lumpSum || '0') || 0, 2);
+    const useLumpSum = lumpSumValue > 0;
+    if (!useLumpSum && rateDecimal <= 0) {
+      toast.error("Enter a percentage or a lump sum amount");
       return;
     }
     
@@ -1273,43 +1296,41 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       }
     }
     
-    // Calculate preview based on clean items (without old markup)
-    const cleanPreview = (() => {
-      const tempPreview = { ...quotePreview, line_items: baseItems };
-      const baseMatches = matchItemsBySelector(
-        tempPreview.line_items,
-        currentMarkup.baseAppliesTo,
-        currentMarkup.baseSelectedProducts
-      );
-      const addToMatches = matchItemsBySelector(
-        tempPreview.line_items,
-        currentMarkup.addToAppliesTo,
-        currentMarkup.addToSelectedProducts
-      );
-      const baseTotal = baseMatches.reduce((sum, item) => sum + item.line_total, 0);
-      const addToTotal = addToMatches.reduce((sum, item) => sum + item.line_total, 0);
-      const markupAmount = bankersRound(baseTotal * rateDecimal, 2);
-      
-      return {
-        baseCount: baseMatches.length,
-        addToCount: addToMatches.length,
-        baseTotal,
-        addToTotal,
-        markupAmount
-      };
-    })();
-    
-    const preview = cleanPreview;
-    
-    if (preview.baseCount === 0) {
+    const baseMatches = matchItemsBySelector(
+      baseItems,
+      currentMarkup.baseAppliesTo,
+      currentMarkup.baseSelectedProducts
+    );
+    const addToMatches = matchItemsBySelector(
+      baseItems,
+      currentMarkup.addToAppliesTo,
+      currentMarkup.addToSelectedProducts
+    );
+    const baseTotal = baseMatches.reduce((sum, item) => sum + item.line_total, 0);
+    const addToTotal = addToMatches.reduce((sum, item) => sum + item.line_total, 0);
+    if (baseMatches.length === 0) {
       toast.error("No base items match the selection");
       return;
     }
     
-    if (preview.addToCount === 0) {
+    if (addToMatches.length === 0) {
       toast.error("No 'Add To' items match the selection");
       return;
     }
+    
+    const markupAmount = useLumpSum ? lumpSumValue : bankersRound(baseTotal * rateDecimal, 2);
+    if (markupAmount <= 0) {
+      toast.error("Markup amount must be greater than 0");
+      return;
+    }
+    
+    const preview = {
+      baseCount: baseMatches.length,
+      addToCount: addToMatches.length,
+      baseTotal,
+      addToTotal,
+      markupAmount
+    };
     
     // Get current user for audit trail
     let createdBy: UserRef;
@@ -1332,16 +1353,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     // Use existing ID if editing, otherwise create new
     const markupId = editingMarkupId || `markup-${Date.now()}`;
-    const baseMatches = matchItemsBySelector(
-      baseItems,
-      currentMarkup.baseAppliesTo,
-      currentMarkup.baseSelectedProducts
-    );
-    const addToMatches = matchItemsBySelector(
-      baseItems,
-      currentMarkup.addToAppliesTo,
-      currentMarkup.addToSelectedProducts
-    );
     
     // Generate stable keys for all items (for reliable cross-version matching)
     const itemStableKeys = new Map<number, string>();
@@ -1351,8 +1362,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     // Calculate per-item deltas (using stable keys, not temp IDs)
     const perItemDeltas: Record<string, number> = {}; // stableKey -> delta
-    let remainingMarkup = preview.markupAmount;
-    
     // Build index map for addToMatches to find their stable keys
     const addToMatchIndices = new Map<any, number>();
     addToMatches.forEach(item => {
@@ -1448,10 +1457,14 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     });
     
     // Create new markup config
+    const effectivePercent = baseTotal > 0 ? markupAmount / baseTotal : 0;
+    
     const newMarkup: import("@/types/database").BakedMarkupConfig = {
       id: markupId,
       label: currentMarkup.name,
-      percent: rateDecimal,
+      percent: effectivePercent,
+      calculationMode: useLumpSum ? 'amount' : 'percent',
+      lumpSumAmount: useLumpSum ? markupAmount : undefined,
       baseSelector: {
         include: currentMarkup.baseAppliesTo === 'all' ? 'all' : baseMatches.map(i => `item:${i.product_name}`),
         exclude: currentMarkup.baseAppliesTo === 'exclude_products' ? currentMarkup.baseSelectedProducts : undefined
@@ -1528,10 +1541,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     // Telemetry
     if (editingMarkupId) {
-      console.log('[Telemetry] markup:edit { markupId:', markupId, ', newPercent:', rateDecimal, ', totalDelta:', preview.markupAmount, '}');
+      console.log('[Telemetry] markup:edit { markupId:', markupId, ', mode:', useLumpSum ? 'amount' : 'percent', ', percent:', effectivePercent, ', lumpSum:', useLumpSum ? markupAmount : null, ', totalDelta:', preview.markupAmount, '}');
       toast.success(`Updated ${currentMarkup.name} - totals recalculated`);
     } else {
-      console.log('[Telemetry] markup:add { markupId:', markupId, ', percent:', rateDecimal, ', total:', preview.markupAmount, ', targets:', preview.addToCount, ', createdBy:', createdBy.id, '}');
+      console.log('[Telemetry] markup:add { markupId:', markupId, ', mode:', useLumpSum ? 'amount' : 'percent', ', percent:', effectivePercent, ', lumpSum:', useLumpSum ? markupAmount : null, ', total:', preview.markupAmount, ', targets:', preview.addToCount, ', createdBy:', createdBy.id, '}');
       toast.success(`Added ${currentMarkup.name} - $${formatCurrency(preview.markupAmount)} baked into ${preview.addToCount} items`);
     }
     
@@ -1539,6 +1552,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     setCurrentMarkup({
       name: 'Markup',
       rate: '',
+      lumpSum: '',
       baseAppliesTo: 'all',
       baseSelectedProducts: [],
       addToAppliesTo: 'all',
@@ -2860,7 +2874,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                       className="cursor-help"
                                       title={`Markup breakdown: ${(item.bakedAdjustments?.breakdown || []).map(b => {
                                         const config = (quotePreview.bakedMarkups || []).find(m => m.id === b.markupId);
-                                        return `${config?.label || 'Unknown'}: +$${formatCurrency(b.delta)} (${(config?.percent || 0) * 100}%)`;
+                                        const descriptor = (config?.calculationMode === 'amount' && config?.lumpSumAmount)
+                                          ? `$${formatCurrency(config.lumpSumAmount)}`
+                                          : `${((config?.percent || 0) * 100).toFixed(1)}%`;
+                                        return `${config?.label || 'Unknown'}: +$${formatCurrency(b.delta)} (${descriptor})`;
                                       }).join(', ')}`}
                                     >
                                       Includes Markup: +${formatCurrency((item as any)._uiIncludesMarkup || item.bakedAdjustments?.markupTotal || 0)}
@@ -2944,7 +2961,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                               <div key={markup.id || `markup-${markupIndex}`} className="group flex items-start justify-between text-sm hover:bg-purple-50 p-2 rounded -mx-2">
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="text-gray-700">{markup.label} ({(markup.percent * 100).toFixed(1)}%):</span>
+                                    <span className="text-gray-700">
+                                      {markup.label} (
+                                      {markup.calculationMode === 'amount' && markup.lumpSumAmount
+                                        ? `$${formatCurrency(markup.lumpSumAmount)}`
+                                        : `${((markup.percent || 0) * 100).toFixed(1)}%`}
+                                      ):
+                                    </span>
                                     <button
                                       onClick={() => editBakedMarkup(markup.id)}
                                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-purple-100 rounded transition-opacity"
@@ -3232,6 +3255,21 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                 />
               </div>
               
+              {/* Lump Sum */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Lump Sum ($)</label>
+                <input
+                  type="number"
+                  value={currentMarkup.lumpSum}
+                  onChange={(e) => setCurrentMarkup({ ...currentMarkup, lumpSum: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="e.g., 2000"
+                  step="0.01"
+                  min="0"
+                />
+                <p className="text-xs text-gray-500 mt-1">Enter a fixed amount instead of a percentage.</p>
+              </div>
+              
               {/* Base Applies To */}
               <div className="border-t pt-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Base Applies To</label>
@@ -3414,13 +3452,18 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               </div>
               
               {/* Preview */}
-              {currentMarkup.rate && (() => {
+              {(currentMarkup.rate || currentMarkup.lumpSum) && (() => {
                 const preview = calculateMarkupPreview();
                 return (
                   <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                     <div className="text-sm text-purple-900 space-y-1">
                       <div><strong>Base:</strong> {preview.baseCount} items totaling ${formatCurrency(preview.baseTotal)}</div>
-                      <div><strong>Markup Amount:</strong> ${formatCurrency(preview.markupAmount)} ({currentMarkup.rate}%)</div>
+                      <div>
+                        <strong>Markup Amount:</strong> ${formatCurrency(preview.markupAmount)}{' '}
+                        {preview.mode === 'amount'
+                          ? '(lump sum)'
+                          : `(${currentMarkup.rate || (preview.effectiveRate * 100).toFixed(2)}%)`}
+                      </div>
                       <div><strong>Add To:</strong> {preview.addToCount} items</div>
                       <div className="text-xs text-purple-700 mt-2 italic">
                         The markup will be baked into the selected items' prices

@@ -105,7 +105,9 @@ export interface BakedMarkupTarget {
 export interface BakedMarkupConfig {
   id: string;
   label: string;
-  percent: number; // Decimal (0.075 = 7.5%)
+  percent?: number; // Decimal (0.075 = 7.5%) - retained for backwards compatibility
+  calculationMode?: 'percent' | 'amount';
+  lumpSumAmount?: number; // Explicit lump sum amount (in dollars)
   baseSelector: BakedMarkupSelector;
   addToSelector: BakedMarkupSelector;
   distribution: 'proportional' | 'even' | { singleItemId: string };

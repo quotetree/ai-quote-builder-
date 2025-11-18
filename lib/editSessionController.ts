@@ -145,7 +145,13 @@ export async function startEditSession(
       bakedMarkupCount: bakedMarkups.length,
       itemsWithDiscounts: (quote.items || []).filter((i: any) => i.discount_percent > 0).length,
       charges: charges.map((c: any) => ({ name: c.name, rate: c.rate, amount: c.calculated_amount })),
-      bakedMarkups: bakedMarkups.map((m: any) => ({ label: m.label, percent: m.percent, total: m.audited?.totalMarkup }))
+      bakedMarkups: bakedMarkups.map((m: any) => ({
+        label: m.label,
+        percent: m.percent,
+        mode: m.calculationMode,
+        lumpSum: m.lumpSumAmount,
+        total: m.audited?.totalMarkup
+      }))
     });
 
     // Normalize baked_markups (handle null, wrong shape, camelCase legacy)
@@ -285,7 +291,12 @@ export async function rehydrateEditSession(
       bakedMarkupCount: snapshot.bakedMarkups?.length || 0,
       items: snapshot.items?.map((i: any) => ({ name: i.product_name, qty: i.quantity })) || [],
       charges: snapshot.charges?.map((c: any) => ({ name: c.name, amount: c.calculated_amount })) || [],
-      bakedMarkups: snapshot.bakedMarkups?.map((m: any) => ({ label: m.label, percent: m.percent })) || []
+      bakedMarkups: snapshot.bakedMarkups?.map((m: any) => ({
+        label: m.label,
+        percent: m.percent,
+        mode: m.calculationMode,
+        lumpSum: m.lumpSumAmount
+      })) || []
     });
 
     // Convert quote items to suggested products format (use rehydrated items with bakedAdjustments)
@@ -330,7 +341,13 @@ export async function rehydrateEditSession(
       itemsWithBakedAdjustments: quotePreview.line_items.filter(i => i.bakedAdjustments && i.bakedAdjustments.markupTotal && i.bakedAdjustments.markupTotal > 0).length,
       lineItems: quotePreview.line_items.map(i => ({ name: i.product_name, qty: i.quantity, discount: i.discount_percent || 0, bakedMarkup: i.bakedAdjustments?.markupTotal || 0 })),
       charges: quotePreview.charges?.map(c => ({ name: c.name, amount: c.calculated_amount })) || [],
-      bakedMarkups: quotePreview.bakedMarkups?.map(m => ({ label: m.label, percent: m.percent, total: m.audited?.totalMarkup })) || [],
+      bakedMarkups: quotePreview.bakedMarkups?.map(m => ({
+        label: m.label,
+        percent: m.percent,
+        mode: m.calculationMode,
+        lumpSum: m.lumpSumAmount,
+        total: m.audited?.totalMarkup
+      })) || [],
       total: quotePreview.total_price
     });
 
