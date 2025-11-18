@@ -1682,8 +1682,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     if (previewScrollRef.current) {
       const scrollContainer = previewScrollRef.current;
       const containerRect = scrollContainer.getBoundingClientRect();
-      const threshold = 100; // px from edge to trigger scroll
-      const scrollSpeed = 10; // px per interval
+      const threshold = 150; // px from edge to trigger scroll
       
       // Clear any existing interval
       if (autoScrollInterval.current) {
@@ -1691,8 +1690,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         autoScrollInterval.current = null;
       }
       
+      const distanceFromTop = e.clientY - containerRect.top;
+      const distanceFromBottom = containerRect.bottom - e.clientY;
+      
       // Scroll up if near top
-      if (e.clientY - containerRect.top < threshold) {
+      if (distanceFromTop < threshold && distanceFromTop >= 0) {
+        // Calculate speed based on proximity (closer = faster)
+        // Speed ranges from 5px (at threshold) to 40px (at edge)
+        const intensity = 1 - (distanceFromTop / threshold);
+        const scrollSpeed = 5 + (intensity * 35); // 5-40px per frame
+        
         autoScrollInterval.current = setInterval(() => {
           if (scrollContainer.scrollTop > 0) {
             scrollContainer.scrollTop -= scrollSpeed;
@@ -1700,7 +1707,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         }, 16); // ~60fps
       }
       // Scroll down if near bottom
-      else if (containerRect.bottom - e.clientY < threshold) {
+      else if (distanceFromBottom < threshold && distanceFromBottom >= 0) {
+        // Calculate speed based on proximity (closer = faster)
+        const intensity = 1 - (distanceFromBottom / threshold);
+        const scrollSpeed = 5 + (intensity * 35); // 5-40px per frame
+        
         autoScrollInterval.current = setInterval(() => {
           if (scrollContainer.scrollTop < scrollContainer.scrollHeight - scrollContainer.clientHeight) {
             scrollContainer.scrollTop += scrollSpeed;
