@@ -49,22 +49,6 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
         score += 200;
       }
     }
-
-    let requestedItems: RequestedItem[] = [];
-    let unfulfilledRequests: UnfulfilledRequest[] = [];
-    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\n([\s\S]*?)\nREQUEST_DATA_END/);
-    if (requestDataMatch) {
-      try {
-        const json = requestDataMatch[1].trim();
-        const parsed = JSON.parse(json);
-        if (Array.isArray(parsed)) {
-          requestedItems = parsed;
-        }
-      } catch (error) {
-        console.error('Failed to parse REQUEST_DATA JSON:', error);
-      }
-      cleanMessage = cleanMessage.replace(requestDataMatch[0], '').trim();
-    }
     
     const typeKeywords = ['access', 'control', 'intercom', 'camera', 'nvr', 'recorder', 'alarm', 'sensor'];
     const typeInSearch = searchTerms.filter(term => typeKeywords.includes(term));
