@@ -1175,12 +1175,18 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                     <div className="relative w-full">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
                       <input
-                        type="number"
-                        min={0}
+                        type="text"
                         inputMode="decimal"
-                        step="0.01"
-                        value={Number.isFinite(row.listPrice) ? row.listPrice : 0}
-                        onChange={(event) => onListPriceChange(row.id, parseFloat(event.target.value))}
+                        value={Number.isFinite(row.listPrice) ? row.listPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        onChange={(event) => {
+                          const cleaned = event.target.value.replace(/[^0-9.]/g, '');
+                          const parsed = parseFloat(cleaned);
+                          if (!isNaN(parsed)) {
+                            onListPriceChange(row.id, parsed);
+                          } else if (cleaned === '') {
+                            onListPriceChange(row.id, 0);
+                          }
+                        }}
                         className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-left text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
                       />
                     </div>
@@ -1189,12 +1195,18 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                     <div className="relative w-full">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
                       <input
-                        type="number"
-                        min={0}
+                        type="text"
                         inputMode="decimal"
-                        step="0.01"
-                        value={Number.isFinite(row.salesPrice) ? row.salesPrice : 0}
-                        onChange={(event) => onSalesPriceChange(row.id, parseFloat(event.target.value))}
+                        value={Number.isFinite(row.salesPrice) ? row.salesPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        onChange={(event) => {
+                          const cleaned = event.target.value.replace(/[^0-9.]/g, '');
+                          const parsed = parseFloat(cleaned);
+                          if (!isNaN(parsed)) {
+                            onSalesPriceChange(row.id, parsed);
+                          } else if (cleaned === '') {
+                            onSalesPriceChange(row.id, 0);
+                          }
+                        }}
                         className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
                       />
                     </div>
