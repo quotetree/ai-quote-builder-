@@ -543,6 +543,15 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     );
   };
 
+  const handleSalesPriceChange = (itemId: string, rawValue: number) => {
+    const normalizedValue = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
+    setProfitPlanningItems((items) =>
+      items.map((item) =>
+        item.id === itemId ? { ...item, salesPrice: roundToCents(normalizedValue) } : item
+      )
+    );
+  };
+
   const profitSnapshot =
     selectedQuote && profitPlanningItems.length > 0 ? computeProfitBreakdown(profitPlanningItems) : null;
   const profitTotals = profitSnapshot?.totals ?? { revenue: 0, cost: 0, profit: 0, marginPct: 0 };
@@ -987,6 +996,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   rows={profitSnapshot.rows}
                   totals={profitSnapshot.totals}
                   onListPriceChange={handleListPriceChange}
+                  onSalesPriceChange={handleSalesPriceChange}
                   onClose={() => setShowProfitBreakdown(false)}
                 />
               )}
@@ -1066,10 +1076,11 @@ type ProfitBreakdownViewProps = {
   rows: ComputedProfitRow[];
   totals: ProfitTotals;
   onListPriceChange: (itemId: string, value: number) => void;
+  onSalesPriceChange: (itemId: string, value: number) => void;
   onClose: () => void;
 };
 
-function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: ProfitBreakdownViewProps) {
+function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChange, onClose }: ProfitBreakdownViewProps) {
   return (
     <div className="absolute inset-0 z-10 bg-white dark:bg-gray-900 rounded-b-lg p-6 border-t border-gray-200 dark:border-gray-800 shadow-2xl overflow-y-auto">
       <div className="flex items-start justify-between mb-6">
@@ -1174,8 +1185,19 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onClose }: Profi
                       />
                     </div>
                   </td>
-                  <td className="py-3 px-1 text-gray-700 dark:text-gray-300 text-right text-xs">
-                    ${formatCurrency(row.salesPrice)}
+                  <td className="py-3 px-1 align-middle text-right">
+                    <div className="relative w-full">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        inputMode="decimal"
+                        step="0.01"
+                        value={Number.isFinite(row.salesPrice) ? row.salesPrice : 0}
+                        onChange={(event) => onSalesPriceChange(row.id, parseFloat(event.target.value))}
+                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
+                      />
+                    </div>
                   </td>
                   <td className="py-3 px-1 text-gray-700 dark:text-gray-300 text-center text-xs">
                     {formatPercent(row.discountPct)}
