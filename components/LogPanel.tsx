@@ -444,6 +444,8 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [showRenameModal, setShowRenameModal] = useState<string | null>(null);
   const [newQuoteName, setNewQuoteName] = useState("");
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
+  const [newQuoteNameInput, setNewQuoteNameInput] = useState("");
 
   useEffect(() => {
     if (projectId) {
@@ -701,6 +703,27 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     }
   };
 
+  const handleStartNewQuote = () => {
+    if (!newQuoteNameInput.trim()) {
+      toast.error("Quote name cannot be empty");
+      return;
+    }
+
+    // Dispatch event to switch to chat tab and clear chat
+    window.dispatchEvent(new CustomEvent('newQuoteStarted', {
+      detail: {
+        quoteName: newQuoteNameInput.trim(),
+        projectId
+      }
+    }));
+
+    // Close modal and reset input
+    setShowNewQuoteModal(false);
+    setNewQuoteNameInput("");
+    
+    toast.success(`Ready to create "${newQuoteNameInput.trim()}"`);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -717,7 +740,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Quote Log</h2>
-        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2">
+        <button 
+          onClick={() => setShowNewQuoteModal(true)}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
+        >
           <Plus size={18} />
           <span>Add New Quote</span>
         </button>
@@ -1063,6 +1089,70 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Quote Modal */}
+      {showNewQuoteModal && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setShowNewQuoteModal(false);
+            setNewQuoteNameInput("");
+          }}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Create New Quote</h3>
+              <button
+                onClick={() => {
+                  setShowNewQuoteModal(false);
+                  setNewQuoteNameInput("");
+                }}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Quote Name
+              </label>
+              <input
+                type="text"
+                value={newQuoteNameInput}
+                onChange={(e) => setNewQuoteNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleStartNewQuote();
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                placeholder="Enter quote name (e.g., Q-0005)"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowNewQuoteModal(false);
+                  setNewQuoteNameInput("");
+                }}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleStartNewQuote}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start Quote
               </button>
             </div>
           </div>

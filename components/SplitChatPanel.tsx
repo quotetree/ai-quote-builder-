@@ -609,6 +609,67 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     };
   }, []);
 
+  // Listen for new quote started event
+  useEffect(() => {
+    const handleNewQuoteStarted = async (event: CustomEvent) => {
+      const { quoteName } = event.detail;
+      
+      console.log('[NewQuote] Starting new quote:', quoteName);
+      
+      try {
+        // Set clearing flag to prevent race conditions
+        isClearing.current = true;
+
+        // Clear chat messages from database
+        await supabase
+          .from("chat_messages")
+          .delete()
+          .eq("project_id", projectId);
+
+        // Clear working state from database
+        await supabase
+          .from("project_working_state")
+          .delete()
+          .eq("project_id", projectId);
+
+        // Wait a moment to ensure deletes are committed
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Reset all state
+        setMessages([]);
+        setSuggestedProducts([]);
+        setQuotePreview(null);
+        setShowSplitView(false);
+        setSelectAll(false);
+        setApplyingChanges(false);
+        setActiveTab("suggested");
+
+        // Reset edit mode if active
+        if (editMode) {
+          setEditMode(false);
+          setEditSessionId(null);
+          setEditQuoteId(null);
+          setEditVersion(null);
+          setEditQuoteName(null);
+        }
+
+        console.log("✅ Chat cleared for new quote:", quoteName);
+        isClearing.current = false;
+
+      } catch (error) {
+        console.error("Error clearing chat for new quote:", error);
+        toast.error("Failed to clear chat");
+        isClearing.current = false;
+      }
+    };
+
+    window.addEventListener('newQuoteStarted' as any, handleNewQuoteStarted);
+    
+    return () => {
+      window.removeEventListener('newQuoteStarted' as any, handleNewQuoteStarted);
+    };
+  }, [projectId, editMode]);
+
   // Check if we're in edit mode on mount
   useEffect(() => {
     async function checkEditMode() {

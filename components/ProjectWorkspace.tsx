@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MessageSquare, FolderOpen, FileText, Settings, Trash2, Edit2, Share2, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import SplitChatPanel from "./SplitChatPanel";
@@ -104,6 +104,19 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
       toast.error("Unable to copy link");
     }
   };
+
+  // Listen for new quote started event
+  useEffect(() => {
+    const handleNewQuoteStarted = () => {
+      setActiveTab("chat");
+    };
+
+    window.addEventListener('newQuoteStarted' as any, handleNewQuoteStarted);
+    
+    return () => {
+      window.removeEventListener('newQuoteStarted' as any, handleNewQuoteStarted);
+    };
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-white">
