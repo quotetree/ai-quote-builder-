@@ -6,16 +6,24 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Helper function to search products by keywords
-function searchProducts(products: any[], keywords: string): any[] {
+const STRICT_KEYWORDS = ['bullet', 'dome', 'turret', 'cat6', 'cat5', 'cable'];
+const STRICT_KEYWORD_SYNONYMS: Record<string, string[]> = {
+  bullet: ['bullet'],
+  dome: ['dome'],
+  turret: ['turret'],
+  cat6: ['cat6', 'cat 6'],
+  cat5: ['cat5', 'cat 5'],
+  cable: ['cable', 'cabling', 'wire'],
+};
+
+function searchProductsWithScores(products: any[], keywords: string): { product: any; score: number }[] {
   if (!keywords || keywords.trim() === '') {
-    return products.slice(0, 20); // Return first 20 if no keywords
+    return products.slice(0, 20).map(product => ({ product, score: 0 }));
   }
   
-  // Normalize search keywords: lowercase, remove extra spaces, normalize hyphens
   const normalizedKeywords = keywords.toLowerCase()
-    .replace(/[-_]/g, ' ')  // Replace hyphens/underscores with spaces
-    .replace(/\s+/g, ' ')    // Collapse multiple spaces
+    .replace(/[-_]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
   
   const searchTerms = normalizedKeywords.split(/[\s,]+/).filter(t => t.length > 1);
@@ -25,47 +33,53 @@ function searchProducts(products: any[], keywords: string): any[] {
   
   const scored = products.map(product => {
     let score = 0;
-    // Normalize product fields the same way as search terms
     const productName = (product.product_name || '').toLowerCase().replace(/[-_]/g, ' ');
     const productBrand = (product.product_brand || '').toLowerCase().replace(/[-_]/g, ' ');
     const productType = (product.product_type || '').toLowerCase().replace(/[-_]/g, ' ');
     const description = (product.description || '').toLowerCase().replace(/[-_]/g, ' ');
+    const combinedSearchText = `${productBrand} ${productName} ${productType} ${description}`.toLowerCase();
     
-    // Combine name + type for better matching (e.g., "Door License" + "Access Control" = matches "access control license")
-    const combinedSearchText = `${productBrand} ${productName} ${productType}`.toLowerCase();
-    
-    // CRITICAL: If user specifies a brand (Verkada, Rhombus, etc.), product MUST be that brand
     const commonBrands = ['verkada', 'rhombus', 'hikvision', 'axis', 'hanwha', 'genetec', 'milestone'];
     const brandInSearch = searchTerms.find(term => commonBrands.includes(term));
     
     if (brandInSearch) {
-      // User specified a brand - if this product doesn't match, give it terrible score
       if (!productBrand.includes(brandInSearch)) {
-        score -= 1000; // MASSIVE penalty - essentially eliminates wrong brand
+        score -= 1000;
       } else {
-        score += 200; // HUGE bonus for matching the requested brand
+        score += 200;
       }
     }
+
+    let requestedItems: RequestedItem[] = [];
+    let unfulfilledRequests: UnfulfilledRequest[] = [];
+    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\n([\s\S]*?)\nREQUEST_DATA_END/);
+    if (requestDataMatch) {
+      try {
+        const json = requestDataMatch[1].trim();
+        const parsed = JSON.parse(json);
+        if (Array.isArray(parsed)) {
+          requestedItems = parsed;
+        }
+      } catch (error) {
+        console.error('Failed to parse REQUEST_DATA JSON:', error);
+      }
+      cleanMessage = cleanMessage.replace(requestDataMatch[0], '').trim();
+    }
     
-    // CRITICAL: Check if search includes product TYPE keywords (access, control, intercom, camera, etc.)
     const typeKeywords = ['access', 'control', 'intercom', 'camera', 'nvr', 'recorder', 'alarm', 'sensor'];
     const typeInSearch = searchTerms.filter(term => typeKeywords.includes(term));
     
     if (typeInSearch.length > 0) {
-      // User is searching by product type - check if this product's type matches
       const matchingTypeTerms = typeInSearch.filter(term => productType.includes(term));
       if (matchingTypeTerms.length === typeInSearch.length) {
-        // Product type contains ALL the type keywords user mentioned
-        score += 300; // MASSIVE bonus for matching product type
+        score += 300;
       } else if (matchingTypeTerms.length > 0) {
-        score += 100; // Partial match
+        score += 100;
       } else {
-        // Product type doesn't match what user asked for
-        score -= 200; // Large penalty for wrong type
+        score -= 200;
       }
     }
     
-    // Count how many search terms are found in combined text (name + type)
     let termsFoundInCombined = 0;
     let termsFoundInName = 0;
     searchTerms.forEach(term => {
@@ -77,106 +91,90 @@ function searchProducts(products: any[], keywords: string): any[] {
       }
     });
     
-    // Also check for compound matches (e.g., "5 year" together)
     const compoundTerms: string[] = [];
     for (let i = 0; i < searchTerms.length - 1; i++) {
-      const compound = searchTerms[i] + ' ' + searchTerms[i + 1];
-      compoundTerms.push(compound);
+      compoundTerms.push(`${searchTerms[i]} ${searchTerms[i + 1]}`);
     }
     
-    // Bonus for compound term matches in combined text
     compoundTerms.forEach(compound => {
       if (combinedSearchText.includes(compound)) {
-        score += 30; // Bonus for phrases that appear together
+        score += 30;
       }
     });
     
-    // CRITICAL: If ALL search terms are in combined text (name + type), huge bonus
     if (termsFoundInCombined === searchTerms.length) {
-      score += 200; // MASSIVE boost for having all terms somewhere
+      score += 200;
     }
     
-    // Bonus if all terms in product name specifically
     if (termsFoundInName === searchTerms.length) {
-      score += 100; // Extra bonus if all in name
+      score += 100;
     }
     
-    // Also boost if we have most of the terms (for flexibility)
     if (searchTerms.length >= 3 && termsFoundInCombined >= searchTerms.length - 1) {
-      score += 75; // Good boost for having almost all terms
+      score += 75;
     }
     
-    // Now score individual term matches
     searchTerms.forEach(term => {
-      // Product name matches (very high priority)
       if (productName.includes(term)) {
         score += 20;
-        
-        // Extra boost if term is a significant word (not common words)
         if (term.length > 4 && !['year', 'years', 'license'].includes(term)) {
-          score += 15; // Boost for important terms like "intercom", "camera", "access", "control"
+          score += 15;
         }
       }
       
-      // Match in brand (super high priority)
       if (productBrand.includes(term)) {
-        score += 15; // Increased from 7 - brand matching is critical!
+        score += 15;
       }
       
-      // Match in type (VERY important for context - door license = access control type)
       if (productType.includes(term)) {
-        score += 25; // Type matching is CRITICAL - "Door License" with "Access Control" type should match "access control" search
+        score += 25;
       }
       
-      // Match in combined text (catches cross-field matches)
       if (combinedSearchText.includes(term)) {
-        score += 5; // General bonus for being somewhere in the product
+        score += 5;
       }
       
-      // Match in tags
       if ((product.product_tags || []).some((tag: string) => tag.toLowerCase().includes(term))) {
         score += 4;
       }
       
-      // Match in description (lowest priority)
       if (description.includes(term)) {
         score += 2;
       }
     });
     
-    // Penalty: If a critical search term is missing from COMBINED text (name + type), reduce score
     const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
     const brandTerms = searchTerms.filter(t => commonBrands.includes(t));
     
+    const strictTerms = searchTerms.filter(t => STRICT_KEYWORDS.includes(t));
+    strictTerms.forEach(term => {
+      const synonyms = STRICT_KEYWORD_SYNONYMS[term] || [term];
+      const matchesStrict = synonyms.some(syn => combinedSearchText.includes(syn));
+      if (!matchesStrict) {
+        score -= 250;
+      }
+    });
+    
     criticalTerms.forEach(term => {
-      // Skip brand terms (already handled above with massive penalty)
       if (!brandTerms.includes(term) && !combinedSearchText.includes(term)) {
-        score -= 30; // Penalty for missing important terms like "intercom", "camera", "access", "control"
+        score -= 30;
       }
     });
     
     return { product, score };
   });
   
-  // Sort all results by score (include negative scores if nothing better found)
   const sorted = scored.sort((a, b) => b.score - a.score);
-  
-  // Filter: prefer positive scores, but if we have less than 5 results, include some negative ones
   const positive = sorted.filter(item => item.score > 0);
   const filtered = positive.length >= 5 ? positive : sorted.slice(0, 20);
   
-  const commonBrands = ['verkada', 'rhombus', 'hikvision', 'axis', 'hanwha', 'genetec', 'milestone'];
-  
-  // If we have critical terms (like "intercom", "camera", etc), ensure top results contain them
-  const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t) && !commonBrands.includes(t));
+  const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
   if (criticalTerms.length > 0) {
-    // Prioritize results that contain ALL critical terms in combined text (name + type)
     const withCriticalTerms = filtered.filter(item => {
       const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
       return criticalTerms.every(term => combined.includes(term));
     });
     
-    // If we found products with critical terms, prioritize them
     if (withCriticalTerms.length > 0) {
       const others = filtered.filter(item => {
         const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
@@ -187,24 +185,146 @@ function searchProducts(products: any[], keywords: string): any[] {
         ...withCriticalTerms.sort((a, b) => b.score - a.score),
         ...others.sort((a, b) => b.score - a.score)
       ]
-        .slice(0, 20)
-        .map(item => item.product);
+        .slice(0, 20);
     }
   }
   
-  // Default: sort by score
   const results = filtered
     .sort((a, b) => b.score - a.score)
-    .slice(0, 20)
-    .map(item => item.product);
+    .slice(0, 20);
   
-  console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(p => ({
-    name: p.product_name,
-    type: p.product_type,
-    brand: p.product_brand
+  console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(item => ({
+    name: item.product.product_name,
+    type: item.product.product_type,
+    brand: item.product.product_brand,
+    score: item.score
   })));
   
   return results;
+}
+
+function searchProducts(products: any[], keywords: string): any[] {
+  return searchProductsWithScores(products, keywords).map(item => item.product);
+}
+
+interface RequestedItem {
+  item: string;
+  quantity?: number;
+  unit?: string | null;
+  budget?: number | null;
+  rawText?: string;
+  keywords?: string;
+}
+
+interface UnfulfilledRequest {
+  requestedText: string;
+  reason: string;
+}
+
+const MATCH_CONFIDENCE_THRESHOLD = 120;
+
+function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any[]) {
+  const suggestionsMap = new Map<string, any>();
+  const unfulfilled: UnfulfilledRequest[] = [];
+
+  if (!requestedItems || requestedItems.length === 0) {
+    return { suggestions: [], unfulfilled };
+  }
+
+  requestedItems.forEach((request) => {
+    const keywords = (request.keywords || request.item || request.rawText || '').trim();
+    if (!keywords) {
+      unfulfilled.push({
+        requestedText: request.item || request.rawText || 'Unknown item',
+        reason: 'No recognizable keywords were provided for matching',
+      });
+      return;
+    }
+
+    const results = searchProductsWithScores(products, keywords);
+    const top = results[0];
+
+    if (top && top.score >= MATCH_CONFIDENCE_THRESHOLD) {
+      const product = top.product;
+      const key = product.id || product.product_name?.toLowerCase().trim();
+      const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+      const quantityValue = Number(requestedQuantity);
+      const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+      const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+      const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+      const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+      const computedLineTotal = hasBudget
+        ? Number(parsedBudget)
+        : unitPrice * quantity;
+      const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+      if (suggestionsMap.has(key)) {
+        const existing = suggestionsMap.get(key);
+        existing.quantity += quantity;
+        existing.line_total += computedLineTotal;
+        existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
+        existing.matched_requests.push(request.item || keywords);
+      } else {
+        suggestionsMap.set(key, {
+          product_id: product.id,
+          product_name: product.product_name,
+          description: product.description,
+          quantity,
+          unit_price: Number(derivedUnitPrice.toFixed(2)),
+          line_total: Number(computedLineTotal.toFixed(2)),
+          quantity_unit: request.unit || product.unit || null,
+          price_unit: product.unit || null,
+          product_brand: product.product_brand,
+          product_type: product.product_type,
+          match_confidence: top.score,
+          matched_requests: [request.item || keywords],
+        });
+      }
+    } else {
+      unfulfilled.push({
+        requestedText: request.item || request.rawText || keywords,
+        reason: top
+          ? `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD})`
+          : 'No matching product found in price book',
+      });
+    }
+  });
+
+  const suggestions = Array.from(suggestionsMap.values());
+  return { suggestions, unfulfilled };
+}
+
+function buildWorkSummaryText(suggestions: any[], unfulfilled: UnfulfilledRequest[]) {
+  const lines: string[] = [];
+  lines.push('**Work Summary:**');
+
+  if (suggestions.length === 0) {
+    lines.push('• No products were added yet.');
+  } else {
+    suggestions.forEach((item) => {
+      const qtyUnit = item.quantity_unit ? ` ${item.quantity_unit}` : '';
+      const amount =
+        typeof item.line_total === 'number' && item.line_total > 0
+          ? ` — $${item.line_total.toFixed(2)}`
+          : '';
+      lines.push(`✓ Added ${item.product_name} (Qty: ${item.quantity}${qtyUnit})${amount}`);
+    });
+  }
+
+  if (unfulfilled.length > 0) {
+    lines.push('');
+    lines.push("**Couldn't Add (Not Found in Price Book):**");
+    unfulfilled.forEach((item) => {
+      lines.push(`❌ ${item.requestedText} — ${item.reason}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+function stripExistingWorkSummary(message: string): string {
+  const workSummaryRegex = /work summary:[\s\S]*?(?=(next steps|$))/i;
+  return message.replace(workSummaryRegex, '').trim();
 }
 
 // Helper function to analyze conversation context
@@ -377,6 +497,17 @@ ${editModeContext}
 PRODUCT_DATA_START
 1. Product Name - Qty: X, Price: $XXX each = $XXX
 PRODUCT_DATA_END
+
+**RULE #4:** AFTER the PRODUCT_DATA block you MUST output `REQUEST_DATA_START` / `REQUEST_DATA_END` containing a VALID JSON array that summarizes EXACTLY what the user asked for in THIS message. Each object must include: 
+`"item"` (string), `"quantity"` (number), `"unit"` (string or null), `"budget"` (number or null), `"rawText"` (the exact words the user used), and optional `"keywords"`.
+
+Example:
+REQUEST_DATA_START
+[
+  { "item": "Verkada bullet cameras", "quantity": 4, "unit": "cameras", "budget": null, "rawText": "4 Verkada bullet cameras", "keywords": "Verkada bullet camera" },
+  { "item": "Miscellaneous material", "quantity": 1, "unit": null, "budget": 150, "rawText": "$150 in misc material", "keywords": "miscellaneous material" }
+]
+REQUEST_DATA_END
 
 ## ❌ WRONG EXAMPLES (DO NOT DO THIS):
 
@@ -861,7 +992,7 @@ ${formattedResults}
     const aiResponse = responseMessage.content;
 
     // Parse and extract product data section
-    const productSuggestions: any[] = [];
+    let productSuggestions: any[] = [];
     let cleanMessage = aiResponse || '';
     
     // Check if AI mentioned products but didn't include PRODUCT_DATA (debugging)
@@ -959,6 +1090,31 @@ ${formattedResults}
       console.log('✅ ====================================================\n');
     }
 
+    if (requestedItems.length === 0 && productSuggestions.length > 0) {
+      requestedItems = productSuggestions.map((p: any) => ({
+        item: p.product_name,
+        quantity: p.quantity,
+        unit: p.quantity_unit || null,
+        budget: p.line_total || null,
+        rawText: p.product_name,
+        keywords: p.product_name,
+      }));
+      console.warn('⚠️ REQUEST_DATA block missing. Falling back to PRODUCT_DATA for request mapping.');
+    }
+
+    const matchResult = matchRequestsToPriceBook(requestedItems, products);
+    const validatedSuggestions = matchResult.suggestions;
+    unfulfilledRequests = matchResult.unfulfilled;
+    productSuggestions = validatedSuggestions;
+
+    const workSummaryText = buildWorkSummaryText(validatedSuggestions, unfulfilledRequests);
+    const cleanedWithoutWorkSummary = stripExistingWorkSummary(cleanMessage);
+    const finalMessageParts = [workSummaryText.trim()];
+    if (cleanedWithoutWorkSummary) {
+      finalMessageParts.push(cleanedWithoutWorkSummary.trim());
+    }
+    cleanMessage = finalMessageParts.join('\n\n').trim();
+
     // CRITICAL: Check abort before saving to database
     if (aborted || signal.aborted) {
       console.log('🛑 Aborted before database write - NOT saving products or state');
@@ -1008,7 +1164,8 @@ ${formattedResults}
           suggested_products: dedupedProducts,
           quote_preview: currentState?.quote_preview || null,
           show_split_view: true,
-          current_pool_id: poolId // Store current poolId for tracking
+          current_pool_id: poolId, // Store current poolId for tracking
+          unfulfilled_requests: unfulfilledRequests
         };
 
         const { error: stateError } = await supabase
@@ -1034,6 +1191,7 @@ ${formattedResults}
       message: cleanMessage,
       products: productSuggestions,
       hasProducts: productSuggestions.length > 0,
+      unfulfilledRequests,
       runId: runId, // Return runId for validation
       poolId: poolId // Return poolId for pool isolation
     });

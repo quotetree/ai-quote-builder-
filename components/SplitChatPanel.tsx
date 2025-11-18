@@ -2589,7 +2589,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               suggested_products: finalProducts,
               quote_preview: quotePreview,
               show_split_view: true,
-              current_pool_id: poolId
+            current_pool_id: poolId,
+            unfulfilled_requests: responseData.unfulfilledRequests || []
             }, { onConflict: 'project_id' });
         }
       } else {
