@@ -27,7 +27,7 @@ export function AttachmentChips({
   if (attachments.length === 0) return null;
 
   return (
-    <div className="px-4 pt-4 flex flex-wrap gap-3">
+    <div className="px-4 pt-4 pb-3 flex flex-wrap gap-3">
       {attachments.map((attachment) => {
         const statusConfig = statusStyles[attachment.status];
 

@@ -2,16 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Search,
-  Sparkles,
-  Lightbulb,
-  Globe,
-  Cpu,
-  Paperclip,
-  Mic,
-  ArrowUpRight,
-} from "lucide-react";
+import { Plus } from "lucide-react";
 import { useProjects } from "@/hooks/useProjects";
 import { trackProjectCreated } from "@/lib/analytics";
 import toast from "react-hot-toast";
@@ -202,16 +193,19 @@ export default function DashboardPage() {
         {/* Project Name Input */}
         <div className="mb-8">
           <div
-            className={`bg-gray-100 rounded-2xl border ${
+            className={`bg-gray-100 rounded-xl border ${
               projectInputFocused ? "border-gray-300" : "border-transparent"
             } transition-all`}
           >
+            {/* Attachment Chips */}
             <AttachmentChips
               attachments={attachments}
               onRemove={removeAttachment}
               formatFileSize={formatFileSize}
             />
-            <div className="px-4 py-3">
+            
+            {/* Input Row */}
+            <div className="relative">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -220,6 +214,14 @@ export default function DashboardPage() {
                 onChange={handleFileInputChange}
                 aria-label="Attach files"
               />
+              <button
+                type="button"
+                onClick={openFilePicker}
+                className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                title="Attach files"
+              >
+                <Plus size={20} />
+              </button>
               <input
                 type="text"
                 value={projectName}
@@ -236,54 +238,8 @@ export default function DashboardPage() {
                 }}
                 placeholder={projectInputFocused ? "" : "Project Name"}
                 disabled={creating}
-                className="w-full bg-transparent border-none text-lg placeholder-gray-400 focus:outline-none disabled:opacity-50 py-1"
+                className="w-full pl-12 pr-4 py-4 bg-transparent rounded-xl text-lg placeholder-gray-400 focus:outline-none focus:ring-0 disabled:opacity-50"
               />
-            </div>
-            <div className="px-4 pb-3">
-              <div className="flex items-center justify-between border-t border-gray-200 pt-3">
-                <div className="flex items-center gap-3 text-gray-500">
-                  {[{ icon: Search, label: "Search" },
-                    { icon: Sparkles, label: "AI assist" },
-                    { icon: Lightbulb, label: "Ideas" },
-                    { icon: Globe, label: "Global" },
-                    { icon: Cpu, label: "Chips" }].map(({ icon: Icon, label }) => (
-                    <button
-                      key={label}
-                      className="p-2 rounded-full hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 transition"
-                      title={label}
-                      type="button"
-                    >
-                      <Icon size={16} />
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <button
-                    type="button"
-                    onClick={openFilePicker}
-                    className="p-2 rounded-full hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 transition"
-                    title="Attach files"
-                  >
-                    <Paperclip size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    className="p-2 rounded-full hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 transition"
-                    title="Voice input"
-                  >
-                    <Mic size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCreateProject}
-                    className="w-9 h-9 rounded-full bg-teal-600 text-white flex items-center justify-center hover:bg-teal-700 transition"
-                    title="Create project"
-                    disabled={!projectName.trim() || creating}
-                  >
-                    <ArrowUpRight size={16} />
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>
