@@ -551,8 +551,8 @@ Your PRODUCT_DATA section: ONLY that 1 license (not 5 products from history)
 
 ## Price Book Overview:
 - Total Products: ${totalProducts}
-${productTypes.size > 0 ? `- Available Product Types: ${Array.from(productTypes).join(', ')}` : ''}
-${productBrands.size > 0 ? `- Available Brands: ${Array.from(productBrands).join(', ')}` : ''}
+${productTypes.size > 0 ? '- Available Product Types: ' + Array.from(productTypes).join(', ') : ''}
+${productBrands.size > 0 ? '- Available Brands: ' + Array.from(productBrands).join(', ') : ''}
 
 ## CRITICAL: How to Find Products
 **ALWAYS use the search_price_book function to find products.** 
