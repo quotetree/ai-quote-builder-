@@ -14,7 +14,7 @@ export interface AttachmentItem {
 
 export interface UseAttachmentManagerResult {
   attachments: AttachmentItem[];
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
   openFilePicker: () => void;
   handleFileInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   removeAttachment: (id: string) => void;
@@ -38,7 +38,7 @@ const createAttachmentItem = (file: File): AttachmentItem => {
 
 export function useAttachmentManager(): UseAttachmentManagerResult {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Clean up object URLs
   useEffect(() => {
