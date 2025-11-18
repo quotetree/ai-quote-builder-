@@ -178,21 +178,32 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       if (data) {
         console.log('Loaded working state from database');
         
-        // CRITICAL: Context Guard - DO NOT load old suggested products
-        // Suggested products are ephemeral and only valid for the turn they were created
-        // Loading old suggestions causes state bleed
-        // Only the quote preview should persist across sessions
+        // Load suggested products if they're recent (from background generation)
+        // Check if products are from the last 30 minutes
         const storedPoolId = data.current_pool_id;
         const suggestedProducts = data.suggested_products || [];
+        const updatedAt = data.updated_at ? new Date(data.updated_at) : null;
+        const now = new Date();
+        const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+        
+        const isRecent = updatedAt && updatedAt > thirtyMinutesAgo;
         
         if (suggestedProducts.length > 0 && storedPoolId) {
-          console.warn(`🚫 Context Guard: Blocking ${suggestedProducts.length} stale products from poolId "${storedPoolId}". Suggestions are ephemeral and don't persist across sessions.`);
-          console.log(`🧹 suggest:cleared { projectId: "${projectId}", reason: "stale from previous session", stalePoolId: "${storedPoolId}" }`);
+          if (isRecent) {
+            console.log(`✅ [Background] Loading ${suggestedProducts.length} products from poolId "${storedPoolId}" (updated ${updatedAt?.toISOString()})`);
+            setSuggestedProducts(suggestedProducts);
+            setShowSplitView(true);
+            // Auto-switch to suggested products tab
+            setActiveTab("suggested");
+          } else {
+            console.warn(`🚫 Context Guard: Blocking ${suggestedProducts.length} stale products from poolId "${storedPoolId}". Products are older than 30 minutes.`);
+            console.log(`🧹 suggest:cleared { projectId: "${projectId}", reason: "stale from previous session", stalePoolId: "${storedPoolId}" }`);
+            setSuggestedProducts([]); // Clear stale suggestions
+          }
+        } else {
+          setSuggestedProducts([]); // No products to load
         }
         
-        // DO NOT set suggested products - they should start fresh each session
-        // Only quote preview persists
-        setSuggestedProducts([]); // Always start with empty suggestions
         setQuotePreview(normalizeQuotePreview(data.quote_preview as QuotePreview | null));
         setShowSplitView(data.show_split_view || false);
         
@@ -514,14 +525,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     return () => {
       isActive = false;
-      // Invalidate runId and poolId when switching projects (prevent pool bleed)
-      currentRunIdRef.current = null;
-      currentPoolIdRef.current = null;
-      // Abort any ongoing AI requests when switching projects
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
+      // DON'T abort ongoing AI requests when switching projects
+      // Let them complete in the background so results are ready when user returns
+      // The validation checks (projectId, runId, poolId) will prevent stale data from being applied
+      console.log('[Background] Allowing AI generation to continue for project:', projectId);
       // Reset loading state when switching away from this project
       setLoading(false);
     };
@@ -2383,7 +2390,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         throw new Error(responseData.error || "Failed to get AI response");
       }
 
-      // CRITICAL: Validate response matches current run, pool, and project (pool bleed protection)
+      // CRITICAL: Validate response matches current run and pool (pool bleed protection)
       if (responseData.runId !== currentRunIdRef.current) {
         console.warn(`⚠️ 🏊 pool:blockedHistoryMerge { reason: "runId mismatch", expected: "${currentRunIdRef.current}", got: "${responseData.runId}" }`);
         return; // Silently ignore - this is from an old/stopped run
@@ -2394,12 +2401,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         return; // Silently ignore - this is from a different pool
       }
       
-      if (currentProjectId.current !== projectId) {
-        console.warn(`⚠️ 🏊 pool:blockedHistoryMerge { reason: "projectId mismatch", expected: "${projectId}", got: "${currentProjectId.current}" }`);
-        return; // Silently ignore - user switched projects
+      // Check if user switched projects - if so, save to DB but don't update UI
+      const userSwitchedProjects = currentProjectId.current !== projectId;
+      if (userSwitchedProjects) {
+        console.log(`🔄 [Background] User switched projects. Saving results to DB for project: ${projectId}`);
+      } else {
+        console.log(`✅ Response validated for run: ${runId}, pool: ${poolId}`);
       }
-      
-      console.log(`✅ Response validated for run: ${runId}, pool: ${poolId}`);
 
       const aiResponse = responseData.message;
       const products = responseData.products || [];
@@ -2450,23 +2458,41 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           return true;
         });
         
-        // ATOMIC REPLACEMENT: Clear ALL previous products and set ONLY current context products
-        // This is STATELESS - no carry-over from previous turns
-        const oldCount = suggestedProducts.length;
-        setSuggestedProducts(finalProducts);
-        setSelectAll(false);
-        
-        console.log(`🎯 suggest:render { contextId: "${contextId}", count: ${finalProducts.length}, dropped: ${droppedDuplicates.length} }`);
-        console.log(`🏊 pool:replaced { poolId: "${poolId}", oldCount: ${oldCount}, newCount: ${finalProducts.length} }`);
-        
-        // Show the split view when products arrive
-        setShowSplitView(true);
-        // Auto-switch to suggested products tab when new products arrive
-        setActiveTab("suggested");
+        // Only update UI state if user is still on this project
+        if (!userSwitchedProjects) {
+          // ATOMIC REPLACEMENT: Clear ALL previous products and set ONLY current context products
+          // This is STATELESS - no carry-over from previous turns
+          const oldCount = suggestedProducts.length;
+          setSuggestedProducts(finalProducts);
+          setSelectAll(false);
+          
+          console.log(`🎯 suggest:render { contextId: "${contextId}", count: ${finalProducts.length}, dropped: ${droppedDuplicates.length} }`);
+          console.log(`🏊 pool:replaced { poolId: "${poolId}", oldCount: ${oldCount}, newCount: ${finalProducts.length} }`);
+          
+          // Show the split view when products arrive
+          setShowSplitView(true);
+          // Auto-switch to suggested products tab when new products arrive
+          setActiveTab("suggested");
+        } else {
+          // User switched projects - save to DB for when they return
+          console.log(`🔄 [Background] Saving ${finalProducts.length} products to DB for later retrieval`);
+          // Save working state with products for this project
+          await supabase
+            .from("project_working_state")
+            .upsert({
+              project_id: projectId,
+              suggested_products: finalProducts,
+              quote_preview: quotePreview,
+              show_split_view: true,
+              current_pool_id: poolId
+            }, { onConflict: 'project_id' });
+        }
       } else {
-        // No products in this turn - clear suggestions
-        console.log(`🎯 suggest:render { contextId: "${contextId}", count: 0, reason: "no products in response" }`);
-        setSuggestedProducts([]);
+        // No products in this turn
+        if (!userSwitchedProjects) {
+          console.log(`🎯 suggest:render { contextId: "${contextId}", count: 0, reason: "no products in response" }`);
+          setSuggestedProducts([]);
+        }
       }
 
       // Save AI response
@@ -2484,8 +2510,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         .single();
 
       if (aiError) throw aiError;
-      if (aiMsg) {
+      if (aiMsg && !userSwitchedProjects) {
+        // Only update messages state if user is still on this project
         setMessages((prev) => [...prev, aiMsg]);
+      }
+      
+      if (userSwitchedProjects) {
+        console.log(`🔄 [Background] AI response saved to DB. Will be loaded when user returns to project.`);
       }
     } catch (error: any) {
       // Don't show error toast if the request was aborted (user clicked stop)
