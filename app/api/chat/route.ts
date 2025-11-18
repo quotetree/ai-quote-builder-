@@ -978,6 +978,8 @@ ${formattedResults}
     // Parse and extract product data section
     let productSuggestions: any[] = [];
     let cleanMessage = aiResponse || '';
+    let requestedItems: RequestedItem[] = [];
+    let unfulfilledRequests: UnfulfilledRequest[] = [];
     
     // Check if AI mentioned products but didn't include PRODUCT_DATA (debugging)
     const mentionsProducts = cleanMessage.toLowerCase().includes('added') || 
@@ -1025,6 +1027,23 @@ ${formattedResults}
       
       // Remove the PRODUCT_DATA section from the message shown to user
       cleanMessage = cleanMessage.replace(/\n*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\n*/g, '').trim();
+    }
+    
+    // Extract REQUEST_DATA block (user's original requests for validation)
+    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\n([\s\S]*?)\nREQUEST_DATA_END/);
+    if (requestDataMatch) {
+      try {
+        const json = requestDataMatch[1].trim();
+        const parsed = JSON.parse(json);
+        if (Array.isArray(parsed)) {
+          requestedItems = parsed;
+          console.log('📋 Parsed REQUEST_DATA:', requestedItems);
+        }
+      } catch (error) {
+        console.error('❌ Failed to parse REQUEST_DATA JSON:', error);
+      }
+      // Remove the REQUEST_DATA block from the message
+      cleanMessage = cleanMessage.replace(/\n*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\n*/g, '').trim();
     }
 
     // Validate: Check if AI's description matches the actual products suggested
