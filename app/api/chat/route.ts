@@ -499,7 +499,7 @@ PRODUCT_DATA_START
 PRODUCT_DATA_END
 
 **RULE #4:** AFTER the PRODUCT_DATA block you MUST output \`REQUEST_DATA_START\` / \`REQUEST_DATA_END\` containing a VALID JSON array that summarizes EXACTLY what the user asked for in THIS message. Each object must include: 
-`"item"` (string), `"quantity"` (number), `"unit"` (string or null), `"budget"` (number or null), `"rawText"` (the exact words the user used), and optional `"keywords"`.
+\`"item"\` (string), \`"quantity"\` (number), \`"unit"\` (string or null), \`"budget"\` (number or null), \`"rawText"\` (the exact words the user used), and optional \`"keywords"\`.
 
 Example:
 REQUEST_DATA_START
