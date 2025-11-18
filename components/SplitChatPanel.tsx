@@ -70,6 +70,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   });
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const autoScrollInterval = useRef<NodeJS.Timeout | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState("");
   const [editMode, setEditMode] = useState(false);
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
@@ -1666,25 +1669,95 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault();
+    
+    // Determine if we should drop before or after based on mouse position
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const position = e.clientY < midpoint ? 'before' : 'after';
+    
     setDragOverIndex(index);
+    setDropPosition(position);
+    
+    // Implement auto-scroll when dragging near edges
+    if (previewScrollRef.current) {
+      const scrollContainer = previewScrollRef.current;
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const threshold = 100; // px from edge to trigger scroll
+      const scrollSpeed = 10; // px per interval
+      
+      // Clear any existing interval
+      if (autoScrollInterval.current) {
+        clearInterval(autoScrollInterval.current);
+        autoScrollInterval.current = null;
+      }
+      
+      // Scroll up if near top
+      if (e.clientY - containerRect.top < threshold) {
+        autoScrollInterval.current = setInterval(() => {
+          if (scrollContainer.scrollTop > 0) {
+            scrollContainer.scrollTop -= scrollSpeed;
+          }
+        }, 16); // ~60fps
+      }
+      // Scroll down if near bottom
+      else if (containerRect.bottom - e.clientY < threshold) {
+        autoScrollInterval.current = setInterval(() => {
+          if (scrollContainer.scrollTop < scrollContainer.scrollHeight - scrollContainer.clientHeight) {
+            scrollContainer.scrollTop += scrollSpeed;
+          }
+        }, 16); // ~60fps
+      }
+    }
   }
 
   function handleDragLeave() {
-    setDragOverIndex(null);
+    // Clear auto-scroll interval
+    if (autoScrollInterval.current) {
+      clearInterval(autoScrollInterval.current);
+      autoScrollInterval.current = null;
+    }
   }
 
   function handleDrop(e: React.DragEvent, dropIndex: number) {
     e.preventDefault();
     
-    if (!quotePreview || draggedIndex === null || draggedIndex === dropIndex) {
+    // Clear auto-scroll interval
+    if (autoScrollInterval.current) {
+      clearInterval(autoScrollInterval.current);
+      autoScrollInterval.current = null;
+    }
+    
+    if (!quotePreview || draggedIndex === null) {
       setDraggedIndex(null);
       setDragOverIndex(null);
+      setDropPosition(null);
+      return;
+    }
+    
+    // Calculate final drop position based on dropPosition state
+    let finalDropIndex = dropIndex;
+    
+    // If dropping 'after', increment the index
+    if (dropPosition === 'after') {
+      finalDropIndex = dropIndex + 1;
+    }
+    
+    // Adjust if dragging from above
+    if (draggedIndex < finalDropIndex) {
+      finalDropIndex--;
+    }
+    
+    // Don't do anything if dropping in same position
+    if (draggedIndex === finalDropIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      setDropPosition(null);
       return;
     }
     
     const updatedItems = [...quotePreview.line_items];
     const [draggedItem] = updatedItems.splice(draggedIndex, 1);
-    updatedItems.splice(dropIndex, 0, draggedItem);
+    updatedItems.splice(finalDropIndex, 0, draggedItem);
     
     setQuotePreview({
       ...quotePreview,
@@ -1693,11 +1766,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setDropPosition(null);
   }
 
   function handleDragEnd() {
+    // Clear auto-scroll interval
+    if (autoScrollInterval.current) {
+      clearInterval(autoScrollInterval.current);
+      autoScrollInterval.current = null;
+    }
+    
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setDropPosition(null);
   }
 
   async function clearChat() {
@@ -2761,7 +2842,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           </div>
 
           {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto p-6">
+          <div ref={previewScrollRef} className="flex-1 overflow-y-auto p-6">
             {activeTab === "suggested" ? (
               <div>
                 {suggestedProducts.length === 0 ? (
@@ -2847,22 +2928,28 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           </div>
                         ) : (
                           quotePreview.line_items.map((item, index) => (
-                          <div
-                            key={index}
-                            draggable
-                            onDragStart={() => handleDragStart(index)}
-                            onDragOver={(e) => handleDragOver(e, index)}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDrop(e, index)}
-                            onDragEnd={handleDragEnd}
-                            className={`group bg-gray-50 rounded-lg p-4 border-2 transition-all cursor-move ${
-                              draggedIndex === index
-                                ? 'opacity-50 border-blue-400'
-                                : dragOverIndex === index
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-200 hover:border-gray-300'
-                            }`}
-                          >
+                          <div key={index} className="relative">
+                            {/* Drop indicator - show before this item */}
+                            {dragOverIndex === index && dropPosition === 'before' && draggedIndex !== index && (
+                              <div className="absolute -top-2 left-0 right-0 h-1 bg-blue-500 rounded-full shadow-lg z-10">
+                                <div className="absolute -top-1 -left-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+                              </div>
+                            )}
+                            
+                            <div
+                              draggable
+                              onDragStart={() => handleDragStart(index)}
+                              onDragOver={(e) => handleDragOver(e, index)}
+                              onDragLeave={handleDragLeave}
+                              onDrop={(e) => handleDrop(e, index)}
+                              onDragEnd={handleDragEnd}
+                              className={`group bg-gray-50 rounded-lg p-4 border-2 transition-all cursor-move ${
+                                draggedIndex === index
+                                  ? 'opacity-50 border-blue-400'
+                                  : 'border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
                             <div className="flex gap-3">
                               {/* Drag handle */}
                               <div className="flex items-center cursor-grab active:cursor-grabbing">
@@ -3007,6 +3094,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                 </button>
                               </div>
                             </div>
+                            </div>
+                            
+                            {/* Drop indicator - show after this item */}
+                            {dragOverIndex === index && dropPosition === 'after' && draggedIndex !== index && (
+                              <div className="absolute -bottom-2 left-0 right-0 h-1 bg-blue-500 rounded-full shadow-lg z-10">
+                                <div className="absolute -top-1 -left-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+                              </div>
+                            )}
                           </div>
                         )))}
                       </div>
