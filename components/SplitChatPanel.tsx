@@ -22,6 +22,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("suggested");
   const [suggestedProducts, setSuggestedProducts] = useState<ProductSuggestion[]>([]);
+  const [lowConfidenceMatches, setLowConfidenceMatches] = useState<ProductSuggestion[]>([]);
   const [quotePreview, setQuotePreview] = useState<QuotePreview | null>(null);
   const [showSplitView, setShowSplitView] = useState(false);
   const [applyingChanges, setApplyingChanges] = useState(false);
@@ -185,6 +186,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         // Check if products are from the last 30 minutes
         const storedPoolId = data.current_pool_id;
         const suggestedProducts = data.suggested_products || [];
+        const storedLowConfidenceMatches = data.low_confidence_matches || [];
         const updatedAt = data.updated_at ? new Date(data.updated_at) : null;
         const now = new Date();
         const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
@@ -195,6 +197,10 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           if (isRecent) {
             console.log(`✅ [Background] Loading ${suggestedProducts.length} products from poolId "${storedPoolId}" (updated ${updatedAt?.toISOString()})`);
             setSuggestedProducts(suggestedProducts);
+            setLowConfidenceMatches(storedLowConfidenceMatches);
+            if (storedLowConfidenceMatches.length > 0) {
+              console.log(`✅ [Background] Loading ${storedLowConfidenceMatches.length} low-confidence matches`);
+            }
             setShowSplitView(true);
             // Auto-switch to suggested products tab
             setActiveTab("suggested");
@@ -202,6 +208,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
             console.warn(`🚫 Context Guard: Blocking ${suggestedProducts.length} stale products from poolId "${storedPoolId}". Products are older than 30 minutes.`);
             console.log(`🧹 suggest:cleared { projectId: "${projectId}", reason: "stale from previous session", stalePoolId: "${storedPoolId}" }`);
             setSuggestedProducts([]); // Clear stale suggestions
+            setLowConfidenceMatches([]); // Clear stale low-confidence matches
           }
         } else {
           setSuggestedProducts([]); // No products to load
@@ -225,6 +232,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const workingState = {
         project_id: projectId,
         suggested_products: suggestedProducts,
+        low_confidence_matches: lowConfidenceMatches,
         quote_preview: quotePreview,
         show_split_view: showSplitView
       };
@@ -253,7 +261,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       return () => clearTimeout(timeoutId);
     }
-  }, [suggestedProducts, quotePreview, showSplitView]);
+  }, [suggestedProducts, lowConfidenceMatches, quotePreview, showSplitView]);
 
   // Poll for new messages (handles background task completion)
   useEffect(() => {
@@ -741,6 +749,32 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     setSuggestedProducts(prev =>
       prev.map(p => p.id === productId ? { ...p, selected: !p.selected } : p)
     );
+  }
+
+  // Handle adding low-confidence match to suggested products
+  function handleAddToQuote(match: ProductSuggestion) {
+    // 1. Move selected item into suggestions
+    setSuggestedProducts(prev => {
+      // Avoid duplicates (shouldn't happen, but be defensive)
+      if (prev.some(p => p.product_id === match.product_id)) {
+        console.warn('Product already in suggestions:', match.product_id);
+        return prev;
+      }
+      return [...prev, { ...match, selected: false }];
+    });
+
+    // 2. Remove it from low confidence list
+    setLowConfidenceMatches(prev =>
+      prev.filter(m => m.product_id !== match.product_id)
+    );
+
+    // 3. Show success toast
+    toast.success(`Added ${match.product_name} to quote`);
+    
+    // 4. Show the split view if not already shown
+    setShowSplitView(true);
+    // Auto-switch to suggested products tab
+    setActiveTab("suggested");
   }
 
   // Toggle select all
@@ -2516,6 +2550,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       const aiResponse = responseData.message;
       const products = responseData.products || [];
+      const lowConfidenceProducts = responseData.lowConfidenceMatches || [];
 
       // CRITICAL: If AI suggested products, REPLACE the suggested products list completely
       // This is a fresh pool - NO products from previous pools should remain
@@ -2578,7 +2613,34 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           setShowSplitView(true);
           // Auto-switch to suggested products tab when new products arrive
           setActiveTab("suggested");
+        }
+        
+        // Process low-confidence matches (scores 1-49) - show but don't auto-add
+        if (lowConfidenceProducts.length > 0) {
+          console.log(`💡 Low-confidence matches: ${lowConfidenceProducts.length} products`);
+          
+          // Tag low-confidence products with IDs and pool info
+          const lowConfidenceWithIds = lowConfidenceProducts.map((p: any, idx: number) => ({
+            ...p,
+            id: `${poolId}-low-${idx}`, // Include poolId in ID for uniqueness
+            poolId: poolId,
+            contextId: contextId,
+            selected: false,
+            canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `low-${idx}`
+          }));
+          
+          // Only update UI state if user is still on this project
+          if (!userSwitchedProjects) {
+            setLowConfidenceMatches(lowConfidenceWithIds);
+            console.log(`💡 Low-confidence render: ${lowConfidenceWithIds.length} products`);
+          }
         } else {
+          // Clear low-confidence matches if none in response
+          if (!userSwitchedProjects) {
+            setLowConfidenceMatches([]);
+          }
+        }
+      } else {
           // User switched projects - save to DB for when they return
           console.log(`🔄 [Background] Saving ${finalProducts.length} products to DB for later retrieval`);
           // Save working state with products for this project
@@ -2587,6 +2649,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
             .upsert({
               project_id: projectId,
               suggested_products: finalProducts,
+              low_confidence_matches: lowConfidenceWithIds,
               quote_preview: quotePreview,
               show_split_view: true,
             current_pool_id: poolId,
@@ -2598,6 +2661,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         if (!userSwitchedProjects) {
           console.log(`🎯 suggest:render { contextId: "${contextId}", count: 0, reason: "no products in response" }`);
           setSuggestedProducts([]);
+          setLowConfidenceMatches([]);
         }
       }
 
@@ -2767,24 +2831,92 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               </div>
             </div>
           )}
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-2xl px-5 py-4 ${
-                  message.role === "user"
-                    ? "bg-[#f4f4f4] text-gray-900"
-                    : "bg-white border border-gray-200"
-                }`}
-              >
-                <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                  {renderMessageContent(message.content)}
+          {messages.map((message, index) => {
+            const isLastAssistantMessage = message.role === "assistant" && index === messages.length - 1;
+            
+            return (
+              <div key={message.id}>
+                <div
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-5 py-4 ${
+                      message.role === "user"
+                        ? "bg-[#f4f4f4] text-gray-900"
+                        : "bg-white border border-gray-200"
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                      {renderMessageContent(message.content)}
+                    </div>
+                  </div>
                 </div>
+                
+                {/* Show low-confidence matches after the last assistant message */}
+                {isLastAssistantMessage && lowConfidenceMatches.length > 0 && (
+                  <div className="flex justify-start mt-4">
+                    <div className="max-w-[85%] rounded-2xl px-5 py-4 bg-amber-50 border border-amber-200">
+                      <div className="mb-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xl">💡</span>
+                          <h4 className="font-semibold text-gray-900">Possible Matches (Not Auto-Added)</h4>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-3">
+                          We didn't find a confident exact match, but here are some products you might mean:
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {lowConfidenceMatches.map((match, idx) => (
+                          <div
+                            key={match.product_id || match.id}
+                            className="bg-white border border-amber-300 rounded-lg p-3 flex justify-between items-start gap-3"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <strong className="text-base text-gray-900">{idx + 1}. {match.product_name}</strong>
+                                {match.product_brand && (
+                                  <span className="text-sm text-gray-500">({match.product_brand})</span>
+                                )}
+                              </div>
+                              
+                              <div className="text-sm text-gray-700 mt-1">
+                                ${match.unit_price?.toFixed(2) || '0.00'} each
+                              </div>
+                              
+                              {match.requested_item && (
+                                <div className="text-xs text-gray-500 italic mt-1">
+                                  For: "{match.requested_item}"
+                                </div>
+                              )}
+                              
+                              {process.env.NODE_ENV === 'development' && match.match_confidence && (
+                                <div className="text-xs text-gray-400 mt-1">
+                                  Score: {match.match_confidence}
+                                </div>
+                              )}
+                            </div>
+                            
+                            <button
+                              onClick={() => handleAddToQuote(match)}
+                              className="ml-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap flex-shrink-0"
+                            >
+                              + Add to Quote
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <p className="text-xs text-gray-500 mt-3 italic">
+                        *These items were not automatically added because the match confidence was low. 
+                        Please review and add manually if appropriate.*
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {loading && (
             <div className="flex justify-start items-start gap-3">
               <div className="bg-white border border-gray-200 rounded-2xl px-5 py-3">
