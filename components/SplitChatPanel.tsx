@@ -2892,7 +2892,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                         <h4 className="font-semibold text-gray-900">Possible Matches</h4>
                       </div>
                       <p className="text-sm text-gray-600 mb-3">
-                        We didn't find a confident exact match, but here are some products you might mean:
+                        Here are some products you might like:
                       </p>
                     </div>
                     
