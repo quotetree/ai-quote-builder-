@@ -558,8 +558,73 @@ function meetsHardConstraints(product: any, item: EnhancedRequestedItem, verbose
 const MATCH_CONFIDENCE_THRESHOLD = 50;
 
 /**
+ * HYBRID SEARCH ENGINE MODEL (Option B)
+ * 
+ * Maximum number of products to show per requested item when matches are ambiguous.
+ * Examples:
+ * - "misc material" → shows up to 4 misc-related SKUs
+ * - "outdoor cameras" → shows up to 4 outdoor camera models
+ */
+const MAX_PER_ITEM = 4;
+
+/**
+ * Score difference threshold to determine if a match is "precise" vs "ambiguous".
+ * 
+ * If the top match's score is >= CLEAR_WINNER_DELTA higher than the second match,
+ * we treat it as a precise request and return only that single product.
+ * 
+ * Otherwise, we treat it as ambiguous and return multiple matches (up to MAX_PER_ITEM).
+ * 
+ * Examples:
+ * - Top score: 520, Second: 480 → Delta 40 → Single precise match
+ * - Top score: 520, Second: 510 → Delta 10 → Ambiguous, show multiple
+ */
+const CLEAR_WINNER_DELTA = 30;
+
+/**
+ * Decides whether to return a single "precise" match or multiple "ambiguous" matches.
+ * 
+ * Decision logic:
+ * 1. If only 1 match exists → return it (precise)
+ * 2. If top match's score is CLEAR_WINNER_DELTA higher than second → return only top match (precise)
+ * 3. Otherwise → return up to MAX_PER_ITEM matches (ambiguous, like a search engine)
+ * 
+ * @param exactMatches - Products that passed hard constraints, sorted by score descending
+ * @returns Selected products to show user (1 for precise, N for ambiguous)
+ */
+function selectExactMatchesForItem(exactMatches: any[]): any[] {
+  if (exactMatches.length === 0) return [];
+  
+  // Case 1: Only one match → precise, return it
+  if (exactMatches.length === 1) {
+    console.log(`      → Precise: single match found`);
+    return [exactMatches[0]];
+  }
+  
+  // Case 2: Multiple matches - check score gap between top 2
+  const [first, second] = exactMatches;
+  const scoreDelta = first.score - second.score;
+  
+  console.log(`      → Score gap between top 2: ${scoreDelta} (threshold: ${CLEAR_WINNER_DELTA})`);
+  
+  // If the top result is clearly better → treat as precise, single result
+  if (scoreDelta >= CLEAR_WINNER_DELTA) {
+    console.log(`      → Precise: clear winner (score gap ${scoreDelta} >= ${CLEAR_WINNER_DELTA})`);
+    return [first];
+  }
+  
+  // Otherwise, ambiguous → return up to MAX_PER_ITEM matches
+  const selected = exactMatches.slice(0, MAX_PER_ITEM);
+  console.log(`      → Ambiguous: returning ${selected.length} matches (max ${MAX_PER_ITEM})`);
+  return selected;
+}
+
+/**
  * Enhanced matching with hard constraint enforcement.
  * Accepts EnhancedRequestedItem[] and enforces duration constraints.
+ * 
+ * NEW (Option B): Returns multiple products per item when matches are ambiguous,
+ * like a search engine. This applies from the FIRST message onwards.
  */
 function matchEnhancedRequestsToPriceBook(
   requestedItems: EnhancedRequestedItem[], 
@@ -614,46 +679,57 @@ function matchEnhancedRequestsToPriceBook(
     
     console.log(`\n   ✅ Result: ${results.length} keyword matches → ${validResults.length} after hard constraints`);
     
-    const top = validResults[0];
+    // Filter by confidence threshold
+    const qualifiedResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
+    
+    // NEW: Use hybrid selection - returns 1 product for precise, N for ambiguous
+    const selectedMatches = selectExactMatchesForItem(qualifiedResults);
 
-    if (top && top.score >= MATCH_CONFIDENCE_THRESHOLD) {
-      const product = top.product;
-      console.log(`   ✅ Matched: "${product.product_name}" (score: ${top.score})`);
+    if (selectedMatches.length > 0) {
+      // Add ALL selected matches to suggestions (not just the top one)
+      console.log(`   ✅ Adding ${selectedMatches.length} product(s) to suggestions:`);
       
-      const key = product.id || product.product_name?.toLowerCase().trim();
-      const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
-      const quantityValue = Number(requestedQuantity);
-      const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
-      const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
-      const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
-      const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
-      const computedLineTotal = hasBudget
-        ? Number(parsedBudget)
-        : unitPrice * quantity;
-      const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+      selectedMatches.forEach((matchResult, idx) => {
+        const product = matchResult.product;
+        const matchScore = matchResult.score;
+        
+        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
+        
+        const key = product.id || product.product_name?.toLowerCase().trim();
+        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+        const quantityValue = Number(requestedQuantity);
+        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+        const computedLineTotal = hasBudget
+          ? Number(parsedBudget)
+          : unitPrice * quantity;
+        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
 
-      if (suggestionsMap.has(key)) {
-        const existing = suggestionsMap.get(key);
-        existing.quantity += quantity;
-        existing.line_total += computedLineTotal;
-        existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
-        existing.matched_requests.push(request.item || keywords);
-      } else {
-        suggestionsMap.set(key, {
-          product_id: product.id,
-          product_name: product.product_name,
-          description: product.description,
-          quantity,
-          unit_price: Number(derivedUnitPrice.toFixed(2)),
-          line_total: Number(computedLineTotal.toFixed(2)),
-          quantity_unit: request.unit || product.unit || null,
-          price_unit: product.unit || null,
-          product_brand: product.product_brand,
-          product_type: product.product_type,
-          match_confidence: top.score,
-          matched_requests: [request.item || keywords],
-        });
-      }
+        if (suggestionsMap.has(key)) {
+          const existing = suggestionsMap.get(key);
+          existing.quantity += quantity;
+          existing.line_total += computedLineTotal;
+          existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
+          existing.matched_requests.push(request.item || keywords);
+        } else {
+          suggestionsMap.set(key, {
+            product_id: product.id,
+            product_name: product.product_name,
+            description: product.description,
+            quantity,
+            unit_price: Number(derivedUnitPrice.toFixed(2)),
+            line_total: Number(computedLineTotal.toFixed(2)),
+            quantity_unit: request.unit || product.unit || null,
+            price_unit: product.unit || null,
+            product_brand: product.product_brand,
+            product_type: product.product_type,
+            match_confidence: matchScore,
+            matched_requests: [request.item || keywords],
+          });
+        }
+      });
     } else {
       // No exact match found - build detailed error message with close matches
       let reason = '';
@@ -663,11 +739,11 @@ function matchEnhancedRequestsToPriceBook(
         // Duration constraint not met - show close matches WITHOUT the duration requirement
         reason = `No products in your price book contain "${request.duration}" for this item.`;
         
-        // Show top 3 products that match keywords but not duration
-        const top3WithoutDuration = results.slice(0, 3);
-        if (top3WithoutDuration.length > 0) {
+        // Show top N products that match keywords but not duration (alternatives only)
+        const topWithoutDuration = results.slice(0, MAX_PER_ITEM);
+        if (topWithoutDuration.length > 0) {
           reason += `\n\nClosest matches (without "${request.duration}"):\n`;
-          top3WithoutDuration.forEach((r, idx) => {
+          topWithoutDuration.forEach((r, idx) => {
             const matchInfo = `${idx + 1}. ${r.product.product_name}`;
             closeMatches.push(matchInfo);
             reason += `  • ${matchInfo}\n`;
@@ -675,14 +751,14 @@ function matchEnhancedRequestsToPriceBook(
           reason += '\nThese products were NOT added because they don\'t have the required duration.';
         }
       } else {
-        // General keyword mismatch - show top 3 by keyword score
+        // General keyword mismatch - show top N by keyword score (alternatives only)
         const requestKeywords = extractKeywords(keywords);
         const keywordList = requestKeywords.length > 0 ? requestKeywords.join(', ') : 'these terms';
         
         if (results.length > 0) {
-          const top3 = results.slice(0, 3);
+          const topN = results.slice(0, MAX_PER_ITEM);
           reason = `No products scored high enough (need ≥ ${MATCH_CONFIDENCE_THRESHOLD}). Closest matches:\n`;
-          top3.forEach((r, idx) => {
+          topN.forEach((r, idx) => {
             const matchInfo = `${idx + 1}. ${r.product.product_name} (score: ${Math.round(r.score)})`;
             closeMatches.push(matchInfo);
             reason += `  • ${matchInfo}\n`;
