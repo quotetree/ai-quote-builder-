@@ -1,8 +1,26 @@
-# Product Type Substitution Fix
+# Product Type Substitution Fix (ARCHIVED)
+
+> ⚠️ **SUPERSEDED BY GENERIC REFACTOR**  
+> This fix has been replaced by a more comprehensive generic refactor in commit `8448b84`.  
+> See [GENERIC_PRODUCT_MATCHING_REFACTOR.md](./GENERIC_PRODUCT_MATCHING_REFACTOR.md) for the current implementation.
 
 **Branch:** `feature/chat-product-validation-and-summary`  
-**Commit:** `08f96d0`  
+**Commit:** `08f96d0` (archived)  
 **Date:** November 19, 2025
+
+---
+
+## Archive Note
+
+This document describes an intermediate fix that used hard-coded `STRICT_KEYWORDS` to prevent product type substitutions. While this solved the immediate problem, it was EPW-specific and not scalable.
+
+The system has since been refactored to use **generic field-based keyword matching** that works for any industry without hard-coded product types.
+
+**Current implementation:** See commit `8448b84` and [GENERIC_PRODUCT_MATCHING_REFACTOR.md](./GENERIC_PRODUCT_MATCHING_REFACTOR.md)
+
+---
+
+# Original Documentation (For Historical Reference)
 
 ## 🐛 Problem Statement
 
