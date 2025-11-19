@@ -35,10 +35,26 @@ function buildSearchText(product: any): string {
 }
 
 /**
- * Extracts meaningful keywords from a user's request text.
- * Filters out stopwords and keeps only substantive terms.
+ * Normalizes a token to handle singular/plural variations.
+ * This helps "material" match "materials", "jack" match "jacks", etc.
  */
-function extractKeywords(text: string): string[] {
+function normalizeToken(token: string): string {
+  if (!token || token.length <= 2) return token;
+  
+  // Handle common plural forms
+  // Remove trailing 's' for simple plurals (materials -> material, jacks -> jack)
+  if (token.endsWith('s') && token.length > 3 && !token.endsWith('ss')) {
+    return token.slice(0, -1);
+  }
+  
+  return token;
+}
+
+/**
+ * Normalizes text into tokens with singular/plural handling.
+ * Example: "misc materials" -> ["misc", "material"]
+ */
+function normalizeText(text: string): string[] {
   if (!text || typeof text !== 'string') return [];
   
   return text
@@ -47,7 +63,91 @@ function extractKeywords(text: string): string[] {
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
-    .filter(word => word.length > 1 && !STOPWORDS.has(word));
+    .filter(word => word.length > 1 && !STOPWORDS.has(word))
+    .map(word => normalizeToken(word));
+}
+
+/**
+ * Extracts meaningful keywords from a user's request text.
+ * Filters out stopwords and keeps only substantive terms.
+ */
+function extractKeywords(text: string): string[] {
+  return normalizeText(text);
+}
+
+/**
+ * Computes a lexical overlap score between normalized request tokens and product text.
+ * This ensures that even partial matches (e.g., "misc materials" vs "Misc material") get positive scores.
+ * 
+ * Returns a score based on:
+ * - Number of matching tokens
+ * - Percentage of request tokens that match
+ * - Whether matches appear in important fields (name vs description)
+ */
+function computeLexicalOverlapScore(
+  requestTokens: string[],
+  productName: string,
+  productFamily: string,
+  productDescription: string,
+  productType: string
+): number {
+  if (requestTokens.length === 0) return 0;
+  
+  // Normalize all product fields
+  const nameTokens = normalizeText(productName);
+  const familyTokens = normalizeText(productFamily || '');
+  const descTokens = normalizeText(productDescription || '');
+  const typeTokens = normalizeText(productType || '');
+  
+  // Combine all tokens for matching
+  const allProductTokens = new Set([...nameTokens, ...familyTokens, ...descTokens, ...typeTokens]);
+  const nameTokenSet = new Set(nameTokens);
+  const familyTokenSet = new Set(familyTokens);
+  const typeTokenSet = new Set(typeTokens);
+  
+  let matchingTokens = 0;
+  let matchesInName = 0;
+  let matchesInFamily = 0;
+  let matchesInType = 0;
+  
+  // Check each request token
+  requestTokens.forEach(reqToken => {
+    if (allProductTokens.has(reqToken)) {
+      matchingTokens++;
+      
+      if (nameTokenSet.has(reqToken)) matchesInName++;
+      if (familyTokenSet.has(reqToken)) matchesInFamily++;
+      if (typeTokenSet.has(reqToken)) matchesInType++;
+    }
+  });
+  
+  if (matchingTokens === 0) return 0;
+  
+  // Base score: 10 points per matching token
+  let score = matchingTokens * 10;
+  
+  // Bonus for high match percentage
+  const matchPercentage = matchingTokens / requestTokens.length;
+  if (matchPercentage === 1.0) {
+    // All request tokens matched
+    score += 30;
+  } else if (matchPercentage >= 0.5) {
+    // At least half matched
+    score += 15;
+  }
+  
+  // Bonus for matches in important fields
+  if (matchesInName > 0) {
+    score += matchesInName * 15; // Name matches are valuable
+  }
+  if (matchesInFamily > 0) {
+    score += matchesInFamily * 10;
+  }
+  if (matchesInType > 0) {
+    score += matchesInType * 10;
+  }
+  
+  return score;
 }
 
 /**
@@ -70,7 +170,8 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
     return products.slice(0, 20).map(product => ({ product, score: 0 }));
   }
   
-  console.log('🔍 Search keywords:', searchKeywords);
+  console.log('🔍 Search keywords (normalized):', searchKeywords);
+  console.log('🔍 Original search query:', keywords);
   console.log('🏷️  Product types in database:', [...new Set(products.map(p => p.product_type).filter(Boolean))].slice(0, 10));
   
   const scored = products.map(product => {
@@ -145,6 +246,43 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
       }
     }
     
+    // NEW: Lexical overlap scoring as a fallback/additive layer
+    // This handles cases where exact keyword matching fails due to:
+    // - singular/plural differences (material vs materials)
+    // - partial token matches (misc should contribute even if "miscellaneous")
+    const lexicalScore = computeLexicalOverlapScore(
+      searchKeywords,
+      product.product_name || '',
+      product.product_family_name || '',
+      product.description || '',
+      product.product_type || ''
+    );
+    
+    // If existing score is 0 or negative but we have lexical overlap, use lexical score
+    // Otherwise, add lexical score as a bonus to the existing score
+    if (score <= 0 && lexicalScore > 0) {
+      score = lexicalScore;
+      console.log(`   🔧 Lexical fallback for "${product.product_name}": score was ${score <= 0 ? '≤0' : score}, lexical: ${lexicalScore}, final: ${score}`);
+    } else if (lexicalScore > 0) {
+      // Add a portion of lexical score as bonus (don't double-count matches)
+      const oldScore = score;
+      score += Math.floor(lexicalScore * 0.3);
+      console.log(`   ➕ Lexical bonus for "${product.product_name}": ${oldScore} + ${Math.floor(lexicalScore * 0.3)} = ${score}`);
+    }
+    
+    // Debug logging for products containing "misc" or "material" in name
+    if (product.product_name && (product.product_name.toLowerCase().includes('misc') || product.product_name.toLowerCase().includes('material'))) {
+      console.log(`   📊 Score breakdown for "${product.product_name}":`, {
+        keywordsMatched: `${keywordsMatched}/${searchKeywords.length}`,
+        keywordsInName,
+        keywordsInBrand,
+        keywordsInType,
+        missingKeywords: searchKeywords.length - keywordsMatched,
+        lexicalScore,
+        finalScore: score
+      });
+    }
+    
     return { product, score };
   });
   
@@ -159,6 +297,28 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
     brand: item.product.product_brand,
     score: item.score
   })));
+  
+  // Show examples of lexical overlap helping (for debugging singular/plural, etc.)
+  const lexicalHelpedProducts = scored.filter(item => {
+    // Check if this product would have scored 0 without lexical overlap
+    const lexicalScore = computeLexicalOverlapScore(
+      searchKeywords,
+      item.product.product_name || '',
+      item.product.product_family_name || '',
+      item.product.description || '',
+      item.product.product_type || ''
+    );
+    return item.score > 0 && lexicalScore > 0 && item.score <= lexicalScore * 1.5;
+  }).slice(0, 3);
+  
+  if (lexicalHelpedProducts.length > 0) {
+    console.log(`🔤 Lexical overlap rescued ${lexicalHelpedProducts.length} products that would have scored 0:`, 
+      lexicalHelpedProducts.map(item => ({
+        name: item.product.product_name,
+        score: item.score
+      }))
+    );
+  }
   
   // If no positive scores, return empty (will trigger "not found" message)
   if (results.length === 0) {
