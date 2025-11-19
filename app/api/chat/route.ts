@@ -805,7 +805,7 @@ function matchEnhancedRequestsToPriceBook(
     if (selectedMatches.length === 0 && lowConfidenceResults.length === 0) {
       // No exact match found - build detailed error message with close matches
       let reason = '';
-      const closeMatches: string[] = [];
+      const closeMatchProducts: any[] = [];
       
       if (request.duration) {
         // Duration constraint not met - show close matches WITHOUT the duration requirement
@@ -817,7 +817,7 @@ function matchEnhancedRequestsToPriceBook(
           reason += `\n\nClosest matches (without "${request.duration}"):\n`;
           topWithoutDuration.forEach((r, idx) => {
             const matchInfo = `${idx + 1}. ${r.product.product_name}`;
-            closeMatches.push(matchInfo);
+            closeMatchProducts.push(r);
             reason += `  • ${matchInfo}\n`;
           });
           reason += '\nThese products were NOT added because they don\'t have the required duration.';
@@ -832,7 +832,7 @@ function matchEnhancedRequestsToPriceBook(
           reason = `No products in your price book closely match this request. Closest matches:\n`;
           topN.forEach((r, idx) => {
             const matchInfo = `${idx + 1}. ${r.product.product_name}`;
-            closeMatches.push(matchInfo);
+            closeMatchProducts.push(r);
             reason += `  • ${matchInfo}\n`;
           });
           reason += `\nSearched for keywords: ${keywordList}`;
@@ -842,8 +842,46 @@ function matchEnhancedRequestsToPriceBook(
       }
       
       console.log(`   ❌ Not matched: ${reason.split('\n')[0]}`);
-      if (closeMatches.length > 0) {
-        console.log(`   📋 Close matches shown: ${closeMatches.length}`);
+      if (closeMatchProducts.length > 0) {
+        console.log(`   📋 Close matches shown: ${closeMatchProducts.length}`);
+        
+        // CRITICAL: Add these close matches to lowConfidenceMap so they appear in UI with + Add to Quote
+        // This ensures every product mentioned in "Closest matches" text also appears with a button
+        closeMatchProducts.forEach((matchResult) => {
+          const product = matchResult.product;
+          const matchScore = matchResult.score;
+          const key = product.id || product.product_name?.toLowerCase().trim();
+          
+          // Don't add if already in the map
+          if (!lowConfidenceMap.has(key)) {
+            const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+            const quantityValue = Number(requestedQuantity);
+            const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+            const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+            const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+            const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+            const computedLineTotal = hasBudget ? Number(parsedBudget) : unitPrice * quantity;
+            const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+            lowConfidenceMap.set(key, {
+              product_id: product.id,
+              product_name: product.product_name,
+              description: product.description,
+              quantity,
+              unit_price: Number(derivedUnitPrice.toFixed(2)),
+              line_total: Number(computedLineTotal.toFixed(2)),
+              quantity_unit: request.unit || product.unit || null,
+              price_unit: product.unit || null,
+              product_brand: product.product_brand,
+              product_type: product.product_type,
+              match_confidence: matchScore,
+              matched_requests: [request.item || keywords],
+              requested_item: request.item || keywords, // Track what user asked for
+            });
+            
+            console.log(`      💡 Added "${product.product_name}" (score: ${matchScore}) to low-confidence matches`);
+          }
+        });
       }
       
       unfulfilled.push({

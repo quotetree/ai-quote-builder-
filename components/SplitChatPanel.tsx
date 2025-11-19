@@ -2882,71 +2882,70 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                 <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
                   {renderMessageContent(message.content)}
                 </div>
-              </div>
-                </div>
                 
-                {/* Show low-confidence matches after the last assistant message */}
-                {isLastAssistantMessage && lowConfidenceMatches.length > 0 && (
-                  <div className="flex justify-start mt-4">
-                    <div className="max-w-[85%] rounded-2xl px-5 py-4 bg-amber-50 border border-amber-200">
-                      <div className="mb-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xl">💡</span>
-                          <h4 className="font-semibold text-gray-900">Possible Matches (Not Auto-Added)</h4>
-                        </div>
-                        <p className="text-sm text-gray-600 mb-3">
-                          We didn't find a confident exact match, but here are some products you might mean:
-                        </p>
+                {/* Unified: Show low-confidence matches INSIDE the same assistant message bubble */}
+                {isLastAssistantMessage && message.role === "assistant" && lowConfidenceMatches.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="mb-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xl">💡</span>
+                        <h4 className="font-semibold text-gray-900">Possible Matches (Not Auto-Added)</h4>
                       </div>
-                      
-                      <div className="space-y-3">
-                        {lowConfidenceMatches.map((match, idx) => (
-                          <div
-                            key={match.product_id || match.id}
-                            className="bg-white border border-amber-300 rounded-lg p-3 flex justify-between items-start gap-3"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-baseline gap-2 flex-wrap">
-                                <strong className="text-base text-gray-900">{idx + 1}. {match.product_name}</strong>
-                                {match.product_brand && (
-                                  <span className="text-sm text-gray-500">({match.product_brand})</span>
-                                )}
-                              </div>
-                              
-                              <div className="text-sm text-gray-700 mt-1">
-                                ${match.unit_price?.toFixed(2) || '0.00'} each
-                              </div>
-                              
-                              {match.requested_item && (
-                                <div className="text-xs text-gray-500 italic mt-1">
-                                  For: "{match.requested_item}"
-                                </div>
-                              )}
-                              
-                              {process.env.NODE_ENV === 'development' && match.match_confidence && (
-                                <div className="text-xs text-gray-400 mt-1">
-                                  Score: {match.match_confidence}
-                                </div>
+                      <p className="text-sm text-gray-600 mb-3">
+                        We didn't find a confident exact match, but here are some products you might mean:
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      {lowConfidenceMatches.map((match, idx) => (
+                        <div
+                          key={match.product_id || match.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline gap-2 flex-wrap">
+                              <strong className="text-sm text-gray-900">{idx + 1}. {match.product_name}</strong>
+                              {match.product_brand && (
+                                <span className="text-xs text-gray-600">({match.product_brand})</span>
                               )}
                             </div>
                             
-                            <button
-                              onClick={() => handleAddToQuote(match)}
-                              className="ml-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap flex-shrink-0"
-                            >
-                              + Add to Quote
-                            </button>
-            </div>
-          ))}
-                      </div>
-                      
-                      <p className="text-xs text-gray-500 mt-3 italic">
-                        *These items were not automatically added because the match confidence was low. 
-                        Please review and add manually if appropriate.*
-                      </p>
+                            <div className="text-xs text-gray-700 mt-0.5">
+                              ${match.unit_price?.toFixed(2) || '0.00'} each
+                            </div>
+                            
+                            {match.requested_item && (
+                              <div className="text-xs text-gray-500 italic mt-0.5">
+                                For: "{match.requested_item}"
+                              </div>
+                            )}
+                            
+                            {process.env.NODE_ENV === 'development' && match.match_confidence && (
+                              <div className="text-[10px] text-gray-400 mt-0.5">
+                                Score: {match.match_confidence}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={() => handleAddToQuote(match)}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap flex-shrink-0"
+                          >
+                            + Add to Quote
+                          </button>
+                        </div>
+                      ))}
                     </div>
+                    
+                    <p className="text-xs text-gray-500 mt-3 italic">
+                      *These items were not automatically added because the match confidence was low. 
+                      Please review and add manually if appropriate.*
+                    </p>
                   </div>
                 )}
+              </div>
+                </div>
               </div>
             );
           })}
