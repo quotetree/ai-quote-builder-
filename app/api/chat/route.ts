@@ -625,16 +625,22 @@ function selectExactMatchesForItem(exactMatches: any[]): any[] {
  * 
  * NEW (Option B): Returns multiple products per item when matches are ambiguous,
  * like a search engine. This applies from the FIRST message onwards.
+ * 
+ * THREE-TIER SCORING SYSTEM:
+ * - Score ≥ 50: Auto-add to "Suggested Products"
+ * - Score 1-49: Show as "possible matches" in chat (user can manually add)
+ * - Score 0: Don't show (completely unrelated)
  */
 function matchEnhancedRequestsToPriceBook(
   requestedItems: EnhancedRequestedItem[], 
   products: any[]
-): { suggestions: any[]; unfulfilled: UnfulfilledRequest[] } {
+): { suggestions: any[]; lowConfidenceMatches: any[]; unfulfilled: UnfulfilledRequest[] } {
   const suggestionsMap = new Map<string, any>();
+  const lowConfidenceMap = new Map<string, any>();
   const unfulfilled: UnfulfilledRequest[] = [];
 
   if (!requestedItems || requestedItems.length === 0) {
-    return { suggestions: [], unfulfilled };
+    return { suggestions: [], lowConfidenceMatches: [], unfulfilled };
   }
 
   requestedItems.forEach((request) => {
@@ -679,15 +685,22 @@ function matchEnhancedRequestsToPriceBook(
     
     console.log(`\n   ✅ Result: ${results.length} keyword matches → ${validResults.length} after hard constraints`);
     
-    // Filter by confidence threshold
-    const qualifiedResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
+    // THREE-TIER SCORING SYSTEM:
+    // 1. Score >= 50: High confidence, auto-add to Suggested Products
+    // 2. Score 1-49: Low confidence, show as possible matches (user can manually add)
+    // 3. Score 0: No relevance, don't show
     
-    // NEW: Use hybrid selection - returns 1 product for precise, N for ambiguous
-    const selectedMatches = selectExactMatchesForItem(qualifiedResults);
+    const highConfidenceResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
+    const lowConfidenceResults = validResults.filter(r => r.score > 0 && r.score < MATCH_CONFIDENCE_THRESHOLD);
+    
+    console.log(`   📊 Score breakdown: ${highConfidenceResults.length} high-confidence (≥50), ${lowConfidenceResults.length} low-confidence (1-49)`);
+    
+    // Process high-confidence matches (auto-add)
+    const selectedMatches = selectExactMatchesForItem(highConfidenceResults);
 
     if (selectedMatches.length > 0) {
-      // Add ALL selected matches to suggestions (not just the top one)
-      console.log(`   ✅ Adding ${selectedMatches.length} product(s) to suggestions:`);
+      // Add ALL selected matches to suggestions (auto-add to quote)
+      console.log(`   ✅ Auto-adding ${selectedMatches.length} high-confidence product(s):`);
       
       selectedMatches.forEach((matchResult, idx) => {
         const product = matchResult.product;
@@ -730,7 +743,54 @@ function matchEnhancedRequestsToPriceBook(
           });
         }
       });
-    } else {
+    }
+    
+    // Process low-confidence matches (show but don't auto-add)
+    if (lowConfidenceResults.length > 0) {
+      console.log(`   💡 Showing ${lowConfidenceResults.length} low-confidence match(es) as suggestions:`);
+      
+      const selectedLowConfidence = lowConfidenceResults.slice(0, MAX_PER_ITEM);
+      
+      selectedLowConfidence.forEach((matchResult, idx) => {
+        const product = matchResult.product;
+        const matchScore = matchResult.score;
+        
+        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
+        
+        const key = product.id || product.product_name?.toLowerCase().trim();
+        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+        const quantityValue = Number(requestedQuantity);
+        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+        const computedLineTotal = hasBudget
+          ? Number(parsedBudget)
+          : unitPrice * quantity;
+        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+        if (!lowConfidenceMap.has(key)) {
+          lowConfidenceMap.set(key, {
+            product_id: product.id,
+            product_name: product.product_name,
+            description: product.description,
+            quantity,
+            unit_price: Number(derivedUnitPrice.toFixed(2)),
+            line_total: Number(computedLineTotal.toFixed(2)),
+            quantity_unit: request.unit || product.unit || null,
+            price_unit: product.unit || null,
+            product_brand: product.product_brand,
+            product_type: product.product_type,
+            match_confidence: matchScore,
+            matched_requests: [request.item || keywords],
+            requested_item: request.item || keywords, // Track what user asked for
+          });
+        }
+      });
+    }
+    
+    // If no matches at all (not even low confidence), add to unfulfilled
+    if (selectedMatches.length === 0 && lowConfidenceResults.length === 0) {
       // No exact match found - build detailed error message with close matches
       let reason = '';
       const closeMatches: string[] = [];
@@ -782,7 +842,11 @@ function matchEnhancedRequestsToPriceBook(
   });
 
   const suggestions = Array.from(suggestionsMap.values());
-  return { suggestions, unfulfilled };
+  const lowConfidenceMatches = Array.from(lowConfidenceMap.values());
+  
+  console.log(`\n🎯 Final results: ${suggestions.length} auto-added, ${lowConfidenceMatches.length} suggested, ${unfulfilled.length} unfulfilled`);
+  
+  return { suggestions, lowConfidenceMatches, unfulfilled };
 }
 
 /**
@@ -1008,22 +1072,30 @@ export async function POST(req: NextRequest) {
     
     // CRITICAL: Only match items from CURRENT message (extractedItems)
     // Do NOT match accumulatedItems - that would introduce unrelated products
-    const { suggestions, unfulfilled } = matchEnhancedRequestsToPriceBook(extractedItems, products);
+    const { suggestions, lowConfidenceMatches, unfulfilled } = matchEnhancedRequestsToPriceBook(extractedItems, products);
     
     console.log('✅ Matching results:', {
-      suggestions: suggestions.length,
+      autoAdded: suggestions.length,
+      suggested: lowConfidenceMatches.length,
       unfulfilled: unfulfilled.length
     });
     
     if (suggestions.length > 0) {
-      console.log('   Matched products:');
+      console.log('   Auto-added products (score ≥ 50):');
       suggestions.forEach((s, idx) => {
         console.log(`   ${idx + 1}. ${s.product_name} - Qty: ${s.quantity}, Price: $${s.unit_price}`);
       });
     }
     
+    if (lowConfidenceMatches.length > 0) {
+      console.log('   Low-confidence suggestions (score 1-49):');
+      lowConfidenceMatches.forEach((s, idx) => {
+        console.log(`   ${idx + 1}. ${s.product_name} - Score: ${s.match_confidence}`);
+      });
+    }
+    
     if (unfulfilled.length > 0) {
-      console.log('   Unfulfilled requests:');
+      console.log('   Unfulfilled requests (score 0):');
       unfulfilled.forEach((u, idx) => {
         console.log(`   ${idx + 1}. ${u.requestedText} - ${u.reason}`);
       });
@@ -1032,6 +1104,7 @@ export async function POST(req: NextRequest) {
     // CRITICAL: Store Phase 2 results to use after AI response generation
     // These will be used to validate/override AI's product suggestions
     const phase2MatchedProducts = suggestions;
+    const phase2LowConfidenceMatches = lowConfidenceMatches;
     const phase2UnfulfilledRequests = unfulfilled;
     
     console.log('💾 Stored Phase 2 results for post-AI validation');
@@ -1788,7 +1861,8 @@ ${formattedResults}
     // ============================================================================
     
     console.log('🔄 Using Phase 2 matching results (strict constraint enforcement)');
-    console.log(`   Phase 2 matched: ${phase2MatchedProducts.length} products`);
+    console.log(`   Phase 2 auto-added: ${phase2MatchedProducts.length} products`);
+    console.log(`   Phase 2 low-confidence: ${phase2LowConfidenceMatches.length} suggestions`);
     console.log(`   Phase 2 unfulfilled: ${phase2UnfulfilledRequests.length} requests`);
     
     // CRITICAL: Use Phase 2 results directly - they already have hard constraint enforcement
@@ -1796,9 +1870,31 @@ ${formattedResults}
     productSuggestions = phase2MatchedProducts;
     unfulfilledRequests = phase2UnfulfilledRequests;
 
+    // Build low-confidence suggestions section (scores 1-49)
+    let lowConfidenceSuggestionsText = '';
+    if (phase2LowConfidenceMatches.length > 0) {
+      lowConfidenceSuggestionsText = '\n\n**💡 Possible Matches (Not Auto-Added):**\n\n';
+      lowConfidenceSuggestionsText += 'We didn\'t find a confident exact match, but here are some products you might mean:\n\n';
+      
+      phase2LowConfidenceMatches.forEach((product, idx) => {
+        lowConfidenceSuggestionsText += `${idx + 1}. **${product.product_name}**`;
+        if (product.product_brand) {
+          lowConfidenceSuggestionsText += ` (${product.product_brand})`;
+        }
+        lowConfidenceSuggestionsText += ` - $${product.unit_price} each\n`;
+        lowConfidenceSuggestionsText += `   *For: "${product.requested_item}"*\n`;
+        lowConfidenceSuggestionsText += `   → Use the **"+ Add to Quote"** button to add this item if it's correct.\n\n`;
+      });
+      
+      lowConfidenceSuggestionsText += '*These items were not automatically added because the match confidence was low. Please review and add manually if appropriate.*';
+    }
+
     const workSummaryText = buildWorkSummaryText(productSuggestions, unfulfilledRequests);
     const cleanedWithoutWorkSummary = stripExistingWorkSummary(cleanMessage);
     const finalMessageParts = [workSummaryText.trim()];
+    if (lowConfidenceSuggestionsText) {
+      finalMessageParts.push(lowConfidenceSuggestionsText.trim());
+    }
     if (cleanedWithoutWorkSummary) {
       finalMessageParts.push(cleanedWithoutWorkSummary.trim());
     }
