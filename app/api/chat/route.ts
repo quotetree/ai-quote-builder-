@@ -6,205 +6,1109 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Helper function to search products by keywords
-function searchProducts(products: any[], keywords: string): any[] {
-  if (!keywords || keywords.trim() === '') {
-    return products.slice(0, 20); // Return first 20 if no keywords
+// Common stopwords to filter out when extracting keywords from user requests
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
+  'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'will',
+  'with', 'i', 'need', 'want', 'also', 'some', 'get', 'can', 'we', 'my', 'me'
+]);
+
+/**
+ * Builds a searchable text string from a product's text fields.
+ * This is used for generic keyword-based matching across the price book.
+ */
+function buildSearchText(product: any): string {
+  return [
+    product.product_name,
+    product.product_number,    // Product Code
+    product.product_brand,
+    product.product_type,
+    product.product_family_name, // Product Family name (if joined)
+    product.description,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[-_]/g, ' ')  // Normalize hyphens and underscores
+    .replace(/\s+/g, ' ')   // Normalize whitespace
+    .trim();
+}
+
+/**
+ * Normalizes a token to handle singular/plural variations.
+ * This helps "material" match "materials", "jack" match "jacks", etc.
+ */
+function normalizeToken(token: string): string {
+  if (!token || token.length <= 2) return token;
+  
+  // Handle common plural forms
+  // Remove trailing 's' for simple plurals (materials -> material, jacks -> jack)
+  if (token.endsWith('s') && token.length > 3 && !token.endsWith('ss')) {
+    return token.slice(0, -1);
   }
   
-  // Normalize search keywords: lowercase, remove extra spaces, normalize hyphens
-  const normalizedKeywords = keywords.toLowerCase()
-    .replace(/[-_]/g, ' ')  // Replace hyphens/underscores with spaces
-    .replace(/\s+/g, ' ')    // Collapse multiple spaces
-    .trim();
+  return token;
+}
+
+/**
+ * Normalizes text into tokens with singular/plural handling.
+ * Example: "misc materials" -> ["misc", "material"]
+ */
+function normalizeText(text: string): string[] {
+  if (!text || typeof text !== 'string') return [];
   
-  const searchTerms = normalizedKeywords.split(/[\s,]+/).filter(t => t.length > 1);
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(word => word.length > 1 && !STOPWORDS.has(word))
+    .map(word => normalizeToken(word));
+}
+
+/**
+ * Extracts meaningful keywords from a user's request text.
+ * Filters out stopwords and keeps only substantive terms.
+ */
+function extractKeywords(text: string): string[] {
+  return normalizeText(text);
+}
+
+/**
+ * Computes a lexical overlap score between normalized request tokens and product text.
+ * This ensures that even partial matches (e.g., "misc materials" vs "Misc material") get positive scores.
+ * 
+ * Returns a score based on:
+ * - Number of matching tokens
+ * - Percentage of request tokens that match
+ * - Whether matches appear in important fields (name vs description)
+ */
+function computeLexicalOverlapScore(
+  requestTokens: string[],
+  productName: string,
+  productFamily: string,
+  productDescription: string,
+  productType: string
+): number {
+  if (requestTokens.length === 0) return 0;
   
-  console.log('🔍 Search terms:', searchTerms);
+  // Normalize all product fields
+  const nameTokens = normalizeText(productName);
+  const familyTokens = normalizeText(productFamily || '');
+  const descTokens = normalizeText(productDescription || '');
+  const typeTokens = normalizeText(productType || '');
+  
+  // Combine all tokens for matching
+  const allProductTokens = new Set([...nameTokens, ...familyTokens, ...descTokens, ...typeTokens]);
+  const nameTokenSet = new Set(nameTokens);
+  const familyTokenSet = new Set(familyTokens);
+  const typeTokenSet = new Set(typeTokens);
+  
+  let matchingTokens = 0;
+  let matchesInName = 0;
+  let matchesInFamily = 0;
+  let matchesInType = 0;
+  
+  // Check each request token
+  requestTokens.forEach(reqToken => {
+    if (allProductTokens.has(reqToken)) {
+      matchingTokens++;
+      
+      if (nameTokenSet.has(reqToken)) matchesInName++;
+      if (familyTokenSet.has(reqToken)) matchesInFamily++;
+      if (typeTokenSet.has(reqToken)) matchesInType++;
+    }
+  });
+  
+  if (matchingTokens === 0) return 0;
+  
+  // Base score: 10 points per matching token
+  let score = matchingTokens * 10;
+  
+  // Bonus for high match percentage
+  const matchPercentage = matchingTokens / requestTokens.length;
+  if (matchPercentage === 1.0) {
+    // All request tokens matched
+    score += 30;
+  } else if (matchPercentage >= 0.5) {
+    // At least half matched
+    score += 15;
+  }
+  
+  // Bonus for matches in important fields
+  if (matchesInName > 0) {
+    score += matchesInName * 15; // Name matches are valuable
+  }
+  if (matchesInFamily > 0) {
+    score += matchesInFamily * 10;
+  }
+  if (matchesInType > 0) {
+    score += matchesInType * 10;
+  }
+  
+  return score;
+}
+
+/**
+ * Scores products based on generic keyword matching across all product fields.
+ * This is industry-agnostic and works for any business based on their price book data.
+ * 
+ * Example:
+ * - "4 Verkada bullet cameras" with no products containing both "verkada" AND "bullet" → low/zero scores
+ * - "6 boxes of CAT6 cable" with product name "CAT6 Riser Cable" → high score
+ */
+function searchProductsWithScores(products: any[], keywords: string): { product: any; score: number }[] {
+  if (!keywords || keywords.trim() === '') {
+    return products.slice(0, 20).map(product => ({ product, score: 0 }));
+  }
+  
+  // Extract keywords from user's search query
+  const searchKeywords = extractKeywords(keywords);
+  
+  if (searchKeywords.length === 0) {
+    return products.slice(0, 20).map(product => ({ product, score: 0 }));
+  }
+  
+  console.log('🔍 Search keywords (normalized):', searchKeywords);
+  console.log('🔍 Original search query:', keywords);
   console.log('🏷️  Product types in database:', [...new Set(products.map(p => p.product_type).filter(Boolean))].slice(0, 10));
   
   const scored = products.map(product => {
     let score = 0;
-    // Normalize product fields the same way as search terms
+    
+    // Build searchable text from all product fields
+    const searchText = buildSearchText(product);
     const productName = (product.product_name || '').toLowerCase().replace(/[-_]/g, ' ');
     const productBrand = (product.product_brand || '').toLowerCase().replace(/[-_]/g, ' ');
     const productType = (product.product_type || '').toLowerCase().replace(/[-_]/g, ' ');
-    const description = (product.description || '').toLowerCase().replace(/[-_]/g, ' ');
+    const productCode = (product.product_number || '').toLowerCase().replace(/[-_]/g, ' ');
     
-    // Combine name + type for better matching (e.g., "Door License" + "Access Control" = matches "access control license")
-    const combinedSearchText = `${productBrand} ${productName} ${productType}`.toLowerCase();
+    // Count how many keywords match
+    let keywordsMatched = 0;
+    let keywordsInName = 0;
+    let keywordsInBrand = 0;
+    let keywordsInType = 0;
+    let exactCodeMatch = false;
     
-    // CRITICAL: If user specifies a brand (Verkada, Rhombus, etc.), product MUST be that brand
-    const commonBrands = ['verkada', 'rhombus', 'hikvision', 'axis', 'hanwha', 'genetec', 'milestone'];
-    const brandInSearch = searchTerms.find(term => commonBrands.includes(term));
-    
-    if (brandInSearch) {
-      // User specified a brand - if this product doesn't match, give it terrible score
-      if (!productBrand.includes(brandInSearch)) {
-        score -= 1000; // MASSIVE penalty - essentially eliminates wrong brand
-      } else {
-        score += 200; // HUGE bonus for matching the requested brand
+    searchKeywords.forEach(keyword => {
+      if (searchText.includes(keyword)) {
+        keywordsMatched++;
+        score += 10; // Base score for any match in searchable text
       }
-    }
-    
-    // CRITICAL: Check if search includes product TYPE keywords (access, control, intercom, camera, etc.)
-    const typeKeywords = ['access', 'control', 'intercom', 'camera', 'nvr', 'recorder', 'alarm', 'sensor'];
-    const typeInSearch = searchTerms.filter(term => typeKeywords.includes(term));
-    
-    if (typeInSearch.length > 0) {
-      // User is searching by product type - check if this product's type matches
-      const matchingTypeTerms = typeInSearch.filter(term => productType.includes(term));
-      if (matchingTypeTerms.length === typeInSearch.length) {
-        // Product type contains ALL the type keywords user mentioned
-        score += 300; // MASSIVE bonus for matching product type
-      } else if (matchingTypeTerms.length > 0) {
-        score += 100; // Partial match
-      } else {
-        // Product type doesn't match what user asked for
-        score -= 200; // Large penalty for wrong type
+      
+      // Boost for matches in specific fields
+      if (productName.includes(keyword)) {
+        keywordsInName++;
+        score += 25; // Higher weight for name matches
       }
-    }
-    
-    // Count how many search terms are found in combined text (name + type)
-    let termsFoundInCombined = 0;
-    let termsFoundInName = 0;
-    searchTerms.forEach(term => {
-      if (combinedSearchText.includes(term)) {
-        termsFoundInCombined++;
+      
+      if (productBrand.includes(keyword)) {
+        keywordsInBrand++;
+        score += 30; // Even higher for brand matches (important for specificity)
       }
-      if (productName.includes(term)) {
-        termsFoundInName++;
+      
+      if (productType.includes(keyword)) {
+        keywordsInType++;
+        score += 20; // Type matches are important
+      }
+      
+      // Exact product code match is very important
+      if (productCode && productCode === keyword) {
+        exactCodeMatch = true;
+        score += 200;
       }
     });
     
-    // Also check for compound matches (e.g., "5 year" together)
-    const compoundTerms: string[] = [];
-    for (let i = 0; i < searchTerms.length - 1; i++) {
-      const compound = searchTerms[i] + ' ' + searchTerms[i + 1];
-      compoundTerms.push(compound);
+    // Bonus: All keywords found in searchable text (strong match)
+    if (keywordsMatched === searchKeywords.length) {
+      score += 100;
     }
     
-    // Bonus for compound term matches in combined text
-    compoundTerms.forEach(compound => {
-      if (combinedSearchText.includes(compound)) {
-        score += 30; // Bonus for phrases that appear together
-      }
-    });
-    
-    // CRITICAL: If ALL search terms are in combined text (name + type), huge bonus
-    if (termsFoundInCombined === searchTerms.length) {
-      score += 200; // MASSIVE boost for having all terms somewhere
+    // Bonus: All keywords in product name (very specific match)
+    if (keywordsInName === searchKeywords.length && searchKeywords.length > 1) {
+      score += 150;
     }
     
-    // Bonus if all terms in product name specifically
-    if (termsFoundInName === searchTerms.length) {
-      score += 100; // Extra bonus if all in name
+    // Penalty: Missing keywords (progressively worse)
+    const missingKeywords = searchKeywords.length - keywordsMatched;
+    if (missingKeywords > 0) {
+      score -= missingKeywords * 50; // Heavy penalty for missing keywords
     }
     
-    // Also boost if we have most of the terms (for flexibility)
-    if (searchTerms.length >= 3 && termsFoundInCombined >= searchTerms.length - 1) {
-      score += 75; // Good boost for having almost all terms
-    }
-    
-    // Now score individual term matches
-    searchTerms.forEach(term => {
-      // Product name matches (very high priority)
-      if (productName.includes(term)) {
-        score += 20;
-        
-        // Extra boost if term is a significant word (not common words)
-        if (term.length > 4 && !['year', 'years', 'license'].includes(term)) {
-          score += 15; // Boost for important terms like "intercom", "camera", "access", "control"
+    // Check for compound phrases (multi-word matches in sequence)
+    if (searchKeywords.length >= 2) {
+      for (let i = 0; i < searchKeywords.length - 1; i++) {
+        const phrase = `${searchKeywords[i]} ${searchKeywords[i + 1]}`;
+        if (searchText.includes(phrase)) {
+          score += 40; // Bonus for maintaining word order
         }
       }
-      
-      // Match in brand (super high priority)
-      if (productBrand.includes(term)) {
-        score += 15; // Increased from 7 - brand matching is critical!
-      }
-      
-      // Match in type (VERY important for context - door license = access control type)
-      if (productType.includes(term)) {
-        score += 25; // Type matching is CRITICAL - "Door License" with "Access Control" type should match "access control" search
-      }
-      
-      // Match in combined text (catches cross-field matches)
-      if (combinedSearchText.includes(term)) {
-        score += 5; // General bonus for being somewhere in the product
-      }
-      
-      // Match in tags
-      if ((product.product_tags || []).some((tag: string) => tag.toLowerCase().includes(term))) {
-        score += 4;
-      }
-      
-      // Match in description (lowest priority)
-      if (description.includes(term)) {
-        score += 2;
-      }
-    });
+    }
     
-    // Penalty: If a critical search term is missing from COMBINED text (name + type), reduce score
-    const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
-    const brandTerms = searchTerms.filter(t => commonBrands.includes(t));
+    // NEW: Lexical overlap scoring as a fallback/additive layer
+    // This handles cases where exact keyword matching fails due to:
+    // - singular/plural differences (material vs materials)
+    // - partial token matches (misc should contribute even if "miscellaneous")
+    const lexicalScore = computeLexicalOverlapScore(
+      searchKeywords,
+      product.product_name || '',
+      product.product_family_name || '',
+      product.description || '',
+      product.product_type || ''
+    );
     
-    criticalTerms.forEach(term => {
-      // Skip brand terms (already handled above with massive penalty)
-      if (!brandTerms.includes(term) && !combinedSearchText.includes(term)) {
-        score -= 30; // Penalty for missing important terms like "intercom", "camera", "access", "control"
-      }
-    });
+    // If existing score is 0 or negative but we have lexical overlap, use lexical score
+    // Otherwise, add lexical score as a bonus to the existing score
+    if (score <= 0 && lexicalScore > 0) {
+      score = lexicalScore;
+      console.log(`   🔧 Lexical fallback for "${product.product_name}": score was ${score <= 0 ? '≤0' : score}, lexical: ${lexicalScore}, final: ${score}`);
+    } else if (lexicalScore > 0) {
+      // Add a portion of lexical score as bonus (don't double-count matches)
+      const oldScore = score;
+      score += Math.floor(lexicalScore * 0.3);
+      console.log(`   ➕ Lexical bonus for "${product.product_name}": ${oldScore} + ${Math.floor(lexicalScore * 0.3)} = ${score}`);
+    }
+    
+    // Debug logging for products containing "misc" or "material" in name
+    if (product.product_name && (product.product_name.toLowerCase().includes('misc') || product.product_name.toLowerCase().includes('material'))) {
+      console.log(`   📊 Score breakdown for "${product.product_name}":`, {
+        keywordsMatched: `${keywordsMatched}/${searchKeywords.length}`,
+        keywordsInName,
+        keywordsInBrand,
+        keywordsInType,
+        missingKeywords: searchKeywords.length - keywordsMatched,
+        lexicalScore,
+        finalScore: score
+      });
+    }
     
     return { product, score };
   });
   
-  // Sort all results by score (include negative scores if nothing better found)
   const sorted = scored.sort((a, b) => b.score - a.score);
   
-  // Filter: prefer positive scores, but if we have less than 5 results, include some negative ones
-  const positive = sorted.filter(item => item.score > 0);
-  const filtered = positive.length >= 5 ? positive : sorted.slice(0, 20);
+  // Only return products with positive scores (at least some keyword matches)
+  const results = sorted.filter(item => item.score > 0).slice(0, 20);
   
-  const commonBrands = ['verkada', 'rhombus', 'hikvision', 'axis', 'hanwha', 'genetec', 'milestone'];
+  console.log(`📦 Found ${results.length} products with positive scores. Top 5:`, results.slice(0, 5).map(item => ({
+    name: item.product.product_name,
+    type: item.product.product_type,
+    brand: item.product.product_brand,
+    score: item.score
+  })));
   
-  // If we have critical terms (like "intercom", "camera", etc), ensure top results contain them
-  const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t) && !commonBrands.includes(t));
-  if (criticalTerms.length > 0) {
-    // Prioritize results that contain ALL critical terms in combined text (name + type)
-    const withCriticalTerms = filtered.filter(item => {
-      const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
-      return criticalTerms.every(term => combined.includes(term));
+  // Show examples of lexical overlap helping (for debugging singular/plural, etc.)
+  const lexicalHelpedProducts = scored.filter(item => {
+    // Check if this product would have scored 0 without lexical overlap
+    const lexicalScore = computeLexicalOverlapScore(
+      searchKeywords,
+      item.product.product_name || '',
+      item.product.product_family_name || '',
+      item.product.description || '',
+      item.product.product_type || ''
+    );
+    return item.score > 0 && lexicalScore > 0 && item.score <= lexicalScore * 1.5;
+  }).slice(0, 3);
+  
+  if (lexicalHelpedProducts.length > 0) {
+    console.log(`🔤 Lexical overlap rescued ${lexicalHelpedProducts.length} products that would have scored 0:`, 
+      lexicalHelpedProducts.map(item => ({
+        name: item.product.product_name,
+        score: item.score
+      }))
+    );
+  }
+  
+  // If no positive scores, return empty (will trigger "not found" message)
+  if (results.length === 0) {
+    console.log('❌ No products with positive keyword match scores. Returning empty.');
+    return [];
+  }
+  
+  return results;
+}
+
+function searchProducts(products: any[], keywords: string): any[] {
+  return searchProductsWithScores(products, keywords).map(item => item.product);
+}
+
+// ============================================================================
+// ENHANCED TYPES FOR CONVERSATIONAL AI
+// ============================================================================
+
+/**
+ * Enhanced RequestedItem with fields for natural language understanding.
+ * This allows the LLM to capture nuanced details like duration, modifiers, corrections.
+ */
+interface EnhancedRequestedItem {
+  rawText: string;              // Original user phrase
+  item: string;                 // Cleaned item name
+  brand?: string;               // e.g., "Verkada", "Acme"
+  productType?: string;         // e.g., "camera", "license", "cable"
+  productFamily?: string;       // e.g., "Security", "Networking"
+  duration?: string;            // e.g., "1-year", "5-year", "10-year"
+  subtype?: string;             // e.g., "dome", "bullet", "mini dome"
+  quantity?: number;            // How many
+  unit?: string | null;         // e.g., "ea", "boxes", "rolls"
+  budget?: number | null;       // Dollar amount if specified
+  modifiers?: string[];         // e.g., ["not 5-year", "outdoor version", "cheapest"]
+  keywords?: string;            // Combined search string for price book
+  action?: 'add' | 'replace' | 'remove'; // What to do with this item
+  replaces?: string;            // If action='replace', what item it replaces
+}
+
+/**
+ * Conversation state for tracking context across messages.
+ * Enables ChatGPT-like intelligence: "add 5 more", "not the 5-year", "replace those with".
+ */
+interface ConversationState {
+  lastRequestedItems: EnhancedRequestedItem[];  // What was in the previous message
+  accumulatedItems: EnhancedRequestedItem[];    // Running list of all items discussed
+  lastUserMessage: string;                      // For reference
+}
+
+// Legacy interface for backward compatibility with existing code
+interface RequestedItem {
+  item: string;
+  quantity?: number;
+  unit?: string | null;
+  budget?: number | null;
+  rawText?: string;
+  keywords?: string;
+}
+
+interface UnfulfilledRequest {
+  requestedText: string;
+  reason: string;
+}
+
+// ============================================================================
+// CONVERSATIONAL AI FUNCTIONS
+// ============================================================================
+
+/**
+ * Uses LLM to extract structured items from natural language.
+ * Understands corrections, negations, and context.
+ * 
+ * Examples:
+ * - "I need the 1-year license, not the 5-year" → duration: "1-year", modifiers: ["not 5-year"]
+ * - "Replace domes with mini domes" → action: "replace", replaces: "domes"
+ * - "Add 5 more solar units" → quantity: 5, productType: "solar units"
+ */
+async function extractRequestedItems(
+  message: string,
+  conversationState: ConversationState,
+  openai: OpenAI
+): Promise<EnhancedRequestedItem[]> {
+  const extractionPrompt = `You are an expert at parsing natural language requests for products and services.
+
+**Your task:** Extract structured item requests from the user's message.
+
+**User's message:** "${message}"
+
+**Previous context:**
+${conversationState.lastRequestedItems.length > 0 
+  ? `Last items discussed: ${conversationState.lastRequestedItems.map(i => `${i.quantity || 1}x ${i.item}${i.duration ? ` (${i.duration})` : ''}`).join(', ')}`
+  : 'No previous items'
+}
+
+**CRITICAL INSTRUCTIONS FOR DURATION:**
+
+Duration is a **STRICT, NON-SUBSTITUTABLE CONSTRAINT**. Pay extreme attention:
+
+1. **Normalize duration formats:**
+   - "1 year", "1-year", "one year" → "1-year"
+   - "5 year", "5-year", "five year" → "5-year"
+   - "10 year", "10-year", "ten year" → "10-year"
+
+2. **Duration in corrections:**
+   - "I need the **1 year** license, **not the 5 year**" 
+     → Extract: duration="1-year", action="replace", replaces="5-year license"
+   - This is a CORRECTION, not two separate requests!
+   - Only extract the CORRECTED duration (1-year), not both
+
+3. **Multiple items with different durations:**
+   - "5 environmental sensors and (5) 1 year verkada camera license"
+     → Extract TWO items:
+     1. sensors (no duration)
+     2. license (duration="1-year", quantity=5)
+
+**Instructions:**
+1. Identify ALL product/service requests in the message
+2. Extract these fields for each item:
+   - rawText: the exact phrase from user
+   - item: cleaned product name
+   - brand: if mentioned (e.g., "Verkada", "Acme")
+   - productType: general category (e.g., "camera", "license", "cable")
+   - **duration: REQUIRED if time-based** (e.g., "1-year", "5-year", "10-year") - USE NORMALIZED FORMAT
+   - subtype: specific variant (e.g., "dome", "bullet", "mini dome", "outdoor")
+   - quantity: number requested
+   - unit: if specified (e.g., "ea", "boxes", "rolls")
+   - budget: dollar amount if given
+   - modifiers: array of constraints like ["not 5-year", "outdoor version", "cheapest"]
+   - action: "add" (default), "replace", or "remove"
+   - replaces: if replacing/correcting, what duration/item is being replaced
+
+3. **Handle corrections and negations:**
+   - "not the 5-year" → This is a CORRECTION: action="replace", replaces="5-year license", ONLY extract the wanted duration
+   - "instead of X" → action="replace", replaces="X"
+   - "replace X with Y" → action="replace", replaces="X"
+
+4. **Understand references:**
+   - "5 more of those" → refer to previous items
+   - "the solar units we talked about" → refer to context
+
+**EXAMPLES:**
+
+Example 1:
+Input: "Give me (5) 1 year verkada camera license"
+Output:
+[
+  {
+    "rawText": "(5) 1 year verkada camera license",
+    "item": "verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 5,
+    "action": "add"
+  }
+]
+
+Example 2:
+Input: "i need 5 environmental sensors and (5) 1 year verkada camera license"
+Output:
+[
+  {
+    "rawText": "5 environmental sensors",
+    "item": "environmental sensors",
+    "quantity": 5,
+    "action": "add"
+  },
+  {
+    "rawText": "(5) 1 year verkada camera license",
+    "item": "verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 5,
+    "action": "add"
+  }
+]
+
+Example 3:
+Input: "I need the 1 year verkada camera license not the 5"
+Output:
+[
+  {
+    "rawText": "1 year verkada camera license not the 5",
+    "item": "verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 1,
+    "action": "replace",
+    "replaces": "5-year license"
+  }
+]
+
+**CRITICAL RULES FOR DURATION:**
+- "1 year", "1-year", "one year", "1 yr" → ALWAYS extract as duration: "1-year"
+- "5 year", "5-year", "five year", "5 yr" → ALWAYS extract as duration: "5-year"
+- "10 year", "10-year", "ten year", "10 yr" → ALWAYS extract as duration: "10-year"
+- Do NOT drop duration when parsing quantities like "(5) 1 year"
+- Duration is MANDATORY for license/subscription products
+
+**CRITICAL:** Return ONLY the JSON array, no other text.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a JSON extraction expert. Output only valid JSON." },
+        { role: "user", content: extractionPrompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
     });
+
+    const responseText = completion.choices[0].message.content?.trim() || '[]';
     
-    // If we found products with critical terms, prioritize them
-    if (withCriticalTerms.length > 0) {
-      const others = filtered.filter(item => {
-        const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
-        return !criticalTerms.every(term => combined.includes(term));
-      });
+    // Remove markdown code fences if present
+    const jsonText = responseText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    
+    const extracted = JSON.parse(jsonText) as EnhancedRequestedItem[];
+    
+    console.log('🧠 LLM extracted items:', extracted);
+    
+    return extracted;
+  } catch (error) {
+    console.error('❌ Failed to extract items via LLM:', error);
+    // Fallback: basic extraction
+    return [{
+      rawText: message,
+      item: message,
+      quantity: 1,
+      action: 'add'
+    }];
+  }
+}
+
+/**
+ * Updates conversation state with new items, handling corrections and replacements.
+ * Enables "replace the domes with mini domes" type intelligence.
+ * 
+ * CRITICAL: Handles duration corrections properly:
+ * - "not the 5-year" removes 5-year items
+ * - Only keeps items with correct duration
+ */
+function updateConversationState(
+  extractedItems: EnhancedRequestedItem[],
+  currentState: ConversationState,
+  userMessage: string
+): ConversationState {
+  let accumulated = [...currentState.accumulatedItems];
+  
+  extractedItems.forEach(item => {
+    if (item.action === 'remove') {
+      // Remove items matching this description
+      accumulated = accumulated.filter(existing => 
+        !existing.item.toLowerCase().includes(item.item.toLowerCase())
+      );
+      console.log(`🗑️  Removed items matching: ${item.item}`);
       
-      return [
-        ...withCriticalTerms.sort((a, b) => b.score - a.score),
-        ...others.sort((a, b) => b.score - a.score)
-      ]
-        .slice(0, 20)
-        .map(item => item.product);
+    } else if (item.action === 'replace') {
+      // Handle replacement - this includes duration corrections
+      
+      // If replaces contains duration info (e.g., "5-year license")
+      if (item.replaces) {
+        const replacesLower = item.replaces.toLowerCase();
+        
+        // Remove items that match the "replaces" description
+        accumulated = accumulated.filter(existing => {
+          const existingDesc = `${existing.duration || ''} ${existing.item}`.toLowerCase();
+          const matches = existingDesc.includes(replacesLower) || 
+                         existing.item.toLowerCase().includes(replacesLower);
+          
+          if (matches) {
+            console.log(`🔄 Removing old item: ${existing.duration || ''} ${existing.item} (replaced by ${item.duration || ''} ${item.item})`);
+            return false;
+          }
+          return true;
+        });
+      }
+      
+      // Also remove items with same productType but DIFFERENT duration
+      if (item.duration && item.productType) {
+        accumulated = accumulated.filter(existing => {
+          // Same type but different duration = needs replacement
+          const sameType = existing.productType?.toLowerCase() === item.productType?.toLowerCase() ||
+                          existing.item.toLowerCase().includes(item.productType.toLowerCase());
+          const differentDuration = existing.duration && existing.duration !== item.duration;
+          
+          if (sameType && differentDuration) {
+            console.log(`🔄 Removing conflicting duration: ${existing.duration} ${existing.item} (replaced by ${item.duration} ${item.item})`);
+            return false;
+          }
+          return true;
+        });
+      }
+      
+      // Add the new item
+      accumulated.push(item);
+      console.log(`✅ Replaced with: ${item.quantity || 1}x ${item.duration || ''} ${item.item}`);
+      
+    } else {
+      // Default: add item
+      accumulated.push(item);
+      console.log(`➕ Added: ${item.quantity || 1}x ${item.duration || ''} ${item.item}`);
+    }
+  });
+  
+  return {
+    lastRequestedItems: extractedItems,
+    accumulatedItems: accumulated,
+    lastUserMessage: userMessage,
+  };
+}
+
+/**
+ * Converts EnhancedRequestedItem to keywords string for price book search.
+ * Combines all relevant fields into a searchable string.
+ */
+function buildSearchKeywordsFromItem(item: EnhancedRequestedItem): string {
+  const parts = [
+    item.brand,
+    item.duration,
+    item.productType,
+    item.subtype,
+    item.item,
+  ].filter(Boolean);
+  
+  return parts.join(' ');
+}
+
+/**
+ * Normalizes duration string for flexible matching.
+ * "1-year", "1 year", "1year" all become ["1", "year", "1 year", "1-year"]
+ */
+function normalizeDuration(duration: string): string[] {
+  if (!duration) return [];
+  
+  const lower = duration.toLowerCase().trim();
+  const variants: string[] = [lower]; // Original
+  
+  // Extract number and "year"
+  const match = lower.match(/(\d+)[\s-]*(year|yr)/);
+  if (match) {
+    const num = match[1];
+    variants.push(`${num} year`);
+    variants.push(`${num}-year`);
+    variants.push(`${num}year`);
+    variants.push(`${num} yr`);
+    variants.push(`${num}-yr`);
+  }
+  
+  return variants;
+}
+
+/**
+ * Checks if a product satisfies hard constraints (especially duration).
+ * Returns true if all hard constraints are met, false otherwise.
+ * 
+ * Hard constraints:
+ * - duration: If specified, product MUST contain the duration in searchable text
+ */
+function meetsHardConstraints(product: any, item: EnhancedRequestedItem, verbose: boolean = false): boolean {
+  const searchText = buildSearchText(product);
+  
+  // CRITICAL: Duration is a hard constraint
+  if (item.duration) {
+    const durationVariants = normalizeDuration(item.duration);
+    const hasDuration = durationVariants.some(variant => searchText.includes(variant));
+    
+    if (verbose || !hasDuration) {
+      console.log(`   ${hasDuration ? '✓' : '✗'} Product: "${product.product_name}"`);
+      console.log(`      Duration required: ${item.duration}`);
+      console.log(`      Variants checked: [${durationVariants.join(', ')}]`);
+      console.log(`      SearchText: "${searchText.substring(0, 150)}${searchText.length > 150 ? '...' : ''}"`);
+      console.log(`      Result: ${hasDuration ? 'PASS' : 'FAIL'}`);
+    }
+    
+    if (!hasDuration) {
+      return false;
     }
   }
   
-  // Default: sort by score
-  const results = filtered
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20)
-    .map(item => item.product);
+  // Future: Add other hard constraints here (exact model codes, etc.)
   
-  console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(p => ({
-    name: p.product_name,
-    type: p.product_type,
-    brand: p.product_brand
-  })));
+  return true;
+}
+
+/**
+ * Minimum score required to consider a product match valid.
+ * If best match score is below this, treat as "not found".
+ * 
+ * Score guide:
+ * - 100+ = All keywords matched across fields (good match)
+ * - 50-99 = Partial keyword matches (questionable)
+ * - <50 = Weak match, likely wrong product
+ */
+const MATCH_CONFIDENCE_THRESHOLD = 50;
+
+/**
+ * HYBRID SEARCH ENGINE MODEL (Option B)
+ * 
+ * Maximum number of products to show per requested item when matches are ambiguous.
+ * Examples:
+ * - "misc material" → shows up to 4 misc-related SKUs
+ * - "outdoor cameras" → shows up to 4 outdoor camera models
+ */
+const MAX_PER_ITEM = 4;
+
+/**
+ * Score difference threshold to determine if a match is "precise" vs "ambiguous".
+ * 
+ * If the top match's score is >= CLEAR_WINNER_DELTA higher than the second match,
+ * we treat it as a precise request and return only that single product.
+ * 
+ * Otherwise, we treat it as ambiguous and return multiple matches (up to MAX_PER_ITEM).
+ * 
+ * Examples:
+ * - Top score: 520, Second: 480 → Delta 40 → Single precise match
+ * - Top score: 520, Second: 510 → Delta 10 → Ambiguous, show multiple
+ */
+const CLEAR_WINNER_DELTA = 30;
+
+/**
+ * Decides whether to return a single "precise" match or multiple "ambiguous" matches.
+ * 
+ * Decision logic:
+ * 1. If only 1 match exists → return it (precise)
+ * 2. If top match's score is CLEAR_WINNER_DELTA higher than second → return only top match (precise)
+ * 3. Otherwise → return up to MAX_PER_ITEM matches (ambiguous, like a search engine)
+ * 
+ * @param exactMatches - Products that passed hard constraints, sorted by score descending
+ * @returns Selected products to show user (1 for precise, N for ambiguous)
+ */
+function selectExactMatchesForItem(exactMatches: any[]): any[] {
+  if (exactMatches.length === 0) return [];
   
-  return results;
+  // Case 1: Only one match → precise, return it
+  if (exactMatches.length === 1) {
+    console.log(`      → Precise: single match found`);
+    return [exactMatches[0]];
+  }
+  
+  // Case 2: Multiple matches - check score gap between top 2
+  const [first, second] = exactMatches;
+  const scoreDelta = first.score - second.score;
+  
+  console.log(`      → Score gap between top 2: ${scoreDelta} (threshold: ${CLEAR_WINNER_DELTA})`);
+  
+  // If the top result is clearly better → treat as precise, single result
+  if (scoreDelta >= CLEAR_WINNER_DELTA) {
+    console.log(`      → Precise: clear winner (score gap ${scoreDelta} >= ${CLEAR_WINNER_DELTA})`);
+    return [first];
+  }
+  
+  // Otherwise, ambiguous → return up to MAX_PER_ITEM matches
+  const selected = exactMatches.slice(0, MAX_PER_ITEM);
+  console.log(`      → Ambiguous: returning ${selected.length} matches (max ${MAX_PER_ITEM})`);
+  return selected;
+}
+
+/**
+ * Enhanced matching with hard constraint enforcement.
+ * Accepts EnhancedRequestedItem[] and enforces duration constraints.
+ * 
+ * NEW (Option B): Returns multiple products per item when matches are ambiguous,
+ * like a search engine. This applies from the FIRST message onwards.
+ * 
+ * THREE-TIER SCORING SYSTEM:
+ * - Score ≥ 50: Auto-add to "Suggested Products"
+ * - Score 1-49: Show as "possible matches" in chat (user can manually add)
+ * - Score 0: Don't show (completely unrelated)
+ */
+function matchEnhancedRequestsToPriceBook(
+  requestedItems: EnhancedRequestedItem[], 
+  products: any[]
+): { suggestions: any[]; lowConfidenceMatches: any[]; unfulfilled: UnfulfilledRequest[] } {
+  const suggestionsMap = new Map<string, any>();
+  const lowConfidenceMap = new Map<string, any>();
+  const unfulfilled: UnfulfilledRequest[] = [];
+
+  if (!requestedItems || requestedItems.length === 0) {
+    return { suggestions: [], lowConfidenceMatches: [], unfulfilled };
+  }
+
+  requestedItems.forEach((request) => {
+    const keywords = buildSearchKeywordsFromItem(request);
+    
+    if (!keywords || keywords.trim() === '') {
+      unfulfilled.push({
+        requestedText: request.item || request.rawText || 'Unknown item',
+        reason: 'No recognizable keywords were provided for matching',
+      });
+      return;
+    }
+
+    console.log(`\n🔍 Matching item: ${request.item}${request.duration ? ` (${request.duration})` : ''}`);
+    console.log(`   Keywords: ${keywords}`);
+    console.log(`   Duration constraint: ${request.duration || 'none'}`);
+
+    const results = searchProductsWithScores(products, keywords);
+    
+    // DEBUG: Show top candidate products BEFORE hard constraints
+    console.log(`\n   📊 Top 5 candidates BEFORE hard constraints:`);
+    results.slice(0, 5).forEach((r, idx) => {
+      const searchText = buildSearchText(r.product);
+      console.log(`      ${idx + 1}. "${r.product.product_name}" (score: ${r.score})`);
+      console.log(`         SearchText: ${searchText.substring(0, 120)}...`);
+    });
+    
+    // CRITICAL: Filter results by hard constraints (especially duration)
+    if (request.duration) {
+      const durationVariants = normalizeDuration(request.duration);
+      console.log(`\n   🔒 Applying duration constraint: ${durationVariants.join(', ')}`);
+    }
+    
+    const validResults = results.filter(result => {
+      const passes = meetsHardConstraints(result.product, request);
+      if (!passes && results.indexOf(result) < 3) {
+        // Log why top 3 failed
+        console.log(`      ❌ "${result.product.product_name}" failed hard constraints`);
+      }
+      return passes;
+    });
+    
+    console.log(`\n   ✅ Result: ${results.length} keyword matches → ${validResults.length} after hard constraints`);
+    
+    // THREE-TIER SCORING SYSTEM:
+    // 1. Score >= 50: High confidence, auto-add to Suggested Products
+    // 2. Score 1-49: Low confidence, show as possible matches (user can manually add)
+    // 3. Score 0: No relevance, don't show
+    
+    // Step 1: Filter high-confidence results
+    const highConfidenceResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
+    
+    // Step 2: Build a Set of high-confidence product IDs to prevent duplicates
+    const highConfidenceIds = new Set(
+      highConfidenceResults.map(r => r.product.id || r.product.product_name?.toLowerCase().trim())
+    );
+    
+    // Step 3: Filter low-confidence results, EXCLUDING any that are already in high-confidence
+    const lowConfidenceResultsRaw = validResults.filter(r => r.score > 0 && r.score < MATCH_CONFIDENCE_THRESHOLD);
+    const lowConfidenceResults = lowConfidenceResultsRaw.filter(r => {
+      const productId = r.product.id || r.product.product_name?.toLowerCase().trim();
+      return !highConfidenceIds.has(productId);
+    });
+    
+    console.log(`   📊 Score breakdown: ${highConfidenceResults.length} high-confidence (≥50), ${lowConfidenceResultsRaw.length} raw low-confidence, ${lowConfidenceResults.length} deduped low-confidence (1-49)`);
+    
+    // Process high-confidence matches (auto-add)
+    const selectedMatches = selectExactMatchesForItem(highConfidenceResults);
+
+    if (selectedMatches.length > 0) {
+      // Add ALL selected matches to suggestions (auto-add to quote)
+      console.log(`   ✅ Auto-adding ${selectedMatches.length} high-confidence product(s):`);
+      
+      selectedMatches.forEach((matchResult, idx) => {
+        const product = matchResult.product;
+        const matchScore = matchResult.score;
+        
+        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
+        
+      const key = product.id || product.product_name?.toLowerCase().trim();
+      const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+      const quantityValue = Number(requestedQuantity);
+      const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+      const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+      const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+      const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+      const computedLineTotal = hasBudget
+        ? Number(parsedBudget)
+        : unitPrice * quantity;
+      const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+      if (suggestionsMap.has(key)) {
+        const existing = suggestionsMap.get(key);
+        existing.quantity += quantity;
+        existing.line_total += computedLineTotal;
+        existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
+        existing.matched_requests.push(request.item || keywords);
+      } else {
+        suggestionsMap.set(key, {
+          product_id: product.id,
+          product_name: product.product_name,
+          description: product.description,
+          quantity,
+          unit_price: Number(derivedUnitPrice.toFixed(2)),
+          line_total: Number(computedLineTotal.toFixed(2)),
+          quantity_unit: request.unit || product.unit || null,
+          price_unit: product.unit || null,
+          product_brand: product.product_brand,
+          product_type: product.product_type,
+            match_confidence: matchScore,
+          matched_requests: [request.item || keywords],
+        });
+      }
+      });
+    }
+    
+    // Process low-confidence matches (show but don't auto-add)
+    if (lowConfidenceResults.length > 0) {
+      console.log(`   💡 Showing ${lowConfidenceResults.length} low-confidence match(es) as suggestions:`);
+      
+      const selectedLowConfidence = lowConfidenceResults.slice(0, MAX_PER_ITEM);
+      
+      selectedLowConfidence.forEach((matchResult, idx) => {
+        const product = matchResult.product;
+        const matchScore = matchResult.score;
+        
+        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
+        
+        const key = product.id || product.product_name?.toLowerCase().trim();
+        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+        const quantityValue = Number(requestedQuantity);
+        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+        const computedLineTotal = hasBudget
+          ? Number(parsedBudget)
+          : unitPrice * quantity;
+        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+        if (!lowConfidenceMap.has(key)) {
+          lowConfidenceMap.set(key, {
+            product_id: product.id,
+            product_name: product.product_name,
+            description: product.description,
+            quantity,
+            unit_price: Number(derivedUnitPrice.toFixed(2)),
+            line_total: Number(computedLineTotal.toFixed(2)),
+            quantity_unit: request.unit || product.unit || null,
+            price_unit: product.unit || null,
+            product_brand: product.product_brand,
+            product_type: product.product_type,
+            match_confidence: matchScore,
+            matched_requests: [request.item || keywords],
+            requested_item: request.item || keywords, // Track what user asked for
+          });
+        }
+      });
+    }
+    
+    // If no matches at all (not even low confidence), add to unfulfilled
+    if (selectedMatches.length === 0 && lowConfidenceResults.length === 0) {
+      // No exact match found - build detailed error message with close matches
+      let reason = '';
+      const closeMatchProducts: any[] = [];
+      
+      if (request.duration) {
+        // Duration constraint not met - show close matches WITHOUT the duration requirement
+        reason = `No products in your price book contain "${request.duration}" for this item.`;
+        
+        // Show top N products that match keywords but not duration (alternatives only)
+        const topWithoutDuration = results.slice(0, MAX_PER_ITEM);
+        if (topWithoutDuration.length > 0) {
+          reason += `\n\nClosest matches (without "${request.duration}"):\n`;
+          topWithoutDuration.forEach((r, idx) => {
+            const matchInfo = `${idx + 1}. ${r.product.product_name}`;
+            closeMatchProducts.push(r);
+            reason += `  • ${matchInfo}\n`;
+          });
+          reason += '\nThese products were NOT added because they don\'t have the required duration.';
+        }
+    } else {
+        // General keyword mismatch - show top N by keyword score (alternatives only)
+        const requestKeywords = extractKeywords(keywords);
+        const keywordList = requestKeywords.length > 0 ? requestKeywords.join(', ') : 'these terms';
+        
+        if (results.length > 0) {
+          const topN = results.slice(0, MAX_PER_ITEM);
+          reason = `No products in your price book closely match this request. Closest matches:\n`;
+          topN.forEach((r, idx) => {
+            const matchInfo = `${idx + 1}. ${r.product.product_name}`;
+            closeMatchProducts.push(r);
+            reason += `  • ${matchInfo}\n`;
+          });
+          reason += `\nSearched for keywords: ${keywordList}`;
+        } else {
+          reason = `No products in your price book contain these keywords: ${keywordList}`;
+        }
+      }
+      
+      console.log(`   ❌ Not matched: ${reason.split('\n')[0]}`);
+      if (closeMatchProducts.length > 0) {
+        console.log(`   📋 Close matches shown: ${closeMatchProducts.length}`);
+        
+        // CRITICAL: Add these close matches to lowConfidenceMap so they appear in UI with + Add to Quote
+        // This ensures every product mentioned in "Closest matches" text also appears with a button
+        closeMatchProducts.forEach((matchResult) => {
+          const product = matchResult.product;
+          const matchScore = matchResult.score;
+          const key = product.id || product.product_name?.toLowerCase().trim();
+          
+          // Don't add if already in the map
+          if (!lowConfidenceMap.has(key)) {
+            const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+            const quantityValue = Number(requestedQuantity);
+            const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+            const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+            const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+            const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+            const computedLineTotal = hasBudget ? Number(parsedBudget) : unitPrice * quantity;
+            const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+
+            lowConfidenceMap.set(key, {
+              product_id: product.id,
+              product_name: product.product_name,
+              description: product.description,
+              quantity,
+              unit_price: Number(derivedUnitPrice.toFixed(2)),
+              line_total: Number(computedLineTotal.toFixed(2)),
+              quantity_unit: request.unit || product.unit || null,
+              price_unit: product.unit || null,
+              product_brand: product.product_brand,
+              product_type: product.product_type,
+              match_confidence: matchScore,
+              matched_requests: [request.item || keywords],
+              requested_item: request.item || keywords, // Track what user asked for
+            });
+            
+            console.log(`      💡 Added "${product.product_name}" (score: ${matchScore}) to low-confidence matches`);
+          }
+        });
+      }
+      
+      unfulfilled.push({
+        requestedText: `${request.duration ? request.duration + ' ' : ''}${request.item}`,
+        reason,
+      });
+    }
+  });
+
+  const suggestions = Array.from(suggestionsMap.values());
+  const lowConfidenceMatches = Array.from(lowConfidenceMap.values());
+  
+  console.log(`\n🎯 Final results: ${suggestions.length} auto-added, ${lowConfidenceMatches.length} suggested, ${unfulfilled.length} unfulfilled`);
+  
+  return { suggestions, lowConfidenceMatches, unfulfilled };
+}
+
+/**
+ * Legacy matching function - kept for backward compatibility.
+ * New code should use matchEnhancedRequestsToPriceBook instead.
+ */
+function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any[]) {
+  // Convert to enhanced items
+  const enhancedItems: EnhancedRequestedItem[] = requestedItems.map(item => ({
+    rawText: item.rawText || item.item,
+    item: item.item,
+    quantity: item.quantity,
+    unit: item.unit,
+    budget: item.budget,
+    keywords: item.keywords,
+    action: 'add'
+  }));
+  
+  return matchEnhancedRequestsToPriceBook(enhancedItems, products);
+}
+
+function buildWorkSummaryText(suggestions: any[], unfulfilled: UnfulfilledRequest[]) {
+  const lines: string[] = [];
+  lines.push('**Work Summary:**');
+
+  if (suggestions.length === 0) {
+    lines.push('• No products were added yet.');
+  } else {
+    suggestions.forEach((item) => {
+      const qtyUnit = item.quantity_unit ? ` ${item.quantity_unit}` : '';
+      const amount =
+        typeof item.line_total === 'number' && item.line_total > 0
+          ? ` — $${item.line_total.toFixed(2)}`
+          : '';
+      lines.push(`✓ Added ${item.product_name} (Qty: ${item.quantity}${qtyUnit})${amount}`);
+    });
+  }
+
+  if (unfulfilled.length > 0) {
+    lines.push('');
+    lines.push("**Couldn't Add (Not Found in Price Book):**");
+    unfulfilled.forEach((item) => {
+      lines.push(`❌ ${item.requestedText} — ${item.reason}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+function stripExistingWorkSummary(message: string): string {
+  const workSummaryRegex = /work summary:[\s\S]*?(?=(next steps|$))/i;
+  return message.replace(workSummaryRegex, '').trim();
 }
 
 // Helper function to analyze conversation context
@@ -332,6 +1236,89 @@ export async function POST(req: NextRequest) {
     // Get conversation context - analyze what's been discussed
     const conversationSummary = analyzeConversationContext(history);
 
+    // ============================================================================
+    // PHASE 1: LLM-POWERED INTENT EXTRACTION (Conversational Intelligence)
+    // ============================================================================
+    
+    // Initialize conversation state from history or create new
+    let conversationState: ConversationState = {
+      lastRequestedItems: [],
+      accumulatedItems: [],
+      lastUserMessage: '',
+    };
+    
+    // Try to load state from current session if available
+    if (currentState?.conversationState) {
+      conversationState = currentState.conversationState;
+      console.log('📖 Loaded conversation state from session:', {
+        lastItems: conversationState.lastRequestedItems.length,
+        accumulated: conversationState.accumulatedItems.length
+      });
+    }
+    
+    // Extract structured items from user's natural language
+    console.log('🧠 Phase 1: Extracting structured items from user message...');
+    console.log(`   User message: "${message}"`);
+    const extractedItems = await extractRequestedItems(message, conversationState, openai);
+    console.log('✅ Extracted items:', extractedItems.map(i => `${i.quantity || 1}x ${i.item} (${i.duration || 'no duration'})`));
+    console.log('📋 DEBUG: Full extracted items:', JSON.stringify(extractedItems, null, 2));
+    
+    // Update conversation state with new items (handles corrections, replacements)
+    conversationState = updateConversationState(extractedItems, conversationState, message);
+    console.log('📝 Updated conversation state:', {
+      newItems: extractedItems.length,
+      totalAccumulated: conversationState.accumulatedItems.length
+    });
+    
+    // ============================================================================
+    // PHASE 2: STRICT PRICE BOOK MATCHING (Zero Hallucination)
+    // ============================================================================
+    
+    console.log('🔍 Phase 2: Matching against price book with strict hard constraints...');
+    console.log(`   Items to match (from CURRENT message only): ${extractedItems.length}`);
+    extractedItems.forEach((item, idx) => {
+      console.log(`   ${idx + 1}. ${item.quantity || 1}x ${item.duration ? item.duration + ' ' : ''}${item.item} (action: ${item.action || 'add'})`);
+    });
+    
+    // CRITICAL: Only match items from CURRENT message (extractedItems)
+    // Do NOT match accumulatedItems - that would introduce unrelated products
+    const { suggestions, lowConfidenceMatches, unfulfilled } = matchEnhancedRequestsToPriceBook(extractedItems, products);
+    
+    console.log('✅ Matching results:', {
+      autoAdded: suggestions.length,
+      suggested: lowConfidenceMatches.length,
+      unfulfilled: unfulfilled.length
+    });
+    
+    if (suggestions.length > 0) {
+      console.log('   Auto-added products (score ≥ 50):');
+      suggestions.forEach((s, idx) => {
+        console.log(`   ${idx + 1}. ${s.product_name} - Qty: ${s.quantity}, Price: $${s.unit_price}`);
+      });
+    }
+    
+    if (lowConfidenceMatches.length > 0) {
+      console.log('   Low-confidence suggestions (score 1-49):');
+      lowConfidenceMatches.forEach((s, idx) => {
+        console.log(`   ${idx + 1}. ${s.product_name} - Score: ${s.match_confidence}`);
+      });
+    }
+    
+    if (unfulfilled.length > 0) {
+      console.log('   Unfulfilled requests (score 0):');
+      unfulfilled.forEach((u, idx) => {
+        console.log(`   ${idx + 1}. ${u.requestedText} - ${u.reason}`);
+      });
+    }
+    
+    // CRITICAL: Store Phase 2 results to use after AI response generation
+    // These will be used to validate/override AI's product suggestions
+    const phase2MatchedProducts = suggestions;
+    const phase2LowConfidenceMatches = lowConfidenceMatches;
+    const phase2UnfulfilledRequests = unfulfilled;
+    
+    console.log('💾 Stored Phase 2 results for post-AI validation');
+
     // Build edit mode context if applicable
     let editModeContext = '';
     if (isEditMode && workingState?.quote_preview) {
@@ -367,6 +1354,35 @@ ${quotePreview.line_items?.map((item: any, idx: number) =>
 
     const systemPrompt = `You are an expert AI estimator and quote builder for ${project.project_name}.
 ${editModeContext}
+## 🤖 TWO-PHASE INTELLIGENCE SYSTEM:
+
+**Phase 1 (ALREADY DONE):** Natural language extraction with conversational intelligence
+- ✅ Your extraction engine has ALREADY parsed the user's message
+- ✅ It understood corrections like "not the 5-year", "instead of", "replace with"
+- ✅ It tracked conversation context and references to previous items
+- ✅ It extracted structured data: brand, duration, product type, modifiers
+
+**Phase 2 (ALREADY DONE):** Strict price book matching with zero hallucination
+- ✅ Extracted items were matched against the price book using field-based keyword search
+- ✅ Products found: ${suggestions.length} items
+- ✅ Products not found: ${unfulfilled.length} items
+- ✅ NO substitutions were made - only exact keyword matches returned
+
+**YOUR ROLE:**
+You are now in the **presentation layer**. Your job is to:
+1. Present the results conversationally in the Work Summary
+2. List successfully matched products in PRODUCT_DATA section
+3. List unfulfilled requests in "Couldn't Add" section
+4. Ask clarifying questions or suggest next steps
+
+**DO NOT:**
+- Re-extract items (already done)
+- Re-search the price book (already done)
+- Second-guess the matching results
+- Suggest products that weren't found
+
+**The hard work is done. Just present the results professionally.**
+
 ## ⚠️ CRITICAL RULES - READ CAREFULLY:
 
 **RULE #1:** Each of your responses REPLACES the previous product suggestions. Never accumulate or combine products from multiple messages.
@@ -377,6 +1393,17 @@ ${editModeContext}
 PRODUCT_DATA_START
 1. Product Name - Qty: X, Price: $XXX each = $XXX
 PRODUCT_DATA_END
+
+**RULE #4:** AFTER the PRODUCT_DATA block you MUST output \`REQUEST_DATA_START\` / \`REQUEST_DATA_END\` containing a VALID JSON array that summarizes EXACTLY what the user asked for in THIS message. Each object must include: 
+\`"item"\` (string), \`"quantity"\` (number), \`"unit"\` (string or null), \`"budget"\` (number or null), \`"rawText"\` (the exact words the user used), and optional \`"keywords"\`.
+
+Example:
+REQUEST_DATA_START
+[
+  { "item": "Acme widgets", "quantity": 4, "unit": "units", "budget": null, "rawText": "4 Acme widgets", "keywords": "acme widget" },
+  { "item": "Miscellaneous material", "quantity": 1, "unit": null, "budget": 150, "rawText": "$150 in misc material", "keywords": "miscellaneous material" }
+]
+REQUEST_DATA_END
 
 ## ❌ WRONG EXAMPLES (DO NOT DO THIS):
 
@@ -409,8 +1436,8 @@ PRODUCT_DATA_END
 **Each message = Fresh start. Only suggest what's in the current message.**
 
 **Example:**
-Current message: "I need one 5-year Verkada intercom license"
-Your PRODUCT_DATA section: ONLY that 1 license (not 5 products from history)
+Current message: "I need one premium widget from Acme"
+Your PRODUCT_DATA section: ONLY that 1 widget (not 5 products from history)
 
 ## Your Core Capabilities:
 1. **Agentic Intelligence**: You don't just ask static questions - you dynamically probe deeper based on responses
@@ -420,8 +1447,8 @@ Your PRODUCT_DATA section: ONLY that 1 license (not 5 products from history)
 
 ## Price Book Overview:
 - Total Products: ${totalProducts}
-${productTypes.size > 0 ? `- Available Product Types: ${Array.from(productTypes).join(', ')}` : ''}
-${productBrands.size > 0 ? `- Available Brands: ${Array.from(productBrands).join(', ')}` : ''}
+${productTypes.size > 0 ? '- Available Product Types: ' + Array.from(productTypes).join(', ') : ''}
+${productBrands.size > 0 ? '- Available Brands: ' + Array.from(productBrands).join(', ') : ''}
 
 ## CRITICAL: How to Find Products
 **ALWAYS use the search_price_book function to find products.** 
@@ -432,23 +1459,24 @@ ${productBrands.size > 0 ? `- Available Brands: ${Array.from(productBrands).join
 
 **Examples:**
 - User: "I need cameras" → search_price_book("camera")
-- User: "Hikvision dome cameras" → search_price_book("hikvision dome camera")
-- User: "Verkada 5-year intercom license" → search_price_book("verkada 5 year intercom license")
-- User: "Verkada 3-year access control license" → search_price_book("verkada 3 year access control license")
-- User: "8 Verkada 3-year access control licenses" → search_price_book("verkada 3 year access control license")
+- User: "Acme brand sprinkler heads" → search_price_book("acme sprinkler heads")
+- User: "5-year software license" → search_price_book("5 year software license")
+- User: "TPO roofing membrane" → search_price_book("tpo roofing membrane")
+- User: "8 boxes of cat6 cable" → search_price_book("cat6 cable")
 
-**CRITICAL:** When user specifies a brand (Verkada, Rhombus, etc.), ALWAYS include it in your search!
-- ❌ BAD: User says "Verkada 3-year access control license" → You search "3-year access control license" (missing brand!)
-- ✅ GOOD: User says "Verkada 3-year access control license" → You search "verkada 3 year access control license"
+**CRITICAL:** When user specifies a brand or specific product details, ALWAYS include them in your search!
+- ❌ BAD: User says "Acme brand widget" → You search "widget" (missing brand!)
+- ✅ GOOD: User says "Acme brand widget" → You search "acme widget"
 
-**CRITICAL - PRODUCT TYPES:** The search looks across product name, brand, AND product type fields!
+**CRITICAL - PRODUCT FIELDS:** The search looks across product name, code, brand, type, family AND description fields!
 
 Examples of how this works:
-- Product: "Door License" (name) + "Access Control" (type) + "Verkada" (brand)
-- User searches: "Verkada access control license" → PERFECT MATCH!
-- User searches: "Verkada door license" → PERFECT MATCH!
+- Product: "Premium Widget" (name) + "WID-100" (code) + "Hardware" (type) + "Acme" (brand)
+- User searches: "Acme hardware widget" → PERFECT MATCH!
+- User searches: "WID-100" → PERFECT MATCH (exact code match!)
+- User searches: "premium widget" → PERFECT MATCH (name match!)
 
-So when user says "access control" or "intercom" or "camera", include those words in your search even if you think the product might be named differently!
+Include ALL the keywords the user provides in your search - the system will find matches across all product fields!
 
 **CRITICAL: Selecting Products from Search Results**
 
@@ -461,18 +1489,53 @@ When you search and get results back:
 4. **DO NOT reject good matches** - if it has the key terms (intercom, camera, etc.), it's a match!
 
 **Examples:**
-- User: "5-year intercom license" 
-- Search finds: "Verkada 5-Year Intercom License" at $1,749
+- User: "5-year software license" 
+- Search finds: "Premium 5-Year Software License" at $1,749
 - ✅ **CORRECT:** Add this to PRODUCT_DATA section immediately!
 - ❌ **WRONG:** Saying "not found" when it's right there!
 
-- User: "intercom license"
-- Search finds: "3-Year Intercom License" ($599), "5-Year Intercom License" ($1,749), "10-Year Intercom License" ($2,999)
-- ✅ **CORRECT:** Suggest the 5-year (middle option) OR ask which duration they prefer
+- User: "roofing membrane"
+- Search finds: "TPO Membrane Roll" ($599), "EPDM Membrane Roll" ($749), "PVC Membrane Roll" ($899)
+- ✅ **CORRECT:** Suggest the first match OR ask which type they prefer
 - ❌ **WRONG:** Saying "not found" or "no exact match"
 
-**GOLDEN RULE: If search returns products with the key terms (intercom, camera, etc.) → USE THE FIRST GOOD MATCH!**
+**GOLDEN RULE: If search returns products with matching keywords → USE THE FIRST GOOD MATCH!**
 **Don't overthink it. Don't say "not found". Just use the product from the search results!**
+
+**🚨 CRITICAL: NEVER SUBSTITUTE PRODUCTS - KEYWORD MATCHING REQUIRED**
+
+Product matching is based on **keywords in the user's request matching keywords in your price book**:
+
+**STRICT RULES:**
+1. Products are matched by searching across: Product Name, Product Code, Product Brand, Product Type, Product Family, and Description
+2. If user asks for **specific keywords** (e.g., "bullet camera", "TPO membrane", "sprinkler head") and search returns NO results → Report "❌ Could not add [item] (not found in price book)"
+3. **NEVER suggest products that don't match the user's keywords**
+4. **NEVER substitute one product for another just because they're "similar"**
+5. If search returns empty results, the item should be reported as "Could not add" in the Work Summary
+
+**Examples of CORRECT behavior:**
+- User: "4 Acme Model X widgets"
+- Search: Returns no products containing both "acme" AND "model x"
+- ✅ **CORRECT:** Report "❌ Could not add Acme Model X widgets (no matching products in price book)"
+- ❌ **WRONG:** Suggesting a different widget model
+
+- User: "1 commercial grade compressor"
+- Search: Returns no results
+- ✅ **CORRECT:** Report "❌ Could not add commercial grade compressor (no matching products in price book)"
+- ❌ **WRONG:** Ignoring the request completely
+
+- User: "10 bags of mulch"
+- Search: Returns "Premium Hardwood Mulch Bag"
+- ✅ **CORRECT:** Suggest the mulch product (matches "mulch" and "bag")
+- ❌ **WRONG:** Saying "not found" when it matches the keywords
+
+**The matching is data-driven:**
+- Your price book determines what products exist
+- Matching is based on keywords the user provides
+- If keywords don't match any product fields → report as unfulfilled
+- If keywords DO match → suggest the product
+
+**If the user specifies keywords and you can't find matching products → TELL THEM. Never substitute or ignore.**
 
 ## Response Format - CRITICAL:
 Your response MUST be structured in TWO parts:
@@ -528,7 +1591,7 @@ Next Steps: Does this work?
 Does this work?
 
 PRODUCT_DATA_START
-1. Verkada 5-Year License - Qty: 1, Price: $999.00 each = $999.00
+1. Premium Widget License - Qty: 1, Price: $999.00 each = $999.00
 PRODUCT_DATA_END
 
 **If you don't include PRODUCT_DATA, the Suggested Products panel will be empty and the app breaks.**
@@ -559,9 +1622,9 @@ Labor pricing is DYNAMIC - calculate based on how user specifies it:
 - If user just says "add labor" with no specifics → Ask clarifying question about hours OR dollar amount
 
 **Examples:**
-✓ "16 hours of data labor" → Search for data labor, use 16 × hourly_rate
-✓ "access control labor at $3,000" → Search for access control labor, use Qty: 1 at $3,000
-✓ "put installation labor at 4000" → Search for installation labor, use Qty: 1 at $4,000
+✓ "16 hours of installation labor" → Search for installation labor, use 16 × hourly_rate
+✓ "project management labor at $3,000" → Search for project management labor, use Qty: 1 at $3,000
+✓ "put design work at 4000" → Search for design work, use Qty: 1 at $4,000
 ✓ "I need labor" → Ask: "How many hours do you need, or do you have a specific dollar amount in mind?"
 
 **Rules:**
@@ -586,16 +1649,16 @@ Labor pricing is DYNAMIC - calculate based on how user specifies it:
 
 - **Ask 2-4 targeted follow-up questions** that will help you recommend the right products
 - Use the product context to inform your questions. For example:
-  * "I see we have both Brand X and Brand Y cameras in stock. Do you have a preference?"
-  * "For the cable runs, do you need Cat6 or Cat6a? What distances are we looking at?"
-  * "I notice this is for a commercial space - do we need any specific certifications or fire ratings?"
+  * "I see we have both Brand X and Brand Y widgets in stock. Do you have a preference?"
+  * "For the materials, do you need standard grade or premium grade? What's the application?"
+  * "I notice this is for a commercial space - do we need any specific certifications or ratings?"
 
 ### Phase 3: Product Recommendations
 - Once you have enough context, search for products and add them to PRODUCT_DATA section
 - In your chat response, keep it simple:
   * "Based on what you described, I've added some products to the Suggested Products panel for your review"
   * Don't list product names or prices in the chat
-  * If you need to ask about alternatives, ask generally: "For the cameras, do you prefer budget or premium options?"
+  * If you need to ask about alternatives, ask generally: "For these products, do you prefer budget or premium options?"
 - The user will see all product details in the Suggested Products panel
 
 ### Phase 4: Product Recommendations & Building the Quote
@@ -639,8 +1702,8 @@ Your response:
 Are these the correct products?
 
 PRODUCT_DATA_START
-1. Verkada 5-Year License - Qty: 1, Price: $999.00 each = $999.00
-2. Cat6 Riser Cable - Qty: 1, Price: $225.00 each = $225.00
+1. Premium Widget License - Qty: 1, Price: $999.00 each = $999.00
+2. Premium Cable Spool - Qty: 1, Price: $225.00 each = $225.00
 PRODUCT_DATA_END
 
 **Notice**: ONLY the 2 products mentioned in current message. NOT all products from conversation history.
@@ -667,7 +1730,7 @@ PRODUCT_DATA_END
 ✓ If a search returns no results, tell the user and ask for different keywords
 ✓ Keep responses focused and brief (2-3 paragraphs max)
 
-${conversationSummary ? `\n## Current Conversation Context:\n${conversationSummary}` : ''}
+${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSummary : ''}
 
 ## 🚨 FINAL CHECKLIST BEFORE YOU RESPOND:
 1. Did you search for products? YES → Check what the search returned
@@ -678,13 +1741,13 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
 4. Does your response end with PRODUCT_DATA_START and PRODUCT_DATA_END? If NO, ADD IT NOW.
 
 **CRITICAL MISTAKES TO AVOID:**
-❌ Search returns "Verkada 5-Year Intercom License" → You say "not found" (WRONG!)
+❌ Search returns "Premium 5-Year Widget License" → You say "not found" (WRONG!)
 ❌ Search returns results → You reject them because word order is different (WRONG!)
 ❌ User asks for 1 product → You include 5 products from conversation history (WRONG!)
 
 **CORRECT BEHAVIOR:**
 ✅ Search returns products → Suggest the best match from results
-✅ "5-Year Intercom License" matches request for "5-year intercom license" (word order doesn't matter)
+✅ "5-Year Widget License" matches request for "5-year widget license" (word order doesn't matter)
 ✅ User asks for 1 product → Include ONLY that 1 product from CURRENT message
 
 **If the search found products, USE THEM. Don't overthink it!**`;
@@ -696,13 +1759,13 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
         type: "function" as const,
         function: {
           name: "search_price_book",
-          description: "Search the price book for products using keywords. Use this to find products by name, brand, type, or description. Always use this before recommending products.",
+          description: "Search the price book for products using keywords. Searches across Product Name, Product Code, Product Brand, Product Type, Product Family, and Description fields. Always use this before recommending products.",
           parameters: {
             type: "object",
             properties: {
               keywords: {
                 type: "string",
-                description: "Keywords to search for (e.g., 'camera', 'hikvision dome', 'cat6 cable', 'labor installation')"
+                description: "Keywords to search for (e.g., 'widget', 'acme sprinkler head', 'TPO membrane', 'installation labor')"
               }
             },
             required: ["keywords"]
@@ -718,6 +1781,36 @@ ${conversationSummary ? `\n## Current Conversation Context:\n${conversationSumma
     let contextInstructions = `\n\n## 🔒 CONTEXT ISOLATION - READ THIS FIRST\n\n`;
     contextInstructions += `**SESSION ID:** ${contextId || 'none'}\n`;
     contextInstructions += `**CLEAR CONTEXT MODE:** ${clearContext ? 'ENABLED - Ignore all previous session memory' : 'DISABLED'}\n\n`;
+    
+    // Add Phase 1 & 2 results
+    contextInstructions += `\n## 📊 EXTRACTED ITEMS & MATCHING RESULTS:\n\n`;
+    contextInstructions += `**Extracted from user message (Phase 1):**\n`;
+    extractedItems.forEach((item, idx) => {
+      contextInstructions += `${idx + 1}. ${item.quantity || 1}x ${item.item}`;
+      if (item.brand) contextInstructions += ` (Brand: ${item.brand})`;
+      if (item.duration) contextInstructions += ` (Duration: ${item.duration})`;
+      if (item.modifiers && item.modifiers.length > 0) contextInstructions += ` [Modifiers: ${item.modifiers.join(', ')}]`;
+      contextInstructions += `\n`;
+    });
+    
+    contextInstructions += `\n**Matched Products (Phase 2):**\n`;
+    if (suggestions.length > 0) {
+      suggestions.forEach((prod, idx) => {
+        contextInstructions += `${idx + 1}. ${prod.product_name} - Qty: ${prod.quantity}, Unit Price: $${prod.unit_price}, Total: $${prod.line_total}\n`;
+      });
+    } else {
+      contextInstructions += `None - no products matched\n`;
+    }
+    
+    contextInstructions += `\n**Unfulfilled Requests (Phase 2):**\n`;
+    if (unfulfilled.length > 0) {
+      unfulfilled.forEach((unf, idx) => {
+        contextInstructions += `${idx + 1}. ${unf.requestedText} - ${unf.reason}\n`;
+      });
+    } else {
+      contextInstructions += `None - all items matched\n`;
+    }
+    contextInstructions += `\n`;
     
     if (currentState) {
       contextInstructions += `**📊 CURRENT WORKING STATE (ONLY SOURCE OF TRUTH):**\n`;
@@ -831,7 +1924,7 @@ ${formattedResults}
 🚨 CRITICAL INSTRUCTIONS:
 1. Use the FIRST product from the results above (it's the best match)
 2. Copy the EXACT product name and price from the results
-3. If the first result has "IO Controller" in name but user asked for "access control", CHECK THE TYPE FIELD
+3. Check ALL product fields (Name, Code, Brand, Type, Description) for keyword matches
 4. DO NOT make up product names - use exactly what's listed above
 5. The product you mention in your Work Summary MUST match what you put in PRODUCT_DATA`
             : `No products found matching "${args.keywords}". Try searching with different keywords.`;
@@ -861,8 +1954,10 @@ ${formattedResults}
     const aiResponse = responseMessage.content;
 
     // Parse and extract product data section
-    const productSuggestions: any[] = [];
+    let productSuggestions: any[] = [];
     let cleanMessage = aiResponse || '';
+    let requestedItems: RequestedItem[] = [];
+    let unfulfilledRequests: UnfulfilledRequest[] = [];
     
     // Check if AI mentioned products but didn't include PRODUCT_DATA (debugging)
     const mentionsProducts = cleanMessage.toLowerCase().includes('added') || 
@@ -911,6 +2006,23 @@ ${formattedResults}
       // Remove the PRODUCT_DATA section from the message shown to user
       cleanMessage = cleanMessage.replace(/\n*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\n*/g, '').trim();
     }
+    
+    // Extract REQUEST_DATA block (user's original requests for validation)
+    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\n([\s\S]*?)\nREQUEST_DATA_END/);
+    if (requestDataMatch) {
+      try {
+        const json = requestDataMatch[1].trim();
+        const parsed = JSON.parse(json);
+        if (Array.isArray(parsed)) {
+          requestedItems = parsed;
+          console.log('📋 Parsed REQUEST_DATA:', requestedItems);
+        }
+      } catch (error) {
+        console.error('❌ Failed to parse REQUEST_DATA JSON:', error);
+      }
+      // Remove the REQUEST_DATA block from the message
+      cleanMessage = cleanMessage.replace(/\n*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\n*/g, '').trim();
+    }
 
     // Validate: Check if AI's description matches the actual products suggested
     if (productSuggestions.length > 0) {
@@ -947,17 +2059,38 @@ ${formattedResults}
         }
       }
       
-      // Check for common mismatches
-      productSuggestions.forEach(p => {
-        if (cleanMessage.toLowerCase().includes('access control') && p.product_name.toLowerCase().includes('io controller') && !p.product_name.toLowerCase().includes('access')) {
-          console.error('❌ CRITICAL MISMATCH: AI said "access control" but suggesting "' + p.product_name + '"!');
-        }
-        if (cleanMessage.toLowerCase().includes('door') && !p.product_name.toLowerCase().includes('door') && !p.product_name.toLowerCase().includes('access')) {
-          console.error('❌ MISMATCH: AI said "door" but product name is:', p.product_name);
-        }
+      // Log product suggestions for debugging
+      productSuggestions.forEach((p, idx) => {
+        console.log(`  ${idx + 1}. Suggesting: "${p.product_name}" (Score: ${p.match_confidence || 'N/A'})`);
       });
       console.log('✅ ====================================================\n');
     }
+
+    // ============================================================================
+    // USE PHASE 2 RESULTS (Already matched with hard constraints)
+    // ============================================================================
+    
+    console.log('🔄 Using Phase 2 matching results (strict constraint enforcement)');
+    console.log(`   Phase 2 auto-added: ${phase2MatchedProducts.length} products`);
+    console.log(`   Phase 2 low-confidence: ${phase2LowConfidenceMatches.length} suggestions`);
+    console.log(`   Phase 2 unfulfilled: ${phase2UnfulfilledRequests.length} requests`);
+    
+    // CRITICAL: Use Phase 2 results directly - they already have hard constraint enforcement
+    // DO NOT re-match or use AI's PRODUCT_DATA suggestions
+    productSuggestions = phase2MatchedProducts;
+    unfulfilledRequests = phase2UnfulfilledRequests;
+
+    // LOW-CONFIDENCE MATCHES: Don't add to AI response text - handled by React component
+    // The frontend will render these with actual clickable "+ Add to Quote" buttons
+    // (Not markdown text in the chat)
+
+    const workSummaryText = buildWorkSummaryText(productSuggestions, unfulfilledRequests);
+    const cleanedWithoutWorkSummary = stripExistingWorkSummary(cleanMessage);
+    const finalMessageParts = [workSummaryText.trim()];
+    if (cleanedWithoutWorkSummary) {
+      finalMessageParts.push(cleanedWithoutWorkSummary.trim());
+    }
+    cleanMessage = finalMessageParts.join('\n\n').trim();
 
     // CRITICAL: Check abort before saving to database
     if (aborted || signal.aborted) {
@@ -1002,13 +2135,15 @@ ${formattedResults}
           return true;
         });
 
-        // Update or insert working state with new products
+        // Update or insert working state with new products AND conversation state
         const workingState = {
           project_id: projectId,
           suggested_products: dedupedProducts,
           quote_preview: currentState?.quote_preview || null,
           show_split_view: true,
-          current_pool_id: poolId // Store current poolId for tracking
+          current_pool_id: poolId, // Store current poolId for tracking
+          unfulfilled_requests: unfulfilledRequests,
+          conversation_state: conversationState // Save conversation state for context tracking
         };
 
         const { error: stateError } = await supabase
@@ -1030,10 +2165,20 @@ ${formattedResults}
 
     console.log(`🏊 pool:complete { poolId: "${poolId || 'none'}", runId: "${runId || 'none'}", productCount: ${productSuggestions.length} }`);
 
+    // Log final response data
+    console.log('📤 API Response Summary:', {
+      highConfidence: productSuggestions.length,
+      lowConfidence: phase2LowConfidenceMatches.length,
+      unfulfilled: unfulfilledRequests.length,
+      poolId: poolId
+    });
+
     return NextResponse.json({ 
       message: cleanMessage,
       products: productSuggestions,
       hasProducts: productSuggestions.length > 0,
+      lowConfidenceMatches: phase2LowConfidenceMatches, // Score 1-49 products for manual add
+      unfulfilledRequests,
       runId: runId, // Return runId for validation
       poolId: poolId // Return poolId for pool isolation
     });
