@@ -302,6 +302,21 @@ Duration is a **STRICT, NON-SUBSTITUTABLE CONSTRAINT**. Pay extreme attention:
 **EXAMPLES:**
 
 Example 1:
+Input: "Give me (5) 1 year verkada camera license"
+Output:
+[
+  {
+    "rawText": "(5) 1 year verkada camera license",
+    "item": "verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 5,
+    "action": "add"
+  }
+]
+
+Example 2:
 Input: "i need 5 environmental sensors and (5) 1 year verkada camera license"
 Output:
 [
@@ -322,7 +337,7 @@ Output:
   }
 ]
 
-Example 2:
+Example 3:
 Input: "I need the 1 year verkada camera license not the 5"
 Output:
 [
@@ -337,6 +352,13 @@ Output:
     "replaces": "5-year license"
   }
 ]
+
+**CRITICAL RULES FOR DURATION:**
+- "1 year", "1-year", "one year", "1 yr" → ALWAYS extract as duration: "1-year"
+- "5 year", "5-year", "five year", "5 yr" → ALWAYS extract as duration: "5-year"
+- "10 year", "10-year", "ten year", "10 yr" → ALWAYS extract as duration: "10-year"
+- Do NOT drop duration when parsing quantities like "(5) 1 year"
+- Duration is MANDATORY for license/subscription products
 
 **CRITICAL:** Return ONLY the JSON array, no other text.`;
 
@@ -498,7 +520,7 @@ function normalizeDuration(duration: string): string[] {
  * Hard constraints:
  * - duration: If specified, product MUST contain the duration in searchable text
  */
-function meetsHardConstraints(product: any, item: EnhancedRequestedItem): boolean {
+function meetsHardConstraints(product: any, item: EnhancedRequestedItem, verbose: boolean = false): boolean {
   const searchText = buildSearchText(product);
   
   // CRITICAL: Duration is a hard constraint
@@ -506,10 +528,15 @@ function meetsHardConstraints(product: any, item: EnhancedRequestedItem): boolea
     const durationVariants = normalizeDuration(item.duration);
     const hasDuration = durationVariants.some(variant => searchText.includes(variant));
     
+    if (verbose || !hasDuration) {
+      console.log(`   ${hasDuration ? '✓' : '✗'} Product: "${product.product_name}"`);
+      console.log(`      Duration required: ${item.duration}`);
+      console.log(`      Variants checked: [${durationVariants.join(', ')}]`);
+      console.log(`      SearchText: "${searchText.substring(0, 150)}${searchText.length > 150 ? '...' : ''}"`);
+      console.log(`      Result: ${hasDuration ? 'PASS' : 'FAIL'}`);
+    }
+    
     if (!hasDuration) {
-      console.log(`❌ Hard constraint failed: Product "${product.product_name}" does not contain duration "${item.duration}"`);
-      console.log(`   Searched for variants: ${durationVariants.join(', ')}`);
-      console.log(`   Product searchText: ${searchText.substring(0, 100)}...`);
       return false;
     }
   }
@@ -558,13 +585,34 @@ function matchEnhancedRequestsToPriceBook(
 
     console.log(`\n🔍 Matching item: ${request.item}${request.duration ? ` (${request.duration})` : ''}`);
     console.log(`   Keywords: ${keywords}`);
+    console.log(`   Duration constraint: ${request.duration || 'none'}`);
 
     const results = searchProductsWithScores(products, keywords);
     
-    // CRITICAL: Filter results by hard constraints (especially duration)
-    const validResults = results.filter(result => meetsHardConstraints(result.product, request));
+    // DEBUG: Show top candidate products BEFORE hard constraints
+    console.log(`\n   📊 Top 5 candidates BEFORE hard constraints:`);
+    results.slice(0, 5).forEach((r, idx) => {
+      const searchText = buildSearchText(r.product);
+      console.log(`      ${idx + 1}. "${r.product.product_name}" (score: ${r.score})`);
+      console.log(`         SearchText: ${searchText.substring(0, 120)}...`);
+    });
     
-    console.log(`   Found ${results.length} keyword matches, ${validResults.length} after hard constraints`);
+    // CRITICAL: Filter results by hard constraints (especially duration)
+    if (request.duration) {
+      const durationVariants = normalizeDuration(request.duration);
+      console.log(`\n   🔒 Applying duration constraint: ${durationVariants.join(', ')}`);
+    }
+    
+    const validResults = results.filter(result => {
+      const passes = meetsHardConstraints(result.product, request);
+      if (!passes && results.indexOf(result) < 3) {
+        // Log why top 3 failed
+        console.log(`      ❌ "${result.product.product_name}" failed hard constraints`);
+      }
+      return passes;
+    });
+    
+    console.log(`\n   ✅ Result: ${results.length} keyword matches → ${validResults.length} after hard constraints`);
     
     const top = validResults[0];
 
@@ -607,30 +655,48 @@ function matchEnhancedRequestsToPriceBook(
         });
       }
     } else {
-      // Build detailed error message
+      // No exact match found - build detailed error message with close matches
       let reason = '';
+      const closeMatches: string[] = [];
       
       if (request.duration) {
-        // Duration constraint not met
-        reason = `No products in your price book contain "${request.duration}" in their Name/Code/Brand/Type/Family/Description.`;
+        // Duration constraint not met - show close matches WITHOUT the duration requirement
+        reason = `No products in your price book contain "${request.duration}" for this item.`;
         
-        if (results.length > 0) {
-          const topUnfiltered = results[0];
-          reason += ` Closest match "${topUnfiltered.product.product_name}" does not have the required duration.`;
+        // Show top 3 products that match keywords but not duration
+        const top3WithoutDuration = results.slice(0, 3);
+        if (top3WithoutDuration.length > 0) {
+          reason += `\n\nClosest matches (without "${request.duration}"):\n`;
+          top3WithoutDuration.forEach((r, idx) => {
+            const matchInfo = `${idx + 1}. ${r.product.product_name}`;
+            closeMatches.push(matchInfo);
+            reason += `  • ${matchInfo}\n`;
+          });
+          reason += '\nThese products were NOT added because they don\'t have the required duration.';
         }
       } else {
-        // General keyword mismatch
+        // General keyword mismatch - show top 3 by keyword score
         const requestKeywords = extractKeywords(keywords);
         const keywordList = requestKeywords.length > 0 ? requestKeywords.join(', ') : 'these terms';
         
-        if (top) {
-          reason = `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD}). No products contain all keywords: ${keywordList}`;
+        if (results.length > 0) {
+          const top3 = results.slice(0, 3);
+          reason = `No products scored high enough (need ≥ ${MATCH_CONFIDENCE_THRESHOLD}). Closest matches:\n`;
+          top3.forEach((r, idx) => {
+            const matchInfo = `${idx + 1}. ${r.product.product_name} (score: ${Math.round(r.score)})`;
+            closeMatches.push(matchInfo);
+            reason += `  • ${matchInfo}\n`;
+          });
+          reason += `\nSearched for keywords: ${keywordList}`;
         } else {
           reason = `No products in your price book contain these keywords: ${keywordList}`;
         }
       }
       
-      console.log(`   ❌ No valid match: ${reason}`);
+      console.log(`   ❌ Not matched: ${reason.split('\n')[0]}`);
+      if (closeMatches.length > 0) {
+        console.log(`   📋 Close matches shown: ${closeMatches.length}`);
+      }
       
       unfulfilled.push({
         requestedText: `${request.duration ? request.duration + ' ' : ''}${request.item}`,
@@ -842,8 +908,10 @@ export async function POST(req: NextRequest) {
     
     // Extract structured items from user's natural language
     console.log('🧠 Phase 1: Extracting structured items from user message...');
+    console.log(`   User message: "${message}"`);
     const extractedItems = await extractRequestedItems(message, conversationState, openai);
     console.log('✅ Extracted items:', extractedItems.map(i => `${i.quantity || 1}x ${i.item} (${i.duration || 'no duration'})`));
+    console.log('📋 DEBUG: Full extracted items:', JSON.stringify(extractedItems, null, 2));
     
     // Update conversation state with new items (handles corrections, replacements)
     conversationState = updateConversationState(extractedItems, conversationState, message);
