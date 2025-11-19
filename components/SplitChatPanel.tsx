@@ -2905,9 +2905,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                             <h4 className="font-medium text-gray-900">{product.product_name}</h4>
                             <span className="font-semibold text-gray-900">${formatCurrency(product.line_total)}</span>
                           </div>
-                          {product.description && (
-                            <p className="text-sm text-gray-600 mb-2">{product.description}</p>
-                          )}
                           <div className="flex gap-4 text-xs text-gray-500">
                             <span>Qty: {product.quantity}{product.quantity_unit ? ` ${product.quantity_unit}` : ''}</span>
                             <span>Unit Price: ${formatCurrency(product.unit_price)}{product.price_unit ? ` per ${product.price_unit}` : ''}</span>
