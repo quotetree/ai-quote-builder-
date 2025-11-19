@@ -63,6 +63,7 @@ export interface ChatMessage {
 }
 
 export interface ProductSuggestion {
+  product_id?: string; // Product ID from price book
   product_name: string;
   description: string;
   quantity: number;
@@ -77,6 +78,10 @@ export interface ProductSuggestion {
   canonicalKey?: string; // Used for deduplication when pooling products
   stableKey?: string; // Deterministic key for cross-version mapping (hash of name+price+id)
   poolId?: string | null;
+  product_brand?: string; // Product brand from price book
+  product_type?: string; // Product type from price book
+  match_confidence?: number; // Matching confidence score (for debugging)
+  requested_item?: string; // What the user requested (for low-confidence matches)
 }
 
 export interface ChargeConfig {
