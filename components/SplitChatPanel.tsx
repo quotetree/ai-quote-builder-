@@ -2676,7 +2676,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           )
         );
         
-        const filteredLowConfidence = lowConfidenceWithIds.filter(p => {
+        const filteredLowConfidence = lowConfidenceWithIds.filter((p: ProductSuggestion) => {
           const isDuplicateInSuggestions = existingSuggestedIds.has(p.product_id) || existingSuggestedIds.has(p.canonicalKey);
           const isDuplicateInQuote = existingQuoteIds.has(p.product_id) || existingQuoteIds.has(p.canonicalKey);
           
