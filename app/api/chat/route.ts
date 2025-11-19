@@ -173,6 +173,42 @@ function searchProducts(products: any[], keywords: string): any[] {
   return searchProductsWithScores(products, keywords).map(item => item.product);
 }
 
+// ============================================================================
+// ENHANCED TYPES FOR CONVERSATIONAL AI
+// ============================================================================
+
+/**
+ * Enhanced RequestedItem with fields for natural language understanding.
+ * This allows the LLM to capture nuanced details like duration, modifiers, corrections.
+ */
+interface EnhancedRequestedItem {
+  rawText: string;              // Original user phrase
+  item: string;                 // Cleaned item name
+  brand?: string;               // e.g., "Verkada", "Acme"
+  productType?: string;         // e.g., "camera", "license", "cable"
+  productFamily?: string;       // e.g., "Security", "Networking"
+  duration?: string;            // e.g., "1-year", "5-year", "10-year"
+  subtype?: string;             // e.g., "dome", "bullet", "mini dome"
+  quantity?: number;            // How many
+  unit?: string | null;         // e.g., "ea", "boxes", "rolls"
+  budget?: number | null;       // Dollar amount if specified
+  modifiers?: string[];         // e.g., ["not 5-year", "outdoor version", "cheapest"]
+  keywords?: string;            // Combined search string for price book
+  action?: 'add' | 'replace' | 'remove'; // What to do with this item
+  replaces?: string;            // If action='replace', what item it replaces
+}
+
+/**
+ * Conversation state for tracking context across messages.
+ * Enables ChatGPT-like intelligence: "add 5 more", "not the 5-year", "replace those with".
+ */
+interface ConversationState {
+  lastRequestedItems: EnhancedRequestedItem[];  // What was in the previous message
+  accumulatedItems: EnhancedRequestedItem[];    // Running list of all items discussed
+  lastUserMessage: string;                      // For reference
+}
+
+// Legacy interface for backward compatibility with existing code
 interface RequestedItem {
   item: string;
   quantity?: number;
@@ -185,6 +221,167 @@ interface RequestedItem {
 interface UnfulfilledRequest {
   requestedText: string;
   reason: string;
+}
+
+// ============================================================================
+// CONVERSATIONAL AI FUNCTIONS
+// ============================================================================
+
+/**
+ * Uses LLM to extract structured items from natural language.
+ * Understands corrections, negations, and context.
+ * 
+ * Examples:
+ * - "I need the 1-year license, not the 5-year" → duration: "1-year", modifiers: ["not 5-year"]
+ * - "Replace domes with mini domes" → action: "replace", replaces: "domes"
+ * - "Add 5 more solar units" → quantity: 5, productType: "solar units"
+ */
+async function extractRequestedItems(
+  message: string,
+  conversationState: ConversationState,
+  openai: OpenAI
+): Promise<EnhancedRequestedItem[]> {
+  const extractionPrompt = `You are an expert at parsing natural language requests for products and services.
+
+**Your task:** Extract structured item requests from the user's message.
+
+**User's message:** "${message}"
+
+**Previous context:**
+${conversationState.lastRequestedItems.length > 0 
+  ? `Last items discussed: ${conversationState.lastRequestedItems.map(i => `${i.quantity || 1}x ${i.item}`).join(', ')}`
+  : 'No previous items'
+}
+
+**Instructions:**
+1. Identify ALL product/service requests in the message
+2. Extract these fields for each item:
+   - rawText: the exact phrase from user
+   - item: cleaned product name
+   - brand: if mentioned (e.g., "Verkada", "Acme")
+   - productType: general category (e.g., "camera", "license", "cable")
+   - duration: if time-based (e.g., "1-year", "5-year", "10-year")
+   - subtype: specific variant (e.g., "dome", "bullet", "mini dome", "outdoor")
+   - quantity: number requested
+   - unit: if specified (e.g., "ea", "boxes", "rolls")
+   - budget: dollar amount if given
+   - modifiers: array of constraints like ["not 5-year", "outdoor version", "cheapest"]
+   - action: "add" (default), "replace", or "remove"
+   - replaces: if replacing, what item name is being replaced
+
+3. **Handle corrections and negations:**
+   - "not the 5-year" → modifiers: ["not 5-year"]
+   - "instead of X" → action: "replace", replaces: "X"
+   - "replace X with Y" → action: "replace", replaces: "X"
+
+4. **Understand references:**
+   - "5 more of those" → refer to previous items
+   - "the solar units we talked about" → refer to context
+
+**Output:** Valid JSON array of items. Example:
+[
+  {
+    "rawText": "1-year Verkada camera license",
+    "item": "Verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 1,
+    "modifiers": ["not 5-year"],
+    "action": "add"
+  }
+]
+
+**CRITICAL:** Return ONLY the JSON array, no other text.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a JSON extraction expert. Output only valid JSON." },
+        { role: "user", content: extractionPrompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
+
+    const responseText = completion.choices[0].message.content?.trim() || '[]';
+    
+    // Remove markdown code fences if present
+    const jsonText = responseText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    
+    const extracted = JSON.parse(jsonText) as EnhancedRequestedItem[];
+    
+    console.log('🧠 LLM extracted items:', extracted);
+    
+    return extracted;
+  } catch (error) {
+    console.error('❌ Failed to extract items via LLM:', error);
+    // Fallback: basic extraction
+    return [{
+      rawText: message,
+      item: message,
+      quantity: 1,
+      action: 'add'
+    }];
+  }
+}
+
+/**
+ * Updates conversation state with new items, handling corrections and replacements.
+ * Enables "replace the domes with mini domes" type intelligence.
+ */
+function updateConversationState(
+  extractedItems: EnhancedRequestedItem[],
+  currentState: ConversationState,
+  userMessage: string
+): ConversationState {
+  let accumulated = [...currentState.accumulatedItems];
+  
+  extractedItems.forEach(item => {
+    if (item.action === 'remove') {
+      // Remove items matching this description
+      accumulated = accumulated.filter(existing => 
+        !existing.item.toLowerCase().includes(item.item.toLowerCase())
+      );
+      console.log(`🗑️  Removed items matching: ${item.item}`);
+      
+    } else if (item.action === 'replace' && item.replaces) {
+      // Replace old items with new
+      accumulated = accumulated.filter(existing => 
+        !existing.item.toLowerCase().includes(item.replaces!.toLowerCase())
+      );
+      accumulated.push(item);
+      console.log(`🔄 Replaced "${item.replaces}" with "${item.item}"`);
+      
+    } else {
+      // Default: add item
+      accumulated.push(item);
+      console.log(`➕ Added: ${item.quantity || 1}x ${item.item}`);
+    }
+  });
+  
+  return {
+    lastRequestedItems: extractedItems,
+    accumulatedItems: accumulated,
+    lastUserMessage: userMessage,
+  };
+}
+
+/**
+ * Converts EnhancedRequestedItem to keywords string for price book search.
+ * Combines all relevant fields into a searchable string.
+ */
+function buildSearchKeywordsFromItem(item: EnhancedRequestedItem): string {
+  const parts = [
+    item.brand,
+    item.duration,
+    item.productType,
+    item.subtype,
+    item.item,
+  ].filter(Boolean);
+  
+  return parts.join(' ');
 }
 
 /**
@@ -433,6 +630,58 @@ export async function POST(req: NextRequest) {
     // Get conversation context - analyze what's been discussed
     const conversationSummary = analyzeConversationContext(history);
 
+    // ============================================================================
+    // PHASE 1: LLM-POWERED INTENT EXTRACTION (Conversational Intelligence)
+    // ============================================================================
+    
+    // Initialize conversation state from history or create new
+    let conversationState: ConversationState = {
+      lastRequestedItems: [],
+      accumulatedItems: [],
+      lastUserMessage: '',
+    };
+    
+    // Try to load state from current session if available
+    if (currentState?.conversationState) {
+      conversationState = currentState.conversationState;
+      console.log('📖 Loaded conversation state from session:', {
+        lastItems: conversationState.lastRequestedItems.length,
+        accumulated: conversationState.accumulatedItems.length
+      });
+    }
+    
+    // Extract structured items from user's natural language
+    console.log('🧠 Phase 1: Extracting structured items from user message...');
+    const extractedItems = await extractRequestedItems(message, conversationState, openai);
+    console.log('✅ Extracted items:', extractedItems.map(i => `${i.quantity || 1}x ${i.item} (${i.duration || 'no duration'})`));
+    
+    // Update conversation state with new items (handles corrections, replacements)
+    conversationState = updateConversationState(extractedItems, conversationState, message);
+    console.log('📝 Updated conversation state:', {
+      newItems: extractedItems.length,
+      totalAccumulated: conversationState.accumulatedItems.length
+    });
+    
+    // ============================================================================
+    // PHASE 2: STRICT PRICE BOOK MATCHING (Zero Hallucination)
+    // ============================================================================
+    // Convert enhanced items to legacy format for price book matching
+    const legacyRequestedItems: RequestedItem[] = extractedItems.map(item => ({
+      item: item.item,
+      quantity: item.quantity || 1,
+      unit: item.unit,
+      budget: item.budget,
+      rawText: item.rawText,
+      keywords: buildSearchKeywordsFromItem(item)
+    }));
+    
+    console.log('🔍 Phase 2: Matching against price book with strict keyword search...');
+    const { suggestions, unfulfilled } = matchRequestsToPriceBook(legacyRequestedItems, products);
+    console.log('✅ Matching results:', {
+      suggestions: suggestions.length,
+      unfulfilled: unfulfilled.length
+    });
+
     // Build edit mode context if applicable
     let editModeContext = '';
     if (isEditMode && workingState?.quote_preview) {
@@ -468,6 +717,35 @@ ${quotePreview.line_items?.map((item: any, idx: number) =>
 
     const systemPrompt = `You are an expert AI estimator and quote builder for ${project.project_name}.
 ${editModeContext}
+## 🤖 TWO-PHASE INTELLIGENCE SYSTEM:
+
+**Phase 1 (ALREADY DONE):** Natural language extraction with conversational intelligence
+- ✅ Your extraction engine has ALREADY parsed the user's message
+- ✅ It understood corrections like "not the 5-year", "instead of", "replace with"
+- ✅ It tracked conversation context and references to previous items
+- ✅ It extracted structured data: brand, duration, product type, modifiers
+
+**Phase 2 (ALREADY DONE):** Strict price book matching with zero hallucination
+- ✅ Extracted items were matched against the price book using field-based keyword search
+- ✅ Products found: ${suggestions.length} items
+- ✅ Products not found: ${unfulfilled.length} items
+- ✅ NO substitutions were made - only exact keyword matches returned
+
+**YOUR ROLE:**
+You are now in the **presentation layer**. Your job is to:
+1. Present the results conversationally in the Work Summary
+2. List successfully matched products in PRODUCT_DATA section
+3. List unfulfilled requests in "Couldn't Add" section
+4. Ask clarifying questions or suggest next steps
+
+**DO NOT:**
+- Re-extract items (already done)
+- Re-search the price book (already done)
+- Second-guess the matching results
+- Suggest products that weren't found
+
+**The hard work is done. Just present the results professionally.**
+
 ## ⚠️ CRITICAL RULES - READ CAREFULLY:
 
 **RULE #1:** Each of your responses REPLACES the previous product suggestions. Never accumulate or combine products from multiple messages.
@@ -862,10 +1140,40 @@ ${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSum
     // All responses should be concise now - no quote generation in chat
     const isComplexRequest = message.length > 200; // Longer user messages might need more tokens
     
-    // CRITICAL: Build context isolation instructions
+    // CRITICAL: Build context isolation instructions  
     let contextInstructions = `\n\n## 🔒 CONTEXT ISOLATION - READ THIS FIRST\n\n`;
     contextInstructions += `**SESSION ID:** ${contextId || 'none'}\n`;
     contextInstructions += `**CLEAR CONTEXT MODE:** ${clearContext ? 'ENABLED - Ignore all previous session memory' : 'DISABLED'}\n\n`;
+    
+    // Add Phase 1 & 2 results
+    contextInstructions += `\n## 📊 EXTRACTED ITEMS & MATCHING RESULTS:\n\n`;
+    contextInstructions += `**Extracted from user message (Phase 1):**\n`;
+    extractedItems.forEach((item, idx) => {
+      contextInstructions += `${idx + 1}. ${item.quantity || 1}x ${item.item}`;
+      if (item.brand) contextInstructions += ` (Brand: ${item.brand})`;
+      if (item.duration) contextInstructions += ` (Duration: ${item.duration})`;
+      if (item.modifiers && item.modifiers.length > 0) contextInstructions += ` [Modifiers: ${item.modifiers.join(', ')}]`;
+      contextInstructions += `\n`;
+    });
+    
+    contextInstructions += `\n**Matched Products (Phase 2):**\n`;
+    if (suggestions.length > 0) {
+      suggestions.forEach((prod, idx) => {
+        contextInstructions += `${idx + 1}. ${prod.product_name} - Qty: ${prod.quantity}, Unit Price: $${prod.unit_price}, Total: $${prod.line_total}\n`;
+      });
+    } else {
+      contextInstructions += `None - no products matched\n`;
+    }
+    
+    contextInstructions += `\n**Unfulfilled Requests (Phase 2):**\n`;
+    if (unfulfilled.length > 0) {
+      unfulfilled.forEach((unf, idx) => {
+        contextInstructions += `${idx + 1}. ${unf.requestedText} - ${unf.reason}\n`;
+      });
+    } else {
+      contextInstructions += `None - all items matched\n`;
+    }
+    contextInstructions += `\n`;
     
     if (currentState) {
       contextInstructions += `**📊 CURRENT WORKING STATE (ONLY SOURCE OF TRUTH):**\n`;
@@ -1189,14 +1497,15 @@ ${formattedResults}
           return true;
         });
 
-        // Update or insert working state with new products
+        // Update or insert working state with new products AND conversation state
         const workingState = {
           project_id: projectId,
           suggested_products: dedupedProducts,
           quote_preview: currentState?.quote_preview || null,
           show_split_view: true,
           current_pool_id: poolId, // Store current poolId for tracking
-          unfulfilled_requests: unfulfilledRequests
+          unfulfilled_requests: unfulfilledRequests,
+          conversation_state: conversationState // Save conversation state for context tracking
         };
 
         const { error: stateError } = await supabase
