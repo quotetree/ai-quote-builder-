@@ -757,9 +757,9 @@ function matchEnhancedRequestsToPriceBook(
         
         if (results.length > 0) {
           const topN = results.slice(0, MAX_PER_ITEM);
-          reason = `No products scored high enough (need ≥ ${MATCH_CONFIDENCE_THRESHOLD}). Closest matches:\n`;
+          reason = `No products in your price book closely match this request. Closest matches:\n`;
           topN.forEach((r, idx) => {
-            const matchInfo = `${idx + 1}. ${r.product.product_name} (score: ${Math.round(r.score)})`;
+            const matchInfo = `${idx + 1}. ${r.product.product_name}`;
             closeMatches.push(matchInfo);
             reason += `  • ${matchInfo}\n`;
           });
