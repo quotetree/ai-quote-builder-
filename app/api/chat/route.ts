@@ -249,9 +249,30 @@ async function extractRequestedItems(
 
 **Previous context:**
 ${conversationState.lastRequestedItems.length > 0 
-  ? `Last items discussed: ${conversationState.lastRequestedItems.map(i => `${i.quantity || 1}x ${i.item}`).join(', ')}`
+  ? `Last items discussed: ${conversationState.lastRequestedItems.map(i => `${i.quantity || 1}x ${i.item}${i.duration ? ` (${i.duration})` : ''}`).join(', ')}`
   : 'No previous items'
 }
+
+**CRITICAL INSTRUCTIONS FOR DURATION:**
+
+Duration is a **STRICT, NON-SUBSTITUTABLE CONSTRAINT**. Pay extreme attention:
+
+1. **Normalize duration formats:**
+   - "1 year", "1-year", "one year" → "1-year"
+   - "5 year", "5-year", "five year" → "5-year"
+   - "10 year", "10-year", "ten year" → "10-year"
+
+2. **Duration in corrections:**
+   - "I need the **1 year** license, **not the 5 year**" 
+     → Extract: duration="1-year", action="replace", replaces="5-year license"
+   - This is a CORRECTION, not two separate requests!
+   - Only extract the CORRECTED duration (1-year), not both
+
+3. **Multiple items with different durations:**
+   - "5 environmental sensors and (5) 1 year verkada camera license"
+     → Extract TWO items:
+     1. sensors (no duration)
+     2. license (duration="1-year", quantity=5)
 
 **Instructions:**
 1. Identify ALL product/service requests in the message
@@ -260,35 +281,60 @@ ${conversationState.lastRequestedItems.length > 0
    - item: cleaned product name
    - brand: if mentioned (e.g., "Verkada", "Acme")
    - productType: general category (e.g., "camera", "license", "cable")
-   - duration: if time-based (e.g., "1-year", "5-year", "10-year")
+   - **duration: REQUIRED if time-based** (e.g., "1-year", "5-year", "10-year") - USE NORMALIZED FORMAT
    - subtype: specific variant (e.g., "dome", "bullet", "mini dome", "outdoor")
    - quantity: number requested
    - unit: if specified (e.g., "ea", "boxes", "rolls")
    - budget: dollar amount if given
    - modifiers: array of constraints like ["not 5-year", "outdoor version", "cheapest"]
    - action: "add" (default), "replace", or "remove"
-   - replaces: if replacing, what item name is being replaced
+   - replaces: if replacing/correcting, what duration/item is being replaced
 
 3. **Handle corrections and negations:**
-   - "not the 5-year" → modifiers: ["not 5-year"]
-   - "instead of X" → action: "replace", replaces: "X"
-   - "replace X with Y" → action: "replace", replaces: "X"
+   - "not the 5-year" → This is a CORRECTION: action="replace", replaces="5-year license", ONLY extract the wanted duration
+   - "instead of X" → action="replace", replaces="X"
+   - "replace X with Y" → action="replace", replaces="X"
 
 4. **Understand references:**
    - "5 more of those" → refer to previous items
    - "the solar units we talked about" → refer to context
 
-**Output:** Valid JSON array of items. Example:
+**EXAMPLES:**
+
+Example 1:
+Input: "i need 5 environmental sensors and (5) 1 year verkada camera license"
+Output:
 [
   {
-    "rawText": "1-year Verkada camera license",
-    "item": "Verkada camera license",
+    "rawText": "5 environmental sensors",
+    "item": "environmental sensors",
+    "quantity": 5,
+    "action": "add"
+  },
+  {
+    "rawText": "(5) 1 year verkada camera license",
+    "item": "verkada camera license",
+    "brand": "Verkada",
+    "productType": "license",
+    "duration": "1-year",
+    "quantity": 5,
+    "action": "add"
+  }
+]
+
+Example 2:
+Input: "I need the 1 year verkada camera license not the 5"
+Output:
+[
+  {
+    "rawText": "1 year verkada camera license not the 5",
+    "item": "verkada camera license",
     "brand": "Verkada",
     "productType": "license",
     "duration": "1-year",
     "quantity": 1,
-    "modifiers": ["not 5-year"],
-    "action": "add"
+    "action": "replace",
+    "replaces": "5-year license"
   }
 ]
 
@@ -330,6 +376,10 @@ ${conversationState.lastRequestedItems.length > 0
 /**
  * Updates conversation state with new items, handling corrections and replacements.
  * Enables "replace the domes with mini domes" type intelligence.
+ * 
+ * CRITICAL: Handles duration corrections properly:
+ * - "not the 5-year" removes 5-year items
+ * - Only keeps items with correct duration
  */
 function updateConversationState(
   extractedItems: EnhancedRequestedItem[],
@@ -346,18 +396,51 @@ function updateConversationState(
       );
       console.log(`🗑️  Removed items matching: ${item.item}`);
       
-    } else if (item.action === 'replace' && item.replaces) {
-      // Replace old items with new
-      accumulated = accumulated.filter(existing => 
-        !existing.item.toLowerCase().includes(item.replaces!.toLowerCase())
-      );
+    } else if (item.action === 'replace') {
+      // Handle replacement - this includes duration corrections
+      
+      // If replaces contains duration info (e.g., "5-year license")
+      if (item.replaces) {
+        const replacesLower = item.replaces.toLowerCase();
+        
+        // Remove items that match the "replaces" description
+        accumulated = accumulated.filter(existing => {
+          const existingDesc = `${existing.duration || ''} ${existing.item}`.toLowerCase();
+          const matches = existingDesc.includes(replacesLower) || 
+                         existing.item.toLowerCase().includes(replacesLower);
+          
+          if (matches) {
+            console.log(`🔄 Removing old item: ${existing.duration || ''} ${existing.item} (replaced by ${item.duration || ''} ${item.item})`);
+            return false;
+          }
+          return true;
+        });
+      }
+      
+      // Also remove items with same productType but DIFFERENT duration
+      if (item.duration && item.productType) {
+        accumulated = accumulated.filter(existing => {
+          // Same type but different duration = needs replacement
+          const sameType = existing.productType?.toLowerCase() === item.productType?.toLowerCase() ||
+                          existing.item.toLowerCase().includes(item.productType.toLowerCase());
+          const differentDuration = existing.duration && existing.duration !== item.duration;
+          
+          if (sameType && differentDuration) {
+            console.log(`🔄 Removing conflicting duration: ${existing.duration} ${existing.item} (replaced by ${item.duration} ${item.item})`);
+            return false;
+          }
+          return true;
+        });
+      }
+      
+      // Add the new item
       accumulated.push(item);
-      console.log(`🔄 Replaced "${item.replaces}" with "${item.item}"`);
+      console.log(`✅ Replaced with: ${item.quantity || 1}x ${item.duration || ''} ${item.item}`);
       
     } else {
       // Default: add item
       accumulated.push(item);
-      console.log(`➕ Added: ${item.quantity || 1}x ${item.item}`);
+      console.log(`➕ Added: ${item.quantity || 1}x ${item.duration || ''} ${item.item}`);
     }
   });
   
@@ -385,6 +468,58 @@ function buildSearchKeywordsFromItem(item: EnhancedRequestedItem): string {
 }
 
 /**
+ * Normalizes duration string for flexible matching.
+ * "1-year", "1 year", "1year" all become ["1", "year", "1 year", "1-year"]
+ */
+function normalizeDuration(duration: string): string[] {
+  if (!duration) return [];
+  
+  const lower = duration.toLowerCase().trim();
+  const variants: string[] = [lower]; // Original
+  
+  // Extract number and "year"
+  const match = lower.match(/(\d+)[\s-]*(year|yr)/);
+  if (match) {
+    const num = match[1];
+    variants.push(`${num} year`);
+    variants.push(`${num}-year`);
+    variants.push(`${num}year`);
+    variants.push(`${num} yr`);
+    variants.push(`${num}-yr`);
+  }
+  
+  return variants;
+}
+
+/**
+ * Checks if a product satisfies hard constraints (especially duration).
+ * Returns true if all hard constraints are met, false otherwise.
+ * 
+ * Hard constraints:
+ * - duration: If specified, product MUST contain the duration in searchable text
+ */
+function meetsHardConstraints(product: any, item: EnhancedRequestedItem): boolean {
+  const searchText = buildSearchText(product);
+  
+  // CRITICAL: Duration is a hard constraint
+  if (item.duration) {
+    const durationVariants = normalizeDuration(item.duration);
+    const hasDuration = durationVariants.some(variant => searchText.includes(variant));
+    
+    if (!hasDuration) {
+      console.log(`❌ Hard constraint failed: Product "${product.product_name}" does not contain duration "${item.duration}"`);
+      console.log(`   Searched for variants: ${durationVariants.join(', ')}`);
+      console.log(`   Product searchText: ${searchText.substring(0, 100)}...`);
+      return false;
+    }
+  }
+  
+  // Future: Add other hard constraints here (exact model codes, etc.)
+  
+  return true;
+}
+
+/**
  * Minimum score required to consider a product match valid.
  * If best match score is below this, treat as "not found".
  * 
@@ -395,7 +530,14 @@ function buildSearchKeywordsFromItem(item: EnhancedRequestedItem): string {
  */
 const MATCH_CONFIDENCE_THRESHOLD = 50;
 
-function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any[]) {
+/**
+ * Enhanced matching with hard constraint enforcement.
+ * Accepts EnhancedRequestedItem[] and enforces duration constraints.
+ */
+function matchEnhancedRequestsToPriceBook(
+  requestedItems: EnhancedRequestedItem[], 
+  products: any[]
+): { suggestions: any[]; unfulfilled: UnfulfilledRequest[] } {
   const suggestionsMap = new Map<string, any>();
   const unfulfilled: UnfulfilledRequest[] = [];
 
@@ -404,8 +546,9 @@ function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any
   }
 
   requestedItems.forEach((request) => {
-    const keywords = (request.keywords || request.item || request.rawText || '').trim();
-    if (!keywords) {
+    const keywords = buildSearchKeywordsFromItem(request);
+    
+    if (!keywords || keywords.trim() === '') {
       unfulfilled.push({
         requestedText: request.item || request.rawText || 'Unknown item',
         reason: 'No recognizable keywords were provided for matching',
@@ -413,11 +556,22 @@ function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any
       return;
     }
 
+    console.log(`\n🔍 Matching item: ${request.item}${request.duration ? ` (${request.duration})` : ''}`);
+    console.log(`   Keywords: ${keywords}`);
+
     const results = searchProductsWithScores(products, keywords);
-    const top = results[0];
+    
+    // CRITICAL: Filter results by hard constraints (especially duration)
+    const validResults = results.filter(result => meetsHardConstraints(result.product, request));
+    
+    console.log(`   Found ${results.length} keyword matches, ${validResults.length} after hard constraints`);
+    
+    const top = validResults[0];
 
     if (top && top.score >= MATCH_CONFIDENCE_THRESHOLD) {
       const product = top.product;
+      console.log(`   ✅ Matched: "${product.product_name}" (score: ${top.score})`);
+      
       const key = product.id || product.product_name?.toLowerCase().trim();
       const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
       const quantityValue = Number(requestedQuantity);
@@ -453,23 +607,59 @@ function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any
         });
       }
     } else {
-      // Extract keywords from the request for better error message
-      const requestKeywords = extractKeywords(keywords);
-      const keywordList = requestKeywords.length > 0 
-        ? requestKeywords.join(', ') 
-        : 'these terms';
+      // Build detailed error message
+      let reason = '';
+      
+      if (request.duration) {
+        // Duration constraint not met
+        reason = `No products in your price book contain "${request.duration}" in their Name/Code/Brand/Type/Family/Description.`;
+        
+        if (results.length > 0) {
+          const topUnfiltered = results[0];
+          reason += ` Closest match "${topUnfiltered.product.product_name}" does not have the required duration.`;
+        }
+      } else {
+        // General keyword mismatch
+        const requestKeywords = extractKeywords(keywords);
+        const keywordList = requestKeywords.length > 0 ? requestKeywords.join(', ') : 'these terms';
+        
+        if (top) {
+          reason = `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD}). No products contain all keywords: ${keywordList}`;
+        } else {
+          reason = `No products in your price book contain these keywords: ${keywordList}`;
+        }
+      }
+      
+      console.log(`   ❌ No valid match: ${reason}`);
       
       unfulfilled.push({
-        requestedText: request.item || request.rawText || keywords,
-        reason: top
-          ? `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD}). No products in your price book contain all keywords: ${keywordList}`
-          : `No products in your price book contain these keywords in their Name/Code/Brand/Type/Family/Description: ${keywordList}`,
+        requestedText: `${request.duration ? request.duration + ' ' : ''}${request.item}`,
+        reason,
       });
     }
   });
 
   const suggestions = Array.from(suggestionsMap.values());
   return { suggestions, unfulfilled };
+}
+
+/**
+ * Legacy matching function - kept for backward compatibility.
+ * New code should use matchEnhancedRequestsToPriceBook instead.
+ */
+function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any[]) {
+  // Convert to enhanced items
+  const enhancedItems: EnhancedRequestedItem[] = requestedItems.map(item => ({
+    rawText: item.rawText || item.item,
+    item: item.item,
+    quantity: item.quantity,
+    unit: item.unit,
+    budget: item.budget,
+    keywords: item.keywords,
+    action: 'add'
+  }));
+  
+  return matchEnhancedRequestsToPriceBook(enhancedItems, products);
 }
 
 function buildWorkSummaryText(suggestions: any[], unfulfilled: UnfulfilledRequest[]) {
@@ -665,22 +855,35 @@ export async function POST(req: NextRequest) {
     // ============================================================================
     // PHASE 2: STRICT PRICE BOOK MATCHING (Zero Hallucination)
     // ============================================================================
-    // Convert enhanced items to legacy format for price book matching
-    const legacyRequestedItems: RequestedItem[] = extractedItems.map(item => ({
-      item: item.item,
-      quantity: item.quantity || 1,
-      unit: item.unit,
-      budget: item.budget,
-      rawText: item.rawText,
-      keywords: buildSearchKeywordsFromItem(item)
-    }));
     
-    console.log('🔍 Phase 2: Matching against price book with strict keyword search...');
-    const { suggestions, unfulfilled } = matchRequestsToPriceBook(legacyRequestedItems, products);
+    console.log('🔍 Phase 2: Matching against price book with strict hard constraints...');
+    console.log(`   Items to match (from CURRENT message only): ${extractedItems.length}`);
+    extractedItems.forEach((item, idx) => {
+      console.log(`   ${idx + 1}. ${item.quantity || 1}x ${item.duration ? item.duration + ' ' : ''}${item.item} (action: ${item.action || 'add'})`);
+    });
+    
+    // CRITICAL: Only match items from CURRENT message (extractedItems)
+    // Do NOT match accumulatedItems - that would introduce unrelated products
+    const { suggestions, unfulfilled } = matchEnhancedRequestsToPriceBook(extractedItems, products);
+    
     console.log('✅ Matching results:', {
       suggestions: suggestions.length,
       unfulfilled: unfulfilled.length
     });
+    
+    if (suggestions.length > 0) {
+      console.log('   Matched products:');
+      suggestions.forEach((s, idx) => {
+        console.log(`   ${idx + 1}. ${s.product_name} - Qty: ${s.quantity}, Price: $${s.unit_price}`);
+      });
+    }
+    
+    if (unfulfilled.length > 0) {
+      console.log('   Unfulfilled requests:');
+      unfulfilled.forEach((u, idx) => {
+        console.log(`   ${idx + 1}. ${u.requestedText} - ${u.reason}`);
+      });
+    }
 
     // Build edit mode context if applicable
     let editModeContext = '';
