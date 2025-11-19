@@ -690,10 +690,22 @@ function matchEnhancedRequestsToPriceBook(
     // 2. Score 1-49: Low confidence, show as possible matches (user can manually add)
     // 3. Score 0: No relevance, don't show
     
+    // Step 1: Filter high-confidence results
     const highConfidenceResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
-    const lowConfidenceResults = validResults.filter(r => r.score > 0 && r.score < MATCH_CONFIDENCE_THRESHOLD);
     
-    console.log(`   📊 Score breakdown: ${highConfidenceResults.length} high-confidence (≥50), ${lowConfidenceResults.length} low-confidence (1-49)`);
+    // Step 2: Build a Set of high-confidence product IDs to prevent duplicates
+    const highConfidenceIds = new Set(
+      highConfidenceResults.map(r => r.product.id || r.product.product_name?.toLowerCase().trim())
+    );
+    
+    // Step 3: Filter low-confidence results, EXCLUDING any that are already in high-confidence
+    const lowConfidenceResultsRaw = validResults.filter(r => r.score > 0 && r.score < MATCH_CONFIDENCE_THRESHOLD);
+    const lowConfidenceResults = lowConfidenceResultsRaw.filter(r => {
+      const productId = r.product.id || r.product.product_name?.toLowerCase().trim();
+      return !highConfidenceIds.has(productId);
+    });
+    
+    console.log(`   📊 Score breakdown: ${highConfidenceResults.length} high-confidence (≥50), ${lowConfidenceResultsRaw.length} raw low-confidence, ${lowConfidenceResults.length} deduped low-confidence (1-49)`);
     
     // Process high-confidence matches (auto-add)
     const selectedMatches = selectExactMatchesForItem(highConfidenceResults);
