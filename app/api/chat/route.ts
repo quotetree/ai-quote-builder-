@@ -6,228 +6,165 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const STRICT_KEYWORDS = ['bullet', 'dome', 'turret', 'multisensor', 'cat6', 'cat5', 'cable', 'solar', 'gridless'];
-const STRICT_KEYWORD_SYNONYMS: Record<string, string[]> = {
-  bullet: ['bullet'],
-  dome: ['dome'],
-  turret: ['turret'],
-  multisensor: ['multisensor', 'multi-sensor', 'multi sensor'],
-  cat6: ['cat6', 'cat 6'],
-  cat5: ['cat5', 'cat 5'],
-  cable: ['cable', 'cabling', 'wire'],
-  solar: ['solar'],
-  gridless: ['gridless', 'grid-less', 'off-grid', 'off grid'],
-};
+// Common stopwords to filter out when extracting keywords from user requests
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
+  'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'will',
+  'with', 'i', 'need', 'want', 'also', 'some', 'get', 'can', 'we', 'my', 'me'
+]);
 
+/**
+ * Builds a searchable text string from a product's text fields.
+ * This is used for generic keyword-based matching across the price book.
+ */
+function buildSearchText(product: any): string {
+  return [
+    product.product_name,
+    product.product_number,    // Product Code
+    product.product_brand,
+    product.product_type,
+    product.product_family_name, // Product Family name (if joined)
+    product.description,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[-_]/g, ' ')  // Normalize hyphens and underscores
+    .replace(/\s+/g, ' ')   // Normalize whitespace
+    .trim();
+}
+
+/**
+ * Extracts meaningful keywords from a user's request text.
+ * Filters out stopwords and keeps only substantive terms.
+ */
+function extractKeywords(text: string): string[] {
+  if (!text || typeof text !== 'string') return [];
+  
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(word => word.length > 1 && !STOPWORDS.has(word));
+}
+
+/**
+ * Scores products based on generic keyword matching across all product fields.
+ * This is industry-agnostic and works for any business based on their price book data.
+ * 
+ * Example:
+ * - "4 Verkada bullet cameras" with no products containing both "verkada" AND "bullet" → low/zero scores
+ * - "6 boxes of CAT6 cable" with product name "CAT6 Riser Cable" → high score
+ */
 function searchProductsWithScores(products: any[], keywords: string): { product: any; score: number }[] {
   if (!keywords || keywords.trim() === '') {
     return products.slice(0, 20).map(product => ({ product, score: 0 }));
   }
   
-  const normalizedKeywords = keywords.toLowerCase()
-    .replace(/[-_]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Extract keywords from user's search query
+  const searchKeywords = extractKeywords(keywords);
   
-  const searchTerms = normalizedKeywords.split(/[\s,]+/).filter(t => t.length > 1);
+  if (searchKeywords.length === 0) {
+    return products.slice(0, 20).map(product => ({ product, score: 0 }));
+  }
   
-  console.log('🔍 Search terms:', searchTerms);
+  console.log('🔍 Search keywords:', searchKeywords);
   console.log('🏷️  Product types in database:', [...new Set(products.map(p => p.product_type).filter(Boolean))].slice(0, 10));
   
   const scored = products.map(product => {
     let score = 0;
+    
+    // Build searchable text from all product fields
+    const searchText = buildSearchText(product);
     const productName = (product.product_name || '').toLowerCase().replace(/[-_]/g, ' ');
     const productBrand = (product.product_brand || '').toLowerCase().replace(/[-_]/g, ' ');
     const productType = (product.product_type || '').toLowerCase().replace(/[-_]/g, ' ');
-    const description = (product.description || '').toLowerCase().replace(/[-_]/g, ' ');
-    const combinedSearchText = `${productBrand} ${productName} ${productType} ${description}`.toLowerCase();
+    const productCode = (product.product_number || '').toLowerCase().replace(/[-_]/g, ' ');
     
-    const commonBrands = ['verkada', 'rhombus', 'hikvision', 'axis', 'hanwha', 'genetec', 'milestone'];
-    const brandInSearch = searchTerms.find(term => commonBrands.includes(term));
+    // Count how many keywords match
+    let keywordsMatched = 0;
+    let keywordsInName = 0;
+    let keywordsInBrand = 0;
+    let keywordsInType = 0;
+    let exactCodeMatch = false;
     
-    if (brandInSearch) {
-      if (!productBrand.includes(brandInSearch)) {
-        score -= 1000;
-      } else {
+    searchKeywords.forEach(keyword => {
+      if (searchText.includes(keyword)) {
+        keywordsMatched++;
+        score += 10; // Base score for any match in searchable text
+      }
+      
+      // Boost for matches in specific fields
+      if (productName.includes(keyword)) {
+        keywordsInName++;
+        score += 25; // Higher weight for name matches
+      }
+      
+      if (productBrand.includes(keyword)) {
+        keywordsInBrand++;
+        score += 30; // Even higher for brand matches (important for specificity)
+      }
+      
+      if (productType.includes(keyword)) {
+        keywordsInType++;
+        score += 20; // Type matches are important
+      }
+      
+      // Exact product code match is very important
+      if (productCode && productCode === keyword) {
+        exactCodeMatch = true;
         score += 200;
       }
-    }
-    
-    const typeKeywords = ['access', 'control', 'intercom', 'camera', 'nvr', 'recorder', 'alarm', 'sensor'];
-    const typeInSearch = searchTerms.filter(term => typeKeywords.includes(term));
-    
-    if (typeInSearch.length > 0) {
-      const matchingTypeTerms = typeInSearch.filter(term => productType.includes(term));
-      if (matchingTypeTerms.length === typeInSearch.length) {
-        score += 300;
-      } else if (matchingTypeTerms.length > 0) {
-        score += 100;
-      } else {
-        score -= 200;
-      }
-    }
-    
-    let termsFoundInCombined = 0;
-    let termsFoundInName = 0;
-    searchTerms.forEach(term => {
-      if (combinedSearchText.includes(term)) {
-        termsFoundInCombined++;
-      }
-      if (productName.includes(term)) {
-        termsFoundInName++;
-      }
     });
     
-    const compoundTerms: string[] = [];
-    for (let i = 0; i < searchTerms.length - 1; i++) {
-      compoundTerms.push(`${searchTerms[i]} ${searchTerms[i + 1]}`);
-    }
-    
-    compoundTerms.forEach(compound => {
-      if (combinedSearchText.includes(compound)) {
-        score += 30;
-      }
-    });
-    
-    if (termsFoundInCombined === searchTerms.length) {
-      score += 200;
-    }
-    
-    if (termsFoundInName === searchTerms.length) {
+    // Bonus: All keywords found in searchable text (strong match)
+    if (keywordsMatched === searchKeywords.length) {
       score += 100;
     }
     
-    if (searchTerms.length >= 3 && termsFoundInCombined >= searchTerms.length - 1) {
-      score += 75;
+    // Bonus: All keywords in product name (very specific match)
+    if (keywordsInName === searchKeywords.length && searchKeywords.length > 1) {
+      score += 150;
     }
     
-    searchTerms.forEach(term => {
-      if (productName.includes(term)) {
-        score += 20;
-        if (term.length > 4 && !['year', 'years', 'license'].includes(term)) {
-          score += 15;
+    // Penalty: Missing keywords (progressively worse)
+    const missingKeywords = searchKeywords.length - keywordsMatched;
+    if (missingKeywords > 0) {
+      score -= missingKeywords * 50; // Heavy penalty for missing keywords
+    }
+    
+    // Check for compound phrases (multi-word matches in sequence)
+    if (searchKeywords.length >= 2) {
+      for (let i = 0; i < searchKeywords.length - 1; i++) {
+        const phrase = `${searchKeywords[i]} ${searchKeywords[i + 1]}`;
+        if (searchText.includes(phrase)) {
+          score += 40; // Bonus for maintaining word order
         }
       }
-      
-      if (productBrand.includes(term)) {
-        score += 15;
-      }
-      
-      if (productType.includes(term)) {
-        score += 25;
-      }
-      
-      if (combinedSearchText.includes(term)) {
-        score += 5;
-      }
-      
-      if ((product.product_tags || []).some((tag: string) => tag.toLowerCase().includes(term))) {
-        score += 4;
-      }
-      
-      if (description.includes(term)) {
-        score += 2;
-      }
-    });
-    
-    const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
-    const brandTerms = searchTerms.filter(t => commonBrands.includes(t));
-    
-    const strictTerms = searchTerms.filter(t => STRICT_KEYWORDS.includes(t));
-    strictTerms.forEach(term => {
-      const synonyms = STRICT_KEYWORD_SYNONYMS[term] || [term];
-      const matchesStrict = synonyms.some(syn => combinedSearchText.includes(syn));
-      if (!matchesStrict) {
-        score -= 250;
-      }
-    });
-    
-    criticalTerms.forEach(term => {
-      if (!brandTerms.includes(term) && !combinedSearchText.includes(term)) {
-        score -= 30;
-      }
-    });
+    }
     
     return { product, score };
   });
   
   const sorted = scored.sort((a, b) => b.score - a.score);
-  const positive = sorted.filter(item => item.score > 0);
-  const filtered = positive.length >= 5 ? positive : sorted.slice(0, 20);
   
-  // CRITICAL: Check for STRICT KEYWORDS in search - if present, MUST match product
-  const strictTermsInSearch = searchTerms.filter(t => STRICT_KEYWORDS.includes(t));
+  // Only return products with positive scores (at least some keyword matches)
+  const results = sorted.filter(item => item.score > 0).slice(0, 20);
   
-  if (strictTermsInSearch.length > 0) {
-    console.log('🚨 STRICT KEYWORDS detected in search:', strictTermsInSearch);
-    
-    // Filter to ONLY products that contain ALL strict keywords
-    const strictMatches = filtered.filter(item => {
-      const productName = (item.product.product_name || '').toLowerCase().replace(/[-_]/g, ' ');
-      const productType = (item.product.product_type || '').toLowerCase().replace(/[-_]/g, ' ');
-      const productBrand = (item.product.product_brand || '').toLowerCase().replace(/[-_]/g, ' ');
-      const combinedSearchText = `${productBrand} ${productName} ${productType}`.toLowerCase();
-      
-      // Check if product matches ALL strict keywords (with synonyms)
-      return strictTermsInSearch.every(strictTerm => {
-        const synonyms = STRICT_KEYWORD_SYNONYMS[strictTerm] || [strictTerm];
-        return synonyms.some(syn => combinedSearchText.includes(syn));
-      });
-    });
-    
-    if (strictMatches.length === 0) {
-      console.log('❌ NO products match strict keywords. Returning EMPTY to force "not found" message.');
-      return []; // FORCE EMPTY RESULTS - don't substitute!
-    }
-    
-    console.log(`✅ Found ${strictMatches.length} products matching strict keywords`);
-    
-    const results = strictMatches
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
-    
-    console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(item => ({
-      name: item.product.product_name,
-      type: item.product.product_type,
-      brand: item.product.product_brand,
-      score: item.score
-    })));
-    
-    return results;
-  }
-  
-  // No strict keywords - use regular filtering
-  const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
-  if (criticalTerms.length > 0) {
-    const withCriticalTerms = filtered.filter(item => {
-      const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
-      return criticalTerms.every(term => combined.includes(term));
-    });
-    
-    if (withCriticalTerms.length > 0) {
-      const others = filtered.filter(item => {
-        const combined = `${(item.product.product_brand || '').toLowerCase()} ${(item.product.product_name || '').toLowerCase()} ${(item.product.product_type || '').toLowerCase()}`.replace(/[-_]/g, ' ');
-        return !criticalTerms.every(term => combined.includes(term));
-      });
-      
-      return [
-        ...withCriticalTerms.sort((a, b) => b.score - a.score),
-        ...others.sort((a, b) => b.score - a.score)
-      ]
-        .slice(0, 20);
-    }
-  }
-  
-  const results = filtered
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
-  
-  console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(item => ({
+  console.log(`📦 Found ${results.length} products with positive scores. Top 5:`, results.slice(0, 5).map(item => ({
     name: item.product.product_name,
     type: item.product.product_type,
     brand: item.product.product_brand,
     score: item.score
   })));
+  
+  // If no positive scores, return empty (will trigger "not found" message)
+  if (results.length === 0) {
+    console.log('❌ No products with positive keyword match scores. Returning empty.');
+    return [];
+  }
   
   return results;
 }
@@ -250,7 +187,16 @@ interface UnfulfilledRequest {
   reason: string;
 }
 
-const MATCH_CONFIDENCE_THRESHOLD = 120;
+/**
+ * Minimum score required to consider a product match valid.
+ * If best match score is below this, treat as "not found".
+ * 
+ * Score guide:
+ * - 100+ = All keywords matched across fields (good match)
+ * - 50-99 = Partial keyword matches (questionable)
+ * - <50 = Weak match, likely wrong product
+ */
+const MATCH_CONFIDENCE_THRESHOLD = 50;
 
 function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any[]) {
   const suggestionsMap = new Map<string, any>();
@@ -310,11 +256,17 @@ function matchRequestsToPriceBook(requestedItems: RequestedItem[], products: any
         });
       }
     } else {
+      // Extract keywords from the request for better error message
+      const requestKeywords = extractKeywords(keywords);
+      const keywordList = requestKeywords.length > 0 
+        ? requestKeywords.join(', ') 
+        : 'these terms';
+      
       unfulfilled.push({
         requestedText: request.item || request.rawText || keywords,
         reason: top
-          ? `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD})`
-          : 'No matching product found in price book',
+          ? `Closest match "${top.product.product_name}" scored ${Math.round(top.score)} (needs ≥ ${MATCH_CONFIDENCE_THRESHOLD}). No products in your price book contain all keywords: ${keywordList}`
+          : `No products in your price book contain these keywords in their Name/Code/Brand/Type/Family/Description: ${keywordList}`,
       });
     }
   });
@@ -533,7 +485,7 @@ PRODUCT_DATA_END
 Example:
 REQUEST_DATA_START
 [
-  { "item": "Verkada bullet cameras", "quantity": 4, "unit": "cameras", "budget": null, "rawText": "4 Verkada bullet cameras", "keywords": "Verkada bullet camera" },
+  { "item": "Acme widgets", "quantity": 4, "unit": "units", "budget": null, "rawText": "4 Acme widgets", "keywords": "acme widget" },
   { "item": "Miscellaneous material", "quantity": 1, "unit": null, "budget": 150, "rawText": "$150 in misc material", "keywords": "miscellaneous material" }
 ]
 REQUEST_DATA_END
@@ -569,8 +521,8 @@ REQUEST_DATA_END
 **Each message = Fresh start. Only suggest what's in the current message.**
 
 **Example:**
-Current message: "I need one 5-year Verkada intercom license"
-Your PRODUCT_DATA section: ONLY that 1 license (not 5 products from history)
+Current message: "I need one premium widget from Acme"
+Your PRODUCT_DATA section: ONLY that 1 widget (not 5 products from history)
 
 ## Your Core Capabilities:
 1. **Agentic Intelligence**: You don't just ask static questions - you dynamically probe deeper based on responses
@@ -592,23 +544,24 @@ ${productBrands.size > 0 ? '- Available Brands: ' + Array.from(productBrands).jo
 
 **Examples:**
 - User: "I need cameras" → search_price_book("camera")
-- User: "Hikvision dome cameras" → search_price_book("hikvision dome camera")
-- User: "Verkada 5-year intercom license" → search_price_book("verkada 5 year intercom license")
-- User: "Verkada 3-year access control license" → search_price_book("verkada 3 year access control license")
-- User: "8 Verkada 3-year access control licenses" → search_price_book("verkada 3 year access control license")
+- User: "Acme brand sprinkler heads" → search_price_book("acme sprinkler heads")
+- User: "5-year software license" → search_price_book("5 year software license")
+- User: "TPO roofing membrane" → search_price_book("tpo roofing membrane")
+- User: "8 boxes of cat6 cable" → search_price_book("cat6 cable")
 
-**CRITICAL:** When user specifies a brand (Verkada, Rhombus, etc.), ALWAYS include it in your search!
-- ❌ BAD: User says "Verkada 3-year access control license" → You search "3-year access control license" (missing brand!)
-- ✅ GOOD: User says "Verkada 3-year access control license" → You search "verkada 3 year access control license"
+**CRITICAL:** When user specifies a brand or specific product details, ALWAYS include them in your search!
+- ❌ BAD: User says "Acme brand widget" → You search "widget" (missing brand!)
+- ✅ GOOD: User says "Acme brand widget" → You search "acme widget"
 
-**CRITICAL - PRODUCT TYPES:** The search looks across product name, brand, AND product type fields!
+**CRITICAL - PRODUCT FIELDS:** The search looks across product name, code, brand, type, family AND description fields!
 
 Examples of how this works:
-- Product: "Door License" (name) + "Access Control" (type) + "Verkada" (brand)
-- User searches: "Verkada access control license" → PERFECT MATCH!
-- User searches: "Verkada door license" → PERFECT MATCH!
+- Product: "Premium Widget" (name) + "WID-100" (code) + "Hardware" (type) + "Acme" (brand)
+- User searches: "Acme hardware widget" → PERFECT MATCH!
+- User searches: "WID-100" → PERFECT MATCH (exact code match!)
+- User searches: "premium widget" → PERFECT MATCH (name match!)
 
-So when user says "access control" or "intercom" or "camera", include those words in your search even if you think the product might be named differently!
+Include ALL the keywords the user provides in your search - the system will find matches across all product fields!
 
 **CRITICAL: Selecting Products from Search Results**
 
@@ -621,48 +574,53 @@ When you search and get results back:
 4. **DO NOT reject good matches** - if it has the key terms (intercom, camera, etc.), it's a match!
 
 **Examples:**
-- User: "5-year intercom license" 
-- Search finds: "Verkada 5-Year Intercom License" at $1,749
+- User: "5-year software license" 
+- Search finds: "Premium 5-Year Software License" at $1,749
 - ✅ **CORRECT:** Add this to PRODUCT_DATA section immediately!
 - ❌ **WRONG:** Saying "not found" when it's right there!
 
-- User: "intercom license"
-- Search finds: "3-Year Intercom License" ($599), "5-Year Intercom License" ($1,749), "10-Year Intercom License" ($2,999)
-- ✅ **CORRECT:** Suggest the 5-year (middle option) OR ask which duration they prefer
+- User: "roofing membrane"
+- Search finds: "TPO Membrane Roll" ($599), "EPDM Membrane Roll" ($749), "PVC Membrane Roll" ($899)
+- ✅ **CORRECT:** Suggest the first match OR ask which type they prefer
 - ❌ **WRONG:** Saying "not found" or "no exact match"
 
-**GOLDEN RULE: If search returns products with the key terms (intercom, camera, etc.) → USE THE FIRST GOOD MATCH!**
+**GOLDEN RULE: If search returns products with matching keywords → USE THE FIRST GOOD MATCH!**
 **Don't overthink it. Don't say "not found". Just use the product from the search results!**
 
-**🚨 CRITICAL: NEVER SUBSTITUTE PRODUCT TYPES - STRICT MATCHING REQUIRED**
+**🚨 CRITICAL: NEVER SUBSTITUTE PRODUCTS - KEYWORD MATCHING REQUIRED**
 
-Camera types (bullet, dome, turret, multisensor) and other product types (solar, gridless, etc.) are **NOT interchangeable**:
+Product matching is based on **keywords in the user's request matching keywords in your price book**:
 
 **STRICT RULES:**
-1. If user asks for **"bullet camera"** and search returns NO results → Report "❌ Could not add bullet cameras (not found in price book)"
-2. If user asks for **"bullet camera"** and search returns **"dome camera"** → REJECT IT. Report "❌ Could not add bullet cameras (not found in price book)"
-3. **NEVER suggest dome when user asked for bullet**
-4. **NEVER suggest multisensor when user asked for dome**
-5. **NEVER suggest turret when user asked for bullet**
-6. **NEVER suggest ANY product type when solar/gridless is requested and not found**
+1. Products are matched by searching across: Product Name, Product Code, Product Brand, Product Type, Product Family, and Description
+2. If user asks for **specific keywords** (e.g., "bullet camera", "TPO membrane", "sprinkler head") and search returns NO results → Report "❌ Could not add [item] (not found in price book)"
+3. **NEVER suggest products that don't match the user's keywords**
+4. **NEVER substitute one product for another just because they're "similar"**
+5. If search returns empty results, the item should be reported as "Could not add" in the Work Summary
 
 **Examples of CORRECT behavior:**
-- User: "4 verkada bullet cameras"
-- Search: Returns dome cameras only
-- ✅ **CORRECT:** Report "❌ Could not add Verkada bullet cameras (no bullet camera products found in price book)"
-- ❌ **WRONG:** Suggesting the dome cameras instead
+- User: "4 Acme Model X widgets"
+- Search: Returns no products containing both "acme" AND "model x"
+- ✅ **CORRECT:** Report "❌ Could not add Acme Model X widgets (no matching products in price book)"
+- ❌ **WRONG:** Suggesting a different widget model
 
-- User: "1 solar gridless unit"
+- User: "1 commercial grade compressor"
 - Search: Returns no results
-- ✅ **CORRECT:** Report "❌ Could not add solar gridless unit (no solar/gridless products found in price book)"
+- ✅ **CORRECT:** Report "❌ Could not add commercial grade compressor (no matching products in price book)"
 - ❌ **WRONG:** Ignoring the request completely
 
-**Product type keywords that require EXACT matching:**
-- bullet, dome, turret, multisensor (camera types)
-- solar, gridless (power types)
-- cat5, cat6 (cable types)
+- User: "10 bags of mulch"
+- Search: Returns "Premium Hardwood Mulch Bag"
+- ✅ **CORRECT:** Suggest the mulch product (matches "mulch" and "bag")
+- ❌ **WRONG:** Saying "not found" when it matches the keywords
 
-**If the user specifies a product type keyword and you can't find it → TELL THEM. Never substitute or ignore.**
+**The matching is data-driven:**
+- Your price book determines what products exist
+- Matching is based on keywords the user provides
+- If keywords don't match any product fields → report as unfulfilled
+- If keywords DO match → suggest the product
+
+**If the user specifies keywords and you can't find matching products → TELL THEM. Never substitute or ignore.**
 
 ## Response Format - CRITICAL:
 Your response MUST be structured in TWO parts:
@@ -718,7 +676,7 @@ Next Steps: Does this work?
 Does this work?
 
 PRODUCT_DATA_START
-1. Verkada 5-Year License - Qty: 1, Price: $999.00 each = $999.00
+1. Premium Widget License - Qty: 1, Price: $999.00 each = $999.00
 PRODUCT_DATA_END
 
 **If you don't include PRODUCT_DATA, the Suggested Products panel will be empty and the app breaks.**
@@ -749,9 +707,9 @@ Labor pricing is DYNAMIC - calculate based on how user specifies it:
 - If user just says "add labor" with no specifics → Ask clarifying question about hours OR dollar amount
 
 **Examples:**
-✓ "16 hours of data labor" → Search for data labor, use 16 × hourly_rate
-✓ "access control labor at $3,000" → Search for access control labor, use Qty: 1 at $3,000
-✓ "put installation labor at 4000" → Search for installation labor, use Qty: 1 at $4,000
+✓ "16 hours of installation labor" → Search for installation labor, use 16 × hourly_rate
+✓ "project management labor at $3,000" → Search for project management labor, use Qty: 1 at $3,000
+✓ "put design work at 4000" → Search for design work, use Qty: 1 at $4,000
 ✓ "I need labor" → Ask: "How many hours do you need, or do you have a specific dollar amount in mind?"
 
 **Rules:**
@@ -776,16 +734,16 @@ Labor pricing is DYNAMIC - calculate based on how user specifies it:
 
 - **Ask 2-4 targeted follow-up questions** that will help you recommend the right products
 - Use the product context to inform your questions. For example:
-  * "I see we have both Brand X and Brand Y cameras in stock. Do you have a preference?"
-  * "For the cable runs, do you need Cat6 or Cat6a? What distances are we looking at?"
-  * "I notice this is for a commercial space - do we need any specific certifications or fire ratings?"
+  * "I see we have both Brand X and Brand Y widgets in stock. Do you have a preference?"
+  * "For the materials, do you need standard grade or premium grade? What's the application?"
+  * "I notice this is for a commercial space - do we need any specific certifications or ratings?"
 
 ### Phase 3: Product Recommendations
 - Once you have enough context, search for products and add them to PRODUCT_DATA section
 - In your chat response, keep it simple:
   * "Based on what you described, I've added some products to the Suggested Products panel for your review"
   * Don't list product names or prices in the chat
-  * If you need to ask about alternatives, ask generally: "For the cameras, do you prefer budget or premium options?"
+  * If you need to ask about alternatives, ask generally: "For these products, do you prefer budget or premium options?"
 - The user will see all product details in the Suggested Products panel
 
 ### Phase 4: Product Recommendations & Building the Quote
@@ -829,8 +787,8 @@ Your response:
 Are these the correct products?
 
 PRODUCT_DATA_START
-1. Verkada 5-Year License - Qty: 1, Price: $999.00 each = $999.00
-2. Cat6 Riser Cable - Qty: 1, Price: $225.00 each = $225.00
+1. Premium Widget License - Qty: 1, Price: $999.00 each = $999.00
+2. Premium Cable Spool - Qty: 1, Price: $225.00 each = $225.00
 PRODUCT_DATA_END
 
 **Notice**: ONLY the 2 products mentioned in current message. NOT all products from conversation history.
@@ -868,13 +826,13 @@ ${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSum
 4. Does your response end with PRODUCT_DATA_START and PRODUCT_DATA_END? If NO, ADD IT NOW.
 
 **CRITICAL MISTAKES TO AVOID:**
-❌ Search returns "Verkada 5-Year Intercom License" → You say "not found" (WRONG!)
+❌ Search returns "Premium 5-Year Widget License" → You say "not found" (WRONG!)
 ❌ Search returns results → You reject them because word order is different (WRONG!)
 ❌ User asks for 1 product → You include 5 products from conversation history (WRONG!)
 
 **CORRECT BEHAVIOR:**
 ✅ Search returns products → Suggest the best match from results
-✅ "5-Year Intercom License" matches request for "5-year intercom license" (word order doesn't matter)
+✅ "5-Year Widget License" matches request for "5-year widget license" (word order doesn't matter)
 ✅ User asks for 1 product → Include ONLY that 1 product from CURRENT message
 
 **If the search found products, USE THEM. Don't overthink it!**`;
@@ -886,13 +844,13 @@ ${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSum
         type: "function" as const,
         function: {
           name: "search_price_book",
-          description: "Search the price book for products using keywords. Use this to find products by name, brand, type, or description. Always use this before recommending products.",
+          description: "Search the price book for products using keywords. Searches across Product Name, Product Code, Product Brand, Product Type, Product Family, and Description fields. Always use this before recommending products.",
           parameters: {
             type: "object",
             properties: {
               keywords: {
                 type: "string",
-                description: "Keywords to search for (e.g., 'camera', 'hikvision dome', 'cat6 cable', 'labor installation')"
+                description: "Keywords to search for (e.g., 'widget', 'acme sprinkler head', 'TPO membrane', 'installation labor')"
               }
             },
             required: ["keywords"]
@@ -1021,7 +979,7 @@ ${formattedResults}
 🚨 CRITICAL INSTRUCTIONS:
 1. Use the FIRST product from the results above (it's the best match)
 2. Copy the EXACT product name and price from the results
-3. If the first result has "IO Controller" in name but user asked for "access control", CHECK THE TYPE FIELD
+3. Check ALL product fields (Name, Code, Brand, Type, Description) for keyword matches
 4. DO NOT make up product names - use exactly what's listed above
 5. The product you mention in your Work Summary MUST match what you put in PRODUCT_DATA`
             : `No products found matching "${args.keywords}". Try searching with different keywords.`;
@@ -1156,14 +1114,9 @@ ${formattedResults}
         }
       }
       
-      // Check for common mismatches
-      productSuggestions.forEach(p => {
-        if (cleanMessage.toLowerCase().includes('access control') && p.product_name.toLowerCase().includes('io controller') && !p.product_name.toLowerCase().includes('access')) {
-          console.error('❌ CRITICAL MISMATCH: AI said "access control" but suggesting "' + p.product_name + '"!');
-        }
-        if (cleanMessage.toLowerCase().includes('door') && !p.product_name.toLowerCase().includes('door') && !p.product_name.toLowerCase().includes('access')) {
-          console.error('❌ MISMATCH: AI said "door" but product name is:', p.product_name);
-        }
+      // Log product suggestions for debugging
+      productSuggestions.forEach((p, idx) => {
+        console.log(`  ${idx + 1}. Suggesting: "${p.product_name}" (Score: ${p.match_confidence || 'N/A'})`);
       });
       console.log('✅ ====================================================\n');
     }
