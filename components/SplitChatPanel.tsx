@@ -139,6 +139,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               if (currentProjectId.current === projId) {
                 setMessages(prev => prev.filter(m => !orphanedIds.includes(m.id)));
                 setSuggestedProducts([]);
+                setLowConfidenceMatches([]);
                 setQuotePreview(null);
               }
               
@@ -212,6 +213,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           }
         } else {
           setSuggestedProducts([]); // No products to load
+          setLowConfidenceMatches([]); // No low-confidence matches to load
         }
         
         setQuotePreview(normalizeQuotePreview(data.quote_preview as QuotePreview | null));
@@ -372,6 +374,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         // Reset state temporarily while loading
         setShowSplitView(false);
         setSuggestedProducts([]);
+        setLowConfidenceMatches([]);
         setQuotePreview(null);
         
         // Small delay to ensure any pending deletes have completed
@@ -589,6 +592,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         
         // Clear suggestions in edit mode (they're ephemeral)
         setSuggestedProducts([]);
+        setLowConfidenceMatches([]);
         
         // Telemetry for rehydrated baked markups
         const markupCount = workingState.quote_preview?.bakedMarkups?.length || 0;
@@ -656,6 +660,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         // Reset all state
         setMessages([]);
         setSuggestedProducts([]);
+        setLowConfidenceMatches([]); // Clear low-confidence matches (Possible Matches)
         setQuotePreview(null);
         setShowSplitView(false);
         setSelectAll(false);
@@ -1900,6 +1905,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       // Reset all state
       setMessages([]);
       setSuggestedProducts([]);
+      setLowConfidenceMatches([]); // Clear low-confidence matches (Possible Matches)
       setQuotePreview(null);
       setShowSplitView(false);
       setSelectAll(false);
@@ -2010,6 +2016,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         
         // Clear working state and UI
         setSuggestedProducts([]);
+        setLowConfidenceMatches([]);
         setQuotePreview(null);
         setShowSplitView(false);
         
@@ -2123,6 +2130,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
       // Reset UI state only (messages stay in database)
       setSuggestedProducts([]);
+      setLowConfidenceMatches([]);
       setQuotePreview(null);
       setShowSplitView(false);
       
@@ -2381,6 +2389,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       
       // Clear suggested products from UI
       setSuggestedProducts([]);
+      setLowConfidenceMatches([]);
       
       // Delete entire working state to ensure clean slate
       await supabase
