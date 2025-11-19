@@ -720,40 +720,40 @@ function matchEnhancedRequestsToPriceBook(
         
         console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
         
-        const key = product.id || product.product_name?.toLowerCase().trim();
-        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
-        const quantityValue = Number(requestedQuantity);
-        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
-        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
-        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
-        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
-        const computedLineTotal = hasBudget
-          ? Number(parsedBudget)
-          : unitPrice * quantity;
-        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+      const key = product.id || product.product_name?.toLowerCase().trim();
+      const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+      const quantityValue = Number(requestedQuantity);
+      const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+      const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+      const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+      const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+      const computedLineTotal = hasBudget
+        ? Number(parsedBudget)
+        : unitPrice * quantity;
+      const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
 
-        if (suggestionsMap.has(key)) {
-          const existing = suggestionsMap.get(key);
-          existing.quantity += quantity;
-          existing.line_total += computedLineTotal;
-          existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
-          existing.matched_requests.push(request.item || keywords);
-        } else {
-          suggestionsMap.set(key, {
-            product_id: product.id,
-            product_name: product.product_name,
-            description: product.description,
-            quantity,
-            unit_price: Number(derivedUnitPrice.toFixed(2)),
-            line_total: Number(computedLineTotal.toFixed(2)),
-            quantity_unit: request.unit || product.unit || null,
-            price_unit: product.unit || null,
-            product_brand: product.product_brand,
-            product_type: product.product_type,
+      if (suggestionsMap.has(key)) {
+        const existing = suggestionsMap.get(key);
+        existing.quantity += quantity;
+        existing.line_total += computedLineTotal;
+        existing.unit_price = existing.quantity > 0 ? existing.line_total / existing.quantity : existing.unit_price;
+        existing.matched_requests.push(request.item || keywords);
+      } else {
+        suggestionsMap.set(key, {
+          product_id: product.id,
+          product_name: product.product_name,
+          description: product.description,
+          quantity,
+          unit_price: Number(derivedUnitPrice.toFixed(2)),
+          line_total: Number(computedLineTotal.toFixed(2)),
+          quantity_unit: request.unit || product.unit || null,
+          price_unit: product.unit || null,
+          product_brand: product.product_brand,
+          product_type: product.product_type,
             match_confidence: matchScore,
-            matched_requests: [request.item || keywords],
-          });
-        }
+          matched_requests: [request.item || keywords],
+        });
+      }
       });
     }
     
@@ -822,7 +822,7 @@ function matchEnhancedRequestsToPriceBook(
           });
           reason += '\nThese products were NOT added because they don\'t have the required duration.';
         }
-      } else {
+    } else {
         // General keyword mismatch - show top N by keyword score (alternatives only)
         const requestKeywords = extractKeywords(keywords);
         const keywordList = requestKeywords.length > 0 ? requestKeywords.join(', ') : 'these terms';
@@ -1579,7 +1579,7 @@ ${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSum
     // All responses should be concise now - no quote generation in chat
     const isComplexRequest = message.length > 200; // Longer user messages might need more tokens
     
-    // CRITICAL: Build context isolation instructions  
+    // CRITICAL: Build context isolation instructions
     let contextInstructions = `\n\n## 🔒 CONTEXT ISOLATION - READ THIS FIRST\n\n`;
     contextInstructions += `**SESSION ID:** ${contextId || 'none'}\n`;
     contextInstructions += `**CLEAR CONTEXT MODE:** ${clearContext ? 'ENABLED - Ignore all previous session memory' : 'DISABLED'}\n\n`;
@@ -1967,10 +1967,19 @@ ${formattedResults}
 
     console.log(`🏊 pool:complete { poolId: "${poolId || 'none'}", runId: "${runId || 'none'}", productCount: ${productSuggestions.length} }`);
 
+    // Log final response data
+    console.log('📤 API Response Summary:', {
+      highConfidence: productSuggestions.length,
+      lowConfidence: phase2LowConfidenceMatches.length,
+      unfulfilled: unfulfilledRequests.length,
+      poolId: poolId
+    });
+
     return NextResponse.json({ 
       message: cleanMessage,
       products: productSuggestions,
       hasProducts: productSuggestions.length > 0,
+      lowConfidenceMatches: phase2LowConfidenceMatches, // Score 1-49 products for manual add
       unfulfilledRequests,
       runId: runId, // Return runId for validation
       poolId: poolId // Return poolId for pool isolation

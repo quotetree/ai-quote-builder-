@@ -2551,6 +2551,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const aiResponse = responseData.message;
       const products = responseData.products || [];
       const lowConfidenceProducts = responseData.lowConfidenceMatches || [];
+      
+      // Log what we received from API
+      console.log('📥 Frontend received from API:', {
+        highConfidence: products.length,
+        lowConfidence: lowConfidenceProducts.length,
+        unfulfilled: responseData.unfulfilledRequests?.length || 0,
+        poolId: responseData.poolId
+      });
+
+      // Track final high-confidence products for deduplication (in wider scope)
+      let finalHighConfidenceProducts: any[] = [];
 
       // CRITICAL: If AI suggested products, REPLACE the suggested products list completely
       // This is a fresh pool - NO products from previous pools should remain
@@ -2589,7 +2600,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           ) || []
         );
         
-        const finalProducts = deduped.filter((p: any) => {
+        finalHighConfidenceProducts = deduped.filter((p: any) => {
           if (quoteProductKeys.has(p.canonicalKey)) {
             console.log(`🚫 blockedHistoryMerge { fromContext: "quote_preview", intoContext: "${contextId}", product: "${p.product_name}", reason: "already in quote" }`);
             droppedDuplicates.push(p.product_name);
@@ -2603,11 +2614,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           // ATOMIC REPLACEMENT: Clear ALL previous products and set ONLY current context products
           // This is STATELESS - no carry-over from previous turns
           const oldCount = suggestedProducts.length;
-          setSuggestedProducts(finalProducts);
+          setSuggestedProducts(finalHighConfidenceProducts);
           setSelectAll(false);
           
-          console.log(`🎯 suggest:render { contextId: "${contextId}", count: ${finalProducts.length}, dropped: ${droppedDuplicates.length} }`);
-          console.log(`🏊 pool:replaced { poolId: "${poolId}", oldCount: ${oldCount}, newCount: ${finalProducts.length} }`);
+          console.log(`🎯 suggest:render { contextId: "${contextId}", count: ${finalHighConfidenceProducts.length}, dropped: ${droppedDuplicates.length} }`);
+          console.log(`🏊 pool:replaced { poolId: "${poolId}", oldCount: ${oldCount}, newCount: ${finalHighConfidenceProducts.length} }`);
           
           // Show the split view when products arrive
           setShowSplitView(true);
@@ -2615,13 +2626,13 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           setActiveTab("suggested");
         } else {
           // User switched projects - save to DB for when they return
-          console.log(`🔄 [Background] Saving ${finalProducts.length} products to DB for later retrieval`);
+          console.log(`🔄 [Background] Saving ${finalHighConfidenceProducts.length} products to DB for later retrieval`);
           // Save working state with products for this project
           await supabase
             .from("project_working_state")
             .upsert({
               project_id: projectId,
-              suggested_products: finalProducts,
+              suggested_products: finalHighConfidenceProducts,
               quote_preview: quotePreview,
               show_split_view: true,
             current_pool_id: poolId,
@@ -2646,8 +2657,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         }));
         
         // CRITICAL: Deduplicate - filter out products already in suggestions or quote
+        // Use finalHighConfidenceProducts (just set) not suggestedProducts state (async/may be stale)
         const existingSuggestedIds = new Set(
-          suggestedProducts.map(p => p.product_id || p.canonicalKey)
+          finalHighConfidenceProducts.map(p => p.product_id || p.canonicalKey)
         );
         const existingQuoteIds = new Set(
           (quotePreview?.line_items || []).map((item: any) => 
@@ -2670,7 +2682,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         if (!userSwitchedProjects) {
           setLowConfidenceMatches(filteredLowConfidence);
           console.log(`💡 Low-confidence render: ${filteredLowConfidence.length} products (filtered from ${lowConfidenceWithIds.length})`);
-        } else {
+      } else {
           // User switched projects - save filtered low-confidence matches to DB
           await supabase
             .from("project_working_state")
@@ -2858,19 +2870,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
             return (
               <div key={message.id}>
                 <div
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-5 py-4 ${
-                      message.role === "user"
-                        ? "bg-[#f4f4f4] text-gray-900"
-                        : "bg-white border border-gray-200"
-                    }`}
-                  >
-                    <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                      {renderMessageContent(message.content)}
-                    </div>
-                  </div>
+              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-2xl px-5 py-4 ${
+                  message.role === "user"
+                    ? "bg-[#f4f4f4] text-gray-900"
+                    : "bg-white border border-gray-200"
+                }`}
+              >
+                <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                  {renderMessageContent(message.content)}
+                </div>
+              </div>
                 </div>
                 
                 {/* Show low-confidence matches after the last assistant message */}
@@ -2924,8 +2936,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                             >
                               + Add to Quote
                             </button>
-                          </div>
-                        ))}
+            </div>
+          ))}
                       </div>
                       
                       <p className="text-xs text-gray-500 mt-3 italic">
