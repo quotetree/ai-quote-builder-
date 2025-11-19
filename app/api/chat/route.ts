@@ -1882,31 +1882,13 @@ ${formattedResults}
     productSuggestions = phase2MatchedProducts;
     unfulfilledRequests = phase2UnfulfilledRequests;
 
-    // Build low-confidence suggestions section (scores 1-49)
-    let lowConfidenceSuggestionsText = '';
-    if (phase2LowConfidenceMatches.length > 0) {
-      lowConfidenceSuggestionsText = '\n\n**💡 Possible Matches (Not Auto-Added):**\n\n';
-      lowConfidenceSuggestionsText += 'We didn\'t find a confident exact match, but here are some products you might mean:\n\n';
-      
-      phase2LowConfidenceMatches.forEach((product, idx) => {
-        lowConfidenceSuggestionsText += `${idx + 1}. **${product.product_name}**`;
-        if (product.product_brand) {
-          lowConfidenceSuggestionsText += ` (${product.product_brand})`;
-        }
-        lowConfidenceSuggestionsText += ` - $${product.unit_price} each\n`;
-        lowConfidenceSuggestionsText += `   *For: "${product.requested_item}"*\n`;
-        lowConfidenceSuggestionsText += `   → Use the **"+ Add to Quote"** button to add this item if it's correct.\n\n`;
-      });
-      
-      lowConfidenceSuggestionsText += '*These items were not automatically added because the match confidence was low. Please review and add manually if appropriate.*';
-    }
+    // LOW-CONFIDENCE MATCHES: Don't add to AI response text - handled by React component
+    // The frontend will render these with actual clickable "+ Add to Quote" buttons
+    // (Not markdown text in the chat)
 
     const workSummaryText = buildWorkSummaryText(productSuggestions, unfulfilledRequests);
     const cleanedWithoutWorkSummary = stripExistingWorkSummary(cleanMessage);
     const finalMessageParts = [workSummaryText.trim()];
-    if (lowConfidenceSuggestionsText) {
-      finalMessageParts.push(lowConfidenceSuggestionsText.trim());
-    }
     if (cleanedWithoutWorkSummary) {
       finalMessageParts.push(cleanedWithoutWorkSummary.trim());
     }

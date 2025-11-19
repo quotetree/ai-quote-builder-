@@ -2645,17 +2645,38 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `low-${idx}`
         }));
         
+        // CRITICAL: Deduplicate - filter out products already in suggestions or quote
+        const existingSuggestedIds = new Set(
+          suggestedProducts.map(p => p.product_id || p.canonicalKey)
+        );
+        const existingQuoteIds = new Set(
+          (quotePreview?.line_items || []).map((item: any) => 
+            item.product_id || item.canonicalKey || item.product_name?.toLowerCase().trim()
+          )
+        );
+        
+        const filteredLowConfidence = lowConfidenceWithIds.filter(p => {
+          const isDuplicateInSuggestions = existingSuggestedIds.has(p.product_id) || existingSuggestedIds.has(p.canonicalKey);
+          const isDuplicateInQuote = existingQuoteIds.has(p.product_id) || existingQuoteIds.has(p.canonicalKey);
+          
+          if (isDuplicateInSuggestions || isDuplicateInQuote) {
+            console.log(`🚫 Filtered duplicate low-confidence: "${p.product_name}" (already in suggestions or quote)`);
+            return false;
+          }
+          return true;
+        });
+        
         // Only update UI state if user is still on this project
         if (!userSwitchedProjects) {
-          setLowConfidenceMatches(lowConfidenceWithIds);
-          console.log(`💡 Low-confidence render: ${lowConfidenceWithIds.length} products`);
+          setLowConfidenceMatches(filteredLowConfidence);
+          console.log(`💡 Low-confidence render: ${filteredLowConfidence.length} products (filtered from ${lowConfidenceWithIds.length})`);
         } else {
-          // User switched projects - save low-confidence matches to DB
+          // User switched projects - save filtered low-confidence matches to DB
           await supabase
             .from("project_working_state")
             .upsert({
               project_id: projectId,
-              low_confidence_matches: lowConfidenceWithIds,
+              low_confidence_matches: filteredLowConfidence,
             }, { onConflict: 'project_id' });
         }
       } else {
