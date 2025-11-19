@@ -952,6 +952,13 @@ export async function POST(req: NextRequest) {
         console.log(`   ${idx + 1}. ${u.requestedText} - ${u.reason}`);
       });
     }
+    
+    // CRITICAL: Store Phase 2 results to use after AI response generation
+    // These will be used to validate/override AI's product suggestions
+    const phase2MatchedProducts = suggestions;
+    const phase2UnfulfilledRequests = unfulfilled;
+    
+    console.log('💾 Stored Phase 2 results for post-AI validation');
 
     // Build edit mode context if applicable
     let editModeContext = '';
@@ -1700,24 +1707,20 @@ ${formattedResults}
       console.log('✅ ====================================================\n');
     }
 
-    if (requestedItems.length === 0 && productSuggestions.length > 0) {
-      requestedItems = productSuggestions.map((p: any) => ({
-        item: p.product_name,
-        quantity: p.quantity,
-        unit: p.quantity_unit || null,
-        budget: p.line_total || null,
-        rawText: p.product_name,
-        keywords: p.product_name,
-      }));
-      console.warn('⚠️ REQUEST_DATA block missing. Falling back to PRODUCT_DATA for request mapping.');
-    }
+    // ============================================================================
+    // USE PHASE 2 RESULTS (Already matched with hard constraints)
+    // ============================================================================
+    
+    console.log('🔄 Using Phase 2 matching results (strict constraint enforcement)');
+    console.log(`   Phase 2 matched: ${phase2MatchedProducts.length} products`);
+    console.log(`   Phase 2 unfulfilled: ${phase2UnfulfilledRequests.length} requests`);
+    
+    // CRITICAL: Use Phase 2 results directly - they already have hard constraint enforcement
+    // DO NOT re-match or use AI's PRODUCT_DATA suggestions
+    productSuggestions = phase2MatchedProducts;
+    unfulfilledRequests = phase2UnfulfilledRequests;
 
-    const matchResult = matchRequestsToPriceBook(requestedItems, products);
-    const validatedSuggestions = matchResult.suggestions;
-    unfulfilledRequests = matchResult.unfulfilled;
-    productSuggestions = validatedSuggestions;
-
-    const workSummaryText = buildWorkSummaryText(validatedSuggestions, unfulfilledRequests);
+    const workSummaryText = buildWorkSummaryText(productSuggestions, unfulfilledRequests);
     const cleanedWithoutWorkSummary = stripExistingWorkSummary(cleanMessage);
     const finalMessageParts = [workSummaryText.trim()];
     if (cleanedWithoutWorkSummary) {
