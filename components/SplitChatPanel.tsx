@@ -2613,34 +2613,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           setShowSplitView(true);
           // Auto-switch to suggested products tab when new products arrive
           setActiveTab("suggested");
-        }
-        
-        // Process low-confidence matches (scores 1-49) - show but don't auto-add
-        if (lowConfidenceProducts.length > 0) {
-          console.log(`💡 Low-confidence matches: ${lowConfidenceProducts.length} products`);
-          
-          // Tag low-confidence products with IDs and pool info
-          const lowConfidenceWithIds = lowConfidenceProducts.map((p: any, idx: number) => ({
-            ...p,
-            id: `${poolId}-low-${idx}`, // Include poolId in ID for uniqueness
-            poolId: poolId,
-            contextId: contextId,
-            selected: false,
-            canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `low-${idx}`
-          }));
-          
-          // Only update UI state if user is still on this project
-          if (!userSwitchedProjects) {
-            setLowConfidenceMatches(lowConfidenceWithIds);
-            console.log(`💡 Low-confidence render: ${lowConfidenceWithIds.length} products`);
-          }
         } else {
-          // Clear low-confidence matches if none in response
-          if (!userSwitchedProjects) {
-            setLowConfidenceMatches([]);
-          }
-        }
-      } else {
           // User switched projects - save to DB for when they return
           console.log(`🔄 [Background] Saving ${finalProducts.length} products to DB for later retrieval`);
           // Save working state with products for this project
@@ -2649,18 +2622,45 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
             .upsert({
               project_id: projectId,
               suggested_products: finalProducts,
-              low_confidence_matches: lowConfidenceWithIds,
               quote_preview: quotePreview,
               show_split_view: true,
             current_pool_id: poolId,
             unfulfilled_requests: responseData.unfulfilledRequests || []
             }, { onConflict: 'project_id' });
         }
-      } else {
-        // No products in this turn
+      }
+      
+      // Process low-confidence matches (scores 1-49) - show but don't auto-add
+      // This runs regardless of whether there were high-confidence products
+      if (lowConfidenceProducts.length > 0) {
+        console.log(`💡 Low-confidence matches: ${lowConfidenceProducts.length} products`);
+        
+        // Tag low-confidence products with IDs and pool info
+        const lowConfidenceWithIds = lowConfidenceProducts.map((p: any, idx: number) => ({
+          ...p,
+          id: `${poolId}-low-${idx}`, // Include poolId in ID for uniqueness
+          poolId: poolId,
+          contextId: contextId,
+          selected: false,
+          canonicalKey: p.product_id || p.product_name?.toLowerCase().trim() || `low-${idx}`
+        }));
+        
+        // Only update UI state if user is still on this project
         if (!userSwitchedProjects) {
-          console.log(`🎯 suggest:render { contextId: "${contextId}", count: 0, reason: "no products in response" }`);
-          setSuggestedProducts([]);
+          setLowConfidenceMatches(lowConfidenceWithIds);
+          console.log(`💡 Low-confidence render: ${lowConfidenceWithIds.length} products`);
+        } else {
+          // User switched projects - save low-confidence matches to DB
+          await supabase
+            .from("project_working_state")
+            .upsert({
+              project_id: projectId,
+              low_confidence_matches: lowConfidenceWithIds,
+            }, { onConflict: 'project_id' });
+        }
+      } else {
+        // Clear low-confidence matches if none in response
+        if (!userSwitchedProjects) {
           setLowConfidenceMatches([]);
         }
       }
