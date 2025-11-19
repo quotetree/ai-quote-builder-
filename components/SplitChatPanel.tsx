@@ -2889,7 +2889,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                     <div className="mb-3">
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-xl">💡</span>
-                        <h4 className="font-semibold text-gray-900">Possible Matches (Not Auto-Added)</h4>
+                        <h4 className="font-semibold text-gray-900">Possible Matches</h4>
                       </div>
                       <p className="text-sm text-gray-600 mb-3">
                         We didn't find a confident exact match, but here are some products you might mean:
@@ -2905,9 +2905,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                           <div className="flex-1 min-w-0">
                             <div className="flex items-baseline gap-2 flex-wrap">
                               <strong className="text-sm text-gray-900">{idx + 1}. {match.product_name}</strong>
-                              {match.product_brand && (
-                                <span className="text-xs text-gray-600">({match.product_brand})</span>
-                              )}
                             </div>
                             
                             <div className="text-xs text-gray-700 mt-0.5">
@@ -2917,12 +2914,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                             {match.requested_item && (
                               <div className="text-xs text-gray-500 italic mt-0.5">
                                 For: "{match.requested_item}"
-                              </div>
-                            )}
-                            
-                            {process.env.NODE_ENV === 'development' && match.match_confidence && (
-                              <div className="text-[10px] text-gray-400 mt-0.5">
-                                Score: {match.match_confidence}
                               </div>
                             )}
                           </div>
