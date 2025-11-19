@@ -604,7 +604,7 @@ function updateConversationState(
         accumulated = accumulated.filter(existing => {
           // Same type but different duration = needs replacement
           const sameType = existing.productType?.toLowerCase() === item.productType?.toLowerCase() ||
-                          existing.item.toLowerCase().includes(item.productType.toLowerCase());
+                          (item.productType && existing.item.toLowerCase().includes(item.productType.toLowerCase()));
           const differentDuration = existing.duration && existing.duration !== item.duration;
           
           if (sameType && differentDuration) {
