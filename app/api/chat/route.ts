@@ -6,14 +6,17 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const STRICT_KEYWORDS = ['bullet', 'dome', 'turret', 'cat6', 'cat5', 'cable'];
+const STRICT_KEYWORDS = ['bullet', 'dome', 'turret', 'multisensor', 'cat6', 'cat5', 'cable', 'solar', 'gridless'];
 const STRICT_KEYWORD_SYNONYMS: Record<string, string[]> = {
   bullet: ['bullet'],
   dome: ['dome'],
   turret: ['turret'],
+  multisensor: ['multisensor', 'multi-sensor', 'multi sensor'],
   cat6: ['cat6', 'cat 6'],
   cat5: ['cat5', 'cat 5'],
   cable: ['cable', 'cabling', 'wire'],
+  solar: ['solar'],
+  gridless: ['gridless', 'grid-less', 'off-grid', 'off grid'],
 };
 
 function searchProductsWithScores(products: any[], keywords: string): { product: any; score: number }[] {
@@ -152,6 +155,48 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
   const positive = sorted.filter(item => item.score > 0);
   const filtered = positive.length >= 5 ? positive : sorted.slice(0, 20);
   
+  // CRITICAL: Check for STRICT KEYWORDS in search - if present, MUST match product
+  const strictTermsInSearch = searchTerms.filter(t => STRICT_KEYWORDS.includes(t));
+  
+  if (strictTermsInSearch.length > 0) {
+    console.log('🚨 STRICT KEYWORDS detected in search:', strictTermsInSearch);
+    
+    // Filter to ONLY products that contain ALL strict keywords
+    const strictMatches = filtered.filter(item => {
+      const productName = (item.product.product_name || '').toLowerCase().replace(/[-_]/g, ' ');
+      const productType = (item.product.product_type || '').toLowerCase().replace(/[-_]/g, ' ');
+      const productBrand = (item.product.product_brand || '').toLowerCase().replace(/[-_]/g, ' ');
+      const combinedSearchText = `${productBrand} ${productName} ${productType}`.toLowerCase();
+      
+      // Check if product matches ALL strict keywords (with synonyms)
+      return strictTermsInSearch.every(strictTerm => {
+        const synonyms = STRICT_KEYWORD_SYNONYMS[strictTerm] || [strictTerm];
+        return synonyms.some(syn => combinedSearchText.includes(syn));
+      });
+    });
+    
+    if (strictMatches.length === 0) {
+      console.log('❌ NO products match strict keywords. Returning EMPTY to force "not found" message.');
+      return []; // FORCE EMPTY RESULTS - don't substitute!
+    }
+    
+    console.log(`✅ Found ${strictMatches.length} products matching strict keywords`);
+    
+    const results = strictMatches
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+    
+    console.log(`📦 Found ${results.length} products. Top 5 with types:`, results.slice(0, 5).map(item => ({
+      name: item.product.product_name,
+      type: item.product.product_type,
+      brand: item.product.product_brand,
+      score: item.score
+    })));
+    
+    return results;
+  }
+  
+  // No strict keywords - use regular filtering
   const criticalTerms = searchTerms.filter(t => t.length > 4 && !['year', 'years', 'license'].includes(t));
   if (criticalTerms.length > 0) {
     const withCriticalTerms = filtered.filter(item => {
@@ -588,6 +633,36 @@ When you search and get results back:
 
 **GOLDEN RULE: If search returns products with the key terms (intercom, camera, etc.) → USE THE FIRST GOOD MATCH!**
 **Don't overthink it. Don't say "not found". Just use the product from the search results!**
+
+**🚨 CRITICAL: NEVER SUBSTITUTE PRODUCT TYPES - STRICT MATCHING REQUIRED**
+
+Camera types (bullet, dome, turret, multisensor) and other product types (solar, gridless, etc.) are **NOT interchangeable**:
+
+**STRICT RULES:**
+1. If user asks for **"bullet camera"** and search returns NO results → Report "❌ Could not add bullet cameras (not found in price book)"
+2. If user asks for **"bullet camera"** and search returns **"dome camera"** → REJECT IT. Report "❌ Could not add bullet cameras (not found in price book)"
+3. **NEVER suggest dome when user asked for bullet**
+4. **NEVER suggest multisensor when user asked for dome**
+5. **NEVER suggest turret when user asked for bullet**
+6. **NEVER suggest ANY product type when solar/gridless is requested and not found**
+
+**Examples of CORRECT behavior:**
+- User: "4 verkada bullet cameras"
+- Search: Returns dome cameras only
+- ✅ **CORRECT:** Report "❌ Could not add Verkada bullet cameras (no bullet camera products found in price book)"
+- ❌ **WRONG:** Suggesting the dome cameras instead
+
+- User: "1 solar gridless unit"
+- Search: Returns no results
+- ✅ **CORRECT:** Report "❌ Could not add solar gridless unit (no solar/gridless products found in price book)"
+- ❌ **WRONG:** Ignoring the request completely
+
+**Product type keywords that require EXACT matching:**
+- bullet, dome, turret, multisensor (camera types)
+- solar, gridless (power types)
+- cat5, cat6 (cable types)
+
+**If the user specifies a product type keyword and you can't find it → TELL THEM. Never substitute or ignore.**
 
 ## Response Format - CRITICAL:
 Your response MUST be structured in TWO parts:
