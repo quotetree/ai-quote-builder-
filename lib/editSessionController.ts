@@ -12,6 +12,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { logErr, inspectErr } from '@/lib/util/errorTools';
 import { normalizeBakedMarkups, rehydrateBakedMarkupsIntoItems } from '@/lib/quote/bakedMarkups';
+import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 import { 
   Quote, 
   QuoteItem, 
@@ -212,6 +213,9 @@ export async function startEditSession(
       version: quote.version_number,
       itemCount: snapshot.items.length
     });
+
+    // Update project timestamp to mark as recently active
+    await updateProjectTimestamp(projectId);
 
     return {
       sessionId,

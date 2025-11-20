@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Quote, QuoteItem } from "@/types/database";
+import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 
 export function useQuotes(projectId?: string) {
   const [quotes, setQuotes] = useState<Quote[]>([]);
@@ -122,6 +123,8 @@ export function useQuotes(projectId?: string) {
 
       if (quote) {
         setQuotes([quote, ...quotes]);
+        // Update project timestamp to mark as recently active
+        await updateProjectTimestamp(projectId);
       }
       return quote;
     } catch (err: any) {
@@ -142,6 +145,10 @@ export function useQuotes(projectId?: string) {
       if (error) throw error;
       if (data) {
         setQuotes(quotes.map((q) => (q.id === id ? { ...q, status } : q)));
+        // Update project timestamp to mark as recently active
+        if (data.project_id) {
+          await updateProjectTimestamp(data.project_id);
+        }
       }
       return data;
     } catch (err: any) {
@@ -162,6 +169,10 @@ export function useQuotes(projectId?: string) {
       if (error) throw error;
       if (data) {
         setQuotes(quotes.map((q) => (q.id === id ? { ...q, quote_name: quoteName } : q)));
+        // Update project timestamp to mark as recently active
+        if (data.project_id) {
+          await updateProjectTimestamp(data.project_id);
+        }
       }
       return data;
     } catch (err: any) {
@@ -292,6 +303,8 @@ export function useQuotes(projectId?: string) {
       // Refresh quotes list to include the new duplicate
       if (projectId) {
         await fetchQuotes(projectId);
+        // Update project timestamp to mark as recently active
+        await updateProjectTimestamp(projectId);
       }
 
       return newQuote;

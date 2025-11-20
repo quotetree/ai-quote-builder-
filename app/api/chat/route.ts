@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import OpenAI from "openai";
+import { updateProjectTimestampServer } from "@/lib/updateProjectTimestamp";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -2172,6 +2173,9 @@ ${formattedResults}
       unfulfilled: unfulfilledRequests.length,
       poolId: poolId
     });
+
+    // Update project timestamp to mark as recently active
+    await updateProjectTimestampServer(supabase, projectId);
 
     return NextResponse.json({ 
       message: cleanMessage,
