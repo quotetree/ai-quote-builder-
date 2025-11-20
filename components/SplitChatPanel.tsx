@@ -1785,23 +1785,20 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       autoScrollInterval.current = null;
     }
     
-    if (!quotePreview || draggedIndex === null) {
+    if (!quotePreview || draggedIndex === null || dropPosition === null) {
       setDraggedIndex(null);
       setDragOverIndex(null);
       setDropPosition(null);
       return;
     }
     
-    // Recalculate drop position based on current mouse position for accuracy
-    const rect = e.currentTarget.getBoundingClientRect();
-    const midpoint = rect.top + rect.height / 2;
-    const currentDropPosition = e.clientY < midpoint ? 'before' : 'after';
-    
-    // Calculate final drop position
+    // Use the dropPosition from state (set during dragOver) to ensure consistency
+    // with the visual indicator. This prevents the "off-by-one" feeling where
+    // the drop doesn't match what the user saw.
     let finalDropIndex = dropIndex;
     
     // If dropping 'after', increment the index
-    if (currentDropPosition === 'after') {
+    if (dropPosition === 'after') {
       finalDropIndex = dropIndex + 1;
     }
     
