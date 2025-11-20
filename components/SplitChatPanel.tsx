@@ -7,6 +7,7 @@ import { ChatMessage, ProductSuggestion, QuotePreview, ChargeConfig } from "@/ty
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
 import { useCurrentUser, getCurrentUserClient, getAnonymousUser, type UserRef } from "@/lib/auth/client";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
 import { generateStableKey } from "@/lib/stableKey";
 
 interface SplitChatPanelProps {
@@ -96,6 +97,17 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const currentPoolIdRef = useRef<string | null>(null); // Track current pool ID for product isolation
   const supabase = createClient();
   const currentUser = useCurrentUser(); // Get current authenticated user
+
+  // Speech-to-text hook for microphone button
+  const handleSpeechResult = (text: string) => {
+    // Append recognized text to existing input
+    setInput(prevInput => {
+      const trimmedPrev = prevInput.trim();
+      return trimmedPrev ? `${trimmedPrev} ${text}` : text;
+    });
+  };
+  
+  const { isRecording, isSupported: isSpeechSupported, toggleRecording } = useSpeechToText(handleSpeechResult);
 
   // Global orphan cleanup that survives component lifecycle
   useEffect(() => {
@@ -2973,9 +2985,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         {/* Input */}
         <div className="border-t border-gray-200 bg-white p-4">
           <div className="flex gap-3 items-center bg-[#f4f4f4] rounded-3xl px-4 py-2">
-            <button className="p-2 hover:bg-gray-300 rounded-lg transition-colors flex-shrink-0">
-              <Plus size={20} className="text-gray-600" />
-            </button>
             <textarea
               ref={textareaRef}
               value={input}
@@ -2986,8 +2995,22 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] placeholder-gray-500 disabled:opacity-50 overflow-hidden leading-tight"
               style={{ height: '20px', maxHeight: '160px' }}
             />
-            <button className="p-2 hover:bg-gray-300 rounded-lg transition-colors flex-shrink-0">
-              <Mic size={20} className="text-gray-600" />
+            <button 
+              onClick={() => {
+                if (!isSpeechSupported) {
+                  toast.error("Speech-to-text is not supported in this browser", { duration: 3000 });
+                  return;
+                }
+                toggleRecording();
+              }}
+              className={`p-2 rounded-lg transition-all flex-shrink-0 ${
+                isRecording 
+                  ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
+                  : 'hover:bg-gray-300 text-gray-600'
+              }`}
+              title={isRecording ? "Stop recording" : "Start voice input"}
+            >
+              <Mic size={20} />
             </button>
             <button
               onClick={sendMessage}
