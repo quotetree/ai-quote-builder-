@@ -86,11 +86,31 @@ To verify the fix works:
 6. **Change quote status** - Project moves to top
 7. **Switch between projects** - Most recently used should always be at top
 
+## Database Triggers (Optional Enhancement)
+
+A SQL migration file is included at `supabase/update_project_timestamp_triggers.sql` that creates database triggers to automatically update project timestamps. This provides a more comprehensive solution by catching ALL database-level changes.
+
+**Benefits of database triggers:**
+- Automatic timestamp updates for ANY activity (even direct DB changes)
+- No need to remember to call `updateProjectTimestamp` in code
+- Catches activities like document uploads, note creation, folder changes
+- More reliable and consistent
+
+**To apply the triggers:**
+```bash
+# Apply via Supabase CLI
+supabase db push
+
+# Or apply directly in Supabase dashboard SQL editor
+```
+
+**Note:** The current implementation uses application-level updates which work well for the main user flows (chat, quotes, edits). The database triggers are optional and provide additional coverage.
+
 ## Future Enhancements
 
 Additional activities that could trigger timestamp updates:
-- Uploading documents to Drive
-- Creating/editing notes
+- Uploading documents to Drive (covered by optional DB triggers)
+- Creating/editing notes (covered by optional DB triggers)
 - Changing project settings
 - Adding team members (when that feature is available)
 
