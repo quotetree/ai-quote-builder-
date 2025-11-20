@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2 } from "lucide-react";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useProducts } from "@/hooks/useProducts";
@@ -1171,6 +1171,59 @@ type ProfitBreakdownViewProps = {
 };
 
 function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChange, onClose }: ProfitBreakdownViewProps) {
+  // Track editing state for each field to allow free typing without constant reformatting
+  const [editingFields, setEditingFields] = React.useState<Record<string, string>>({});
+
+  const handlePriceInputChange = (itemId: string, field: 'list' | 'sales', rawValue: string) => {
+    // Allow empty while typing
+    // Allow digits and at most one decimal point
+    const cleaned = rawValue.replace(/[^0-9.]/g, '');
+    const dotCount = (cleaned.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      return; // ignore extra dots
+    }
+    setEditingFields(prev => ({ ...prev, [`${itemId}-${field}`]: cleaned }));
+  };
+
+  const handlePriceInputBlur = (itemId: string, field: 'list' | 'sales', currentValue: number) => {
+    const fieldKey = `${itemId}-${field}`;
+    const editValue = editingFields[fieldKey];
+    
+    if (editValue !== undefined) {
+      const numeric = parseFloat(editValue || '0');
+      const safeValue = isNaN(numeric) ? 0 : Math.max(0, numeric);
+      
+      // Update the actual value
+      if (field === 'list') {
+        onListPriceChange(itemId, safeValue);
+      } else {
+        onSalesPriceChange(itemId, safeValue);
+      }
+      
+      // Clear editing state
+      setEditingFields(prev => {
+        const next = { ...prev };
+        delete next[fieldKey];
+        return next;
+      });
+    }
+  };
+
+  const getPriceDisplayValue = (itemId: string, field: 'list' | 'sales', actualValue: number): string => {
+    const fieldKey = `${itemId}-${field}`;
+    const editingValue = editingFields[fieldKey];
+    
+    if (editingValue !== undefined) {
+      // While editing, show the raw editing string
+      return editingValue;
+    }
+    
+    // When not editing, show formatted value
+    return Number.isFinite(actualValue) 
+      ? actualValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '0.00';
+  };
+
   return (
     <div className="absolute inset-0 z-10 bg-white dark:bg-gray-900 rounded-b-lg p-6 border-t border-gray-200 dark:border-gray-800 shadow-2xl overflow-y-auto">
       <div className="flex items-start justify-between mb-6">
@@ -1267,16 +1320,9 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={Number.isFinite(row.listPrice) ? row.listPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
-                        onChange={(event) => {
-                          const cleaned = event.target.value.replace(/[^0-9.]/g, '');
-                          const parsed = parseFloat(cleaned);
-                          if (!isNaN(parsed)) {
-                            onListPriceChange(row.id, parsed);
-                          } else if (cleaned === '') {
-                            onListPriceChange(row.id, 0);
-                          }
-                        }}
+                        value={getPriceDisplayValue(row.id, 'list', row.listPrice)}
+                        onChange={(event) => handlePriceInputChange(row.id, 'list', event.target.value)}
+                        onBlur={() => handlePriceInputBlur(row.id, 'list', row.listPrice)}
                         className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-left text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
                       />
                     </div>
@@ -1287,16 +1333,9 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={Number.isFinite(row.salesPrice) ? row.salesPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
-                        onChange={(event) => {
-                          const cleaned = event.target.value.replace(/[^0-9.]/g, '');
-                          const parsed = parseFloat(cleaned);
-                          if (!isNaN(parsed)) {
-                            onSalesPriceChange(row.id, parsed);
-                          } else if (cleaned === '') {
-                            onSalesPriceChange(row.id, 0);
-                          }
-                        }}
+                        value={getPriceDisplayValue(row.id, 'sales', row.salesPrice)}
+                        onChange={(event) => handlePriceInputChange(row.id, 'sales', event.target.value)}
+                        onBlur={() => handlePriceInputBlur(row.id, 'sales', row.salesPrice)}
                         className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
                       />
                     </div>
