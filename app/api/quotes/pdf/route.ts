@@ -201,13 +201,18 @@ export async function POST(req: NextRequest) {
 
     const tableData =
       quote.items?.map((item: any) => {
-        // Calculate effective unit price from line_total (includes markup, discounts, etc.)
-        const effectiveUnitPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
+        // Get list price (fallback to unit_price if not set)
+        const listPrice = safeNumber(item.list_price) || safeNumber(item.unit_price);
+        
+        // Calculate sales price from line_total (includes markup, discounts, etc.)
+        // This preserves the markup functionality
+        const salesPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
         
         return [
           item.product_name || item.product_number || "-",
-          formatCurrency(effectiveUnitPrice),
+          formatCurrency(listPrice),
           formatPercent(item.discount_percent),
+          formatCurrency(salesPrice),
           formatQuantity(item.quantity),
           formatCurrency(item.line_total),
         ];
@@ -215,8 +220,8 @@ export async function POST(req: NextRequest) {
 
     autoTable(doc, {
       startY: tableStartY,
-      head: [["Product", "Unit Price", "Discount", "Quantity", "Total Price"]],
-      body: tableData.length > 0 ? tableData : [["No items", "", "", "", ""]],
+      head: [["Product", "List Price", "Discount", "Sales Price", "Quantity", "Total Price"]],
+      body: tableData.length > 0 ? tableData : [["No items", "", "", "", "", ""]],
       theme: "grid",
       headStyles: {
         fillColor: [62, 62, 62],
@@ -228,10 +233,11 @@ export async function POST(req: NextRequest) {
         textColor: [50, 50, 50],
       },
       columnStyles: {
-        1: { halign: "right" },
-        2: { halign: "center" },
-        3: { halign: "center" },
-        4: { halign: "right" },
+        1: { halign: "right" },  // List Price
+        2: { halign: "center" }, // Discount
+        3: { halign: "right" },  // Sales Price
+        4: { halign: "center" }, // Quantity
+        5: { halign: "right" },  // Total Price
       },
     });
 
