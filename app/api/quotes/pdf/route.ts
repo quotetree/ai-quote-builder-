@@ -201,16 +201,25 @@ export async function POST(req: NextRequest) {
 
     const tableData =
       quote.items?.map((item: any) => {
-        // Get list price (fallback to unit_price if not set)
-        const listPrice = safeNumber(item.list_price) || safeNumber(item.unit_price);
-        
         // Calculate sales price from line_total (includes markup, discounts, etc.)
-        // This preserves the markup functionality
         const salesPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
+        
+        // Back-calculate list price so it matches the sales price after discount
+        // This hides any markup from the customer - they'll see the math work out correctly
+        const discountPercent = safeNumber(item.discount_percent);
+        let displayListPrice: number;
+        
+        if (discountPercent > 0 && discountPercent < 1) {
+          // If there's a discount, back-calculate: listPrice = salesPrice / (1 - discount)
+          displayListPrice = salesPrice / (1 - discountPercent);
+        } else {
+          // No discount, so list price = sales price
+          displayListPrice = salesPrice;
+        }
         
         return [
           item.product_name || item.product_number || "-",
-          formatCurrency(listPrice),
+          formatCurrency(displayListPrice),
           formatPercent(item.discount_percent),
           formatCurrency(salesPrice),
           formatQuantity(item.quantity),

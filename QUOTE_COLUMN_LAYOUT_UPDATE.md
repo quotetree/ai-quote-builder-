@@ -60,16 +60,59 @@ columnStyles: {
 }
 ```
 
-## Markup Preservation
+## Markup Handling
 
-**CRITICAL:** Products with markup continue to work correctly!
+**CRITICAL:** Markups are hidden from customers!
 
-The `salesPrice` calculation uses `line_total / quantity`, which already includes:
-- Discounts
-- Markups (from baked_markups)
-- Any other price adjustments
+### How It Works
 
-This ensures that markup functionality remains unchanged and works as expected.
+1. **Sales Price** is calculated from `line_total / quantity`
+   - Includes all markups, discounts, and adjustments
+   - This is what the customer actually pays
+
+2. **List Price** is back-calculated to hide markup:
+   ```
+   displayListPrice = salesPrice / (1 - discount_percent)
+   ```
+   - If discount is 20% and sales price is $800
+   - Display List Price = $800 / 0.8 = $1,000
+   - Customer sees: "$1,000 - 20% = $800" ✓
+
+### Why This Matters
+
+**Without back-calculation:**
+```
+Real List Price: $500
+Markup: +$200 (hidden from customer)
+Sales Price: $700
+Discount: 20%
+
+Customer sees:
+List Price: $500
+Discount: 20%
+Sales Price: $700
+❌ Math doesn't work: $500 * 0.8 = $400, not $700!
+```
+
+**With back-calculation:**
+```
+Real List Price: $500
+Markup: +$200 (hidden from customer)
+Sales Price: $700
+Discount: 20%
+
+Customer sees:
+List Price: $875 (back-calculated)
+Discount: 20%
+Sales Price: $700
+✅ Math works: $875 * 0.8 = $700!
+```
+
+### Result
+- Markup is completely hidden from customer
+- Pricing math appears correct
+- Customer sees logical discount flow
+- Professional presentation
 
 ## Example
 
