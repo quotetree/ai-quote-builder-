@@ -12,6 +12,12 @@ export function useSpeechToText(onResult: (text: string) => void): UseSpeechToTe
   const [isRecording, setIsRecording] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const onResultRef = useRef(onResult);
+
+  // Keep onResult ref up to date
+  useEffect(() => {
+    onResultRef.current = onResult;
+  }, [onResult]);
 
   useEffect(() => {
     // Check if Speech Recognition is supported
@@ -36,12 +42,15 @@ export function useSpeechToText(onResult: (text: string) => void): UseSpeechToTe
         }
 
         if (finalTranscript) {
-          onResult(finalTranscript.trim());
+          onResultRef.current(finalTranscript.trim());
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
+        // Only log non-aborted errors (aborted is normal when we stop manually)
+        if (event.error !== 'aborted') {
+          console.error('Speech recognition error:', event.error);
+        }
         setIsRecording(false);
         
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
@@ -59,7 +68,7 @@ export function useSpeechToText(onResult: (text: string) => void): UseSpeechToTe
 
     // Cleanup on unmount
     return () => {
-      if (recognitionRef.current) {
+      if (recognitionRef.current && isRecording) {
         try {
           recognitionRef.current.stop();
         } catch (e) {
@@ -67,7 +76,7 @@ export function useSpeechToText(onResult: (text: string) => void): UseSpeechToTe
         }
       }
     };
-  }, [onResult]);
+  }, []); // Only run once on mount
 
   const startRecording = useCallback(() => {
     if (!recognitionRef.current || !isSupported) {
