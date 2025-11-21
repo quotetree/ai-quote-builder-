@@ -31,18 +31,23 @@ export function useSpeechToText(onResult: (text: string) => void): UseSpeechToTe
       recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
+        let interimTranscript = '';
         let finalTranscript = '';
         
-        // Loop through results and collect final transcripts
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        // Loop through all results
+        for (let i = 0; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
             finalTranscript += transcript + ' ';
+          } else {
+            interimTranscript += transcript;
           }
         }
 
-        if (finalTranscript) {
-          onResultRef.current(finalTranscript.trim());
+        // Send whatever we have - interim or final
+        const textToSend = (finalTranscript + interimTranscript).trim();
+        if (textToSend) {
+          onResultRef.current(textToSend);
         }
       };
 

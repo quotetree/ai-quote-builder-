@@ -98,13 +98,15 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const supabase = createClient();
   const currentUser = useCurrentUser(); // Get current authenticated user
 
+  // Track the base text when recording starts (for real-time updates)
+  const baseTextRef = useRef<string>('');
+  
   // Speech-to-text hook for microphone button
   const handleSpeechResult = (text: string) => {
-    // Append recognized text to existing input
-    setInput(prevInput => {
-      const trimmedPrev = prevInput.trim();
-      return trimmedPrev ? `${trimmedPrev} ${text}` : text;
-    });
+    // Replace input with base text + current transcript (real-time update)
+    const base = baseTextRef.current;
+    const newInput = base ? `${base} ${text}` : text;
+    setInput(newInput);
   };
   
   const { isRecording, isSupported: isSpeechSupported, toggleRecording } = useSpeechToText(handleSpeechResult);
@@ -2431,6 +2433,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     if (!isSpeechSupported) {
       toast.error("Speech-to-text is not supported in this browser", { duration: 3000 });
       return;
+    }
+    
+    if (!isRecording) {
+      // Starting recording - save the current input as base text
+      baseTextRef.current = input.trim();
     }
     
     toggleRecording();
