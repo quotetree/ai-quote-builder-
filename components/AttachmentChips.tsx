@@ -14,7 +14,7 @@ const statusStyles: Record<
   { text: string; className: string }
 > = {
   pending: { text: "Pending", className: "text-gray-500" },
-  uploading: { text: "Uploading…", className: "text-blue-600" },
+  uploading: { text: "Uploading…", className: "text-green-600" },
   uploaded: { text: "Uploaded", className: "text-emerald-600" },
   error: { text: "Failed", className: "text-red-600" },
 };
@@ -56,7 +56,7 @@ export function AttachmentChips({
               <p className="text-xs text-gray-500">{formatFileSize(attachment.file.size)}</p>
               <div className="mt-1 flex items-center gap-1 text-xs">
                 {attachment.status === "uploading" && (
-                  <Loader2 size={12} className="animate-spin text-blue-600" />
+                  <Loader2 size={12} className="animate-spin text-green-600" />
                 )}
                 {attachment.status === "uploaded" && (
                   <CheckCircle size={12} className="text-emerald-600" />

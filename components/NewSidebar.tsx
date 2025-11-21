@@ -273,7 +273,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                   onClick={() => setAccountMenuOpen((prev) => !prev)}
                   className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-left"
                 >
-                  <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-medium">
+                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
                     {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -311,7 +311,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
               title={userName || userEmail || "User"}
             >
-              <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-medium">
+              <div className="w-6 h-6 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-medium">
                 {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
               </div>
             </button>

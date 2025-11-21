@@ -15,7 +15,7 @@ export default function NewQuotePage() {
           <div className="flex justify-between h-16 items-center">
             <Link
               href="/dashboard"
-              className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"
+              className="text-2xl font-bold bg-gradient-to-r from-green-600 to-purple-600 bg-clip-text text-transparent"
             >
               QuoteTree.ai
             </Link>
@@ -47,7 +47,7 @@ export default function NewQuotePage() {
                 id="projectName"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-green-500 focus:outline-none focus:ring-green-500"
                 placeholder="Website Redesign"
               />
             </div>
@@ -64,7 +64,7 @@ export default function NewQuotePage() {
                 id="clientName"
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-green-500 focus:outline-none focus:ring-green-500"
                 placeholder="Acme Corp"
               />
             </div>
@@ -81,7 +81,7 @@ export default function NewQuotePage() {
                 rows={6}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-green-500 focus:outline-none focus:ring-green-500"
                 placeholder="Describe the project scope, requirements, and deliverables..."
               />
             </div>
@@ -89,7 +89,7 @@ export default function NewQuotePage() {
             <div className="flex gap-4">
               <button
                 type="submit"
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
               >
                 Generate Quote with AI
               </button>

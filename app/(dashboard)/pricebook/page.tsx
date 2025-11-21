@@ -129,7 +129,7 @@ export default function PriceBookPage() {
             </button>
             <button
               onClick={() => setShowNewProduct(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2"
             >
               <Plus size={18} />
               New Product
@@ -146,7 +146,7 @@ export default function PriceBookPage() {
               placeholder="Search products..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full pl-12 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
         </div>
@@ -154,7 +154,7 @@ export default function PriceBookPage() {
         {/* Products Grid */}
         {loading ? (
           <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
             <p className="text-gray-500">Loading products...</p>
           </div>
         ) : filteredProducts.length === 0 ? (
@@ -180,7 +180,7 @@ export default function PriceBookPage() {
                   <div className="flex gap-1">
                     <button
                       onClick={() => setEditingProduct(product)}
-                      className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                      className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors"
                     >
                       <Edit size={16} />
                     </button>
@@ -213,7 +213,7 @@ export default function PriceBookPage() {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-500">Sales Price:</span>
-                    <span className="font-semibold text-blue-600">${product.sales_price.toLocaleString()}</span>
+                    <span className="font-semibold text-green-600">${product.sales_price.toLocaleString()}</span>
                   </div>
                   {product.cost_price && (
                     <div className="flex justify-between text-sm">
@@ -276,8 +276,8 @@ export default function PriceBookPage() {
                   product_name, product_number, description, list_price, sales_price, cost_price, unit
                 </code>
               </div>
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 rounded-lg">
-                <p className="text-sm text-blue-800 dark:text-blue-300">
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3 rounded-lg">
+                <p className="text-sm text-green-800 dark:text-green-300">
                   <strong>💡 Duplicate Detection:</strong> Products with matching product_number or product_name will be automatically skipped to prevent duplicates.
                 </p>
               </div>
@@ -287,7 +287,7 @@ export default function PriceBookPage() {
                   type="file"
                   accept=".csv"
                   onChange={handleCsvUpload}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                 />
               </label>
             </div>
@@ -410,7 +410,7 @@ function ProductFormModal({
           <div className="flex gap-3 pt-4">
             <button
               type="submit"
-              className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
             >
               {product ? "Update Product" : "Create Product"}
             </button>

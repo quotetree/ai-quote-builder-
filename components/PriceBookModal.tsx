@@ -522,7 +522,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
                   placeholder="Search products..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
             )}
@@ -540,7 +540,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-gray-50">
             <button
               onClick={() => setViewMode("new-product")}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2 font-medium"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2 font-medium"
             >
               <Plus size={18} />
               New Product
@@ -772,7 +772,7 @@ function ProductsTable({
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
           <p className="text-gray-500">Loading products...</p>
         </div>
       </div>
@@ -802,7 +802,7 @@ function ProductsTable({
                 ref={selectAllRef}
                 checked={isAllVisibleSelected}
                 onChange={onToggleSelectAll}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="rounded border-gray-300 text-green-600 focus:ring-green-500"
                 aria-label="Select all products"
               />
             </th>
@@ -834,14 +834,14 @@ function ProductsTable({
                   type="checkbox"
                   checked={selectedProductIds.includes(product.id)}
                   onChange={() => onToggleProductSelection(product.id)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="rounded border-gray-300 text-green-600 focus:ring-green-500"
                   aria-label={`Select product ${product.product_name}`}
                 />
               </td>
               <td className="px-6 py-4">
                 <div className="flex flex-col">
                   <button
-                    className="text-blue-600 hover:text-blue-800 font-medium text-left"
+                    className="text-green-600 hover:text-green-800 font-medium text-left"
                     onClick={() => onView(product)}
                   >
                     {product.product_name}
@@ -862,7 +862,7 @@ function ProductsTable({
               <td className="px-6 py-4 text-sm text-gray-900">
                 ${product.list_price.toLocaleString()}
               </td>
-              <td className="px-6 py-4 text-sm font-medium text-blue-600">
+              <td className="px-6 py-4 text-sm font-medium text-green-600">
                 ${product.sales_price.toLocaleString()}
               </td>
               <td className="px-6 py-4 text-right relative">
@@ -1030,7 +1030,7 @@ function ProductForm({
               type="text"
               value={formData.product_name}
               onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
               required
             />
           </div>
@@ -1042,7 +1042,7 @@ function ProductForm({
               type="text"
               value={formData.product_number}
               onChange={(e) => setFormData({ ...formData, product_number: e.target.value })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
         </div>
@@ -1057,7 +1057,7 @@ function ProductForm({
               type="text"
               value={formData.product_brand}
               onChange={(e) => setFormData({ ...formData, product_brand: e.target.value })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
         <div>
@@ -1068,7 +1068,7 @@ function ProductForm({
             type="text"
             value={formData.product_type}
             onChange={(e) => setFormData({ ...formData, product_type: e.target.value })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
           </div>
         </div>
@@ -1083,7 +1083,7 @@ function ProductForm({
               <select
                 value={formData.product_family_id}
                 onChange={(e) => setFormData({ ...formData, product_family_id: e.target.value })}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent appearance-none bg-white"
                 disabled={familiesLoading}
               >
                 <option value="">{NONE_PRODUCT_FAMILY_LABEL}</option>
@@ -1101,7 +1101,7 @@ function ProductForm({
             <button
               type="button"
               onClick={() => setShowFamilyModal(true)}
-              className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center justify-center"
+              className="px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center justify-center"
               title="Create new product family"
             >
               <Plus size={20} />
@@ -1127,7 +1127,7 @@ function ProductForm({
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             rows={4}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
             placeholder="Product details..."
           />
         </div>
@@ -1144,7 +1144,7 @@ function ProductForm({
               min="0"
               value={formData.list_price}
               onChange={(e) => setFormData({ ...formData, list_price: parseFloat(e.target.value) || 0 })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
               required
             />
           </div>
@@ -1158,7 +1158,7 @@ function ProductForm({
               min="0"
               value={formData.sales_price}
               onChange={(e) => setFormData({ ...formData, sales_price: parseFloat(e.target.value) || 0 })}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
               required
             />
           </div>
@@ -1168,7 +1168,7 @@ function ProductForm({
         <div className="flex gap-3 pt-6">
           <button
             type="submit"
-            className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
           >
             {product ? "Update Product" : "Create Product"}
           </button>
@@ -1256,7 +1256,7 @@ function CsvColumnMapping({
                     [field.key]: e.target.value,
                   });
                 }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
               >
                 <option value="">-- Select Column --</option>
                 {headers.map((header) => (
@@ -1292,7 +1292,7 @@ function CsvColumnMapping({
         <button
           onClick={onImport}
           disabled={!isValid}
-          className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+          className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
         >
           Import Products
         </button>
@@ -1358,7 +1358,7 @@ function CreateProductFamilyModal({
               type="text"
               value={familyName}
               onChange={(e) => setFamilyName(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
               placeholder="e.g., HVAC Equipment, Plumbing"
               required
               autoFocus
@@ -1374,7 +1374,7 @@ function CreateProductFamilyModal({
               value={familyDescription}
               onChange={(e) => setFamilyDescription(e.target.value)}
               rows={3}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
               placeholder="Brief description of this product family..."
               disabled={isSubmitting}
             />
@@ -1384,7 +1384,7 @@ function CreateProductFamilyModal({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+              className="flex-1 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
             >
               {isSubmitting ? "Creating..." : "Create Family"}
             </button>
@@ -1512,7 +1512,7 @@ function ProductFamilyManager({
                           type="text"
                           value={editName}
                           onChange={(e) => setEditName(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                           autoFocus
                         />
                       </div>
@@ -1524,13 +1524,13 @@ function ProductFamilyManager({
                           value={editDescription}
                           onChange={(e) => setEditDescription(e.target.value)}
                           rows={2}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
                         />
                       </div>
                       <div className="flex gap-2">
                         <button
                           onClick={handleSaveEdit}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
                         >
                           Save
                         </button>
@@ -1557,7 +1557,7 @@ function ProductFamilyManager({
                       <div className="flex items-center gap-2 ml-4">
                         <button
                           onClick={() => handleEdit(family)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                           title="Edit family"
                         >
                           <Edit size={16} />
@@ -1616,7 +1616,7 @@ function ProductDetail({
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+              <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
                 Product
               </span>
               <h2 className="text-2xl font-bold text-gray-900">{product.product_name}</h2>
@@ -1637,7 +1637,7 @@ function ProductDetail({
           <div className="flex items-center gap-3">
             <button
               onClick={onEdit}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2 font-medium"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2 font-medium"
             >
               <Edit size={16} />
               Edit
@@ -1711,7 +1711,7 @@ function ProductDetail({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">Sales Price</label>
-              <p className="text-lg font-semibold text-blue-600">${product.sales_price.toLocaleString()}</p>
+              <p className="text-lg font-semibold text-green-600">${product.sales_price.toLocaleString()}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
@@ -1739,13 +1739,13 @@ function ProductDetail({
         </button>
         <button
           onClick={onEdit}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
         >
           Save & New
         </button>
         <button
           onClick={onEdit}
-          className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
         >
           Save
         </button>

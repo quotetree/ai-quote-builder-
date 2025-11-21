@@ -318,7 +318,7 @@ export default function PersonalizationModal({
           </button>
           <button
             onClick={handleSave}
-            className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={loading || initializing}
           >
             {loading ? "Saving..." : "Save changes"}

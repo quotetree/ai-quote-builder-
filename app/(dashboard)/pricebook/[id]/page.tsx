@@ -31,7 +31,7 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
         <div className="mb-8">
           <Link
             href="/pricebook"
-            className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-4"
+            className="inline-flex items-center gap-2 text-green-600 hover:text-green-700 mb-4"
           >
             <ArrowLeft size={18} />
             Back to Price Book
@@ -46,7 +46,7 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
               )}
             </div>
             <div className="flex gap-2">
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2">
+              <button className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2">
                 <Edit size={18} />
                 Edit
               </button>
@@ -102,9 +102,9 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
                   ${product.list_price.toLocaleString()}
                 </dd>
               </div>
-              <div className="bg-blue-50 rounded-lg p-4">
-                <dt className="text-sm font-medium text-blue-600 mb-2">Sales Price</dt>
-                <dd className="text-2xl font-bold text-blue-600">
+              <div className="bg-green-50 rounded-lg p-4">
+                <dt className="text-sm font-medium text-green-600 mb-2">Sales Price</dt>
+                <dd className="text-2xl font-bold text-green-600">
                   ${product.sales_price.toLocaleString()}
                 </dd>
               </div>

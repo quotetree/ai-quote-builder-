@@ -394,8 +394,8 @@ const getDocumentMeta = (doc: ProjectDocument): DocumentCardMeta => {
     return {
       label: "Doc",
       icon: <FileText size={20} />,
-      accentBg: "bg-blue-100",
-      accentText: "text-blue-600",
+      accentBg: "bg-green-100",
+      accentText: "text-green-600",
     };
   }
 
@@ -717,7 +717,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       existingLink.setAttribute("href", normalizedUrl);
       existingLink.setAttribute("target", "_blank");
       existingLink.setAttribute("rel", "noopener noreferrer");
-      existingLink.classList.add("text-blue-600", "underline");
+      existingLink.classList.add("text-green-600", "underline");
       updateSegmentsFromEditor();
       captureSelectionSnapshot();
       return;
@@ -727,7 +727,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     anchor.setAttribute("href", normalizedUrl);
     anchor.setAttribute("target", "_blank");
     anchor.setAttribute("rel", "noopener noreferrer");
-    anchor.classList.add("text-blue-600", "underline");
+    anchor.classList.add("text-green-600", "underline");
 
     const range = selection.getRangeAt(0);
     anchor.appendChild(range.extractContents());
@@ -1701,7 +1701,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
             <button
               type="button"
               onClick={openPreviewExternally}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
             >
               Open in new tab
             </button>
@@ -1787,7 +1787,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-right">
-          <span className="text-xs text-blue-600 dark:text-blue-400">Click to open</span>
+          <span className="text-xs text-green-600 dark:text-green-400">Click to open</span>
           <button
             type="button"
             aria-label="Note actions"
@@ -1864,7 +1864,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
             <Folder size={18} />
           </div>
           <div>
@@ -2021,7 +2021,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
           <span>{formatFileSize(doc.file_size)}</span>
           <span>{new Date(doc.created_at).toLocaleDateString()}</span>
         </div>
-        <div className="mt-4 text-sm text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="mt-4 text-sm text-green-600 dark:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity">
           Click to preview
         </div>
       </div>
@@ -2069,8 +2069,8 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center relative">
           <label
-            className={`px-4 py-2 rounded-lg border border-transparent bg-blue-600 text-white inline-flex items-center justify-center gap-2 cursor-pointer transition-colors ${
-              uploading ? "opacity-60 cursor-not-allowed" : "hover:bg-blue-700"
+            className={`px-4 py-2 rounded-lg border border-transparent bg-brand-green text-white inline-flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+              uploading ? "opacity-60 cursor-not-allowed" : "hover:bg-brand-green-dark"
             }`}
           >
             {uploading ? (
@@ -2159,7 +2159,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       {loading ? (
         <div className="flex items-center justify-center h-[60vh]">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
             <p className="text-gray-500">Loading documents...</p>
           </div>
         </div>
@@ -2204,7 +2204,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                   <button
                     type="button"
                     onClick={openPreviewExternally}
-                    className="px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors rounded-lg"
+                    className="px-3 py-2 text-sm font-medium text-green-600 hover:text-green-800 transition-colors rounded-lg"
                   >
                     Open in new tab
                   </button>
@@ -2241,7 +2241,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               type="text"
               value={newFolderName}
               onChange={(event) => setNewFolderName(event.target.value)}
-              className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
               placeholder="Folder name"
               autoFocus
               onKeyDown={(event) => {
@@ -2259,7 +2259,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               <button
                 type="button"
                 onClick={createFolder}
-                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                className="px-4 py-2 text-sm font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg"
               >
                 Create
               </button>
@@ -2295,7 +2295,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                 if (event.key === "Enter") handleRenameSubmit();
               }}
               autoFocus
-              className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
               placeholder="Enter new file name"
               disabled={renameLoading}
             />
@@ -2311,7 +2311,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               <button
                 type="button"
                 onClick={handleRenameSubmit}
-                className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-60"
                 disabled={renameLoading}
               >
                 {renameLoading ? "Saving..." : "Rename"}
@@ -2370,7 +2370,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                   id="note-font-size"
                   value={noteFontSize}
                   onChange={(event) => handleFontSizeChange(event.target.value)}
-                  className="px-3 py-1.5 rounded-full border border-gray-300 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-3 py-1.5 rounded-full border border-gray-300 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
                   {["12px", "14px", "16px", "18px", "20px", "24px", "32px"].map((size) => (
                     <option key={size} value={size}>
@@ -2462,7 +2462,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                               setAlignMenuPosition(null);
                             }}
                             className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-100 ${
-                              textAlign === value ? "text-blue-600 font-semibold" : "text-gray-700"
+                              textAlign === value ? "text-green-600 font-semibold" : "text-gray-700"
                             }`}
                           >
                             <Icon size={16} />
@@ -2477,7 +2477,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               <button
                 type="button"
                 onClick={toggleBulletList}
-                className={`p-2 rounded-lg hover:bg-gray-100 ${isBulletListActive ? "bg-blue-100 text-blue-600" : ""}`}
+                className={`p-2 rounded-lg hover:bg-gray-100 ${isBulletListActive ? "bg-green-100 text-green-600" : ""}`}
                 title="Bullet list (toggle)"
               >
                 <List size={16} />
@@ -2512,7 +2512,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                   ref={noteEditorRef}
                   contentEditable
                   suppressContentEditableWarning
-                  className="w-full min-h-[600px] focus:outline-none leading-relaxed [&_a]:cursor-pointer [&_a]:text-blue-600 [&_a]:underline [&_a:hover]:text-blue-800 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:space-y-2 [&_li]:leading-relaxed"
+                  className="w-full min-h-[600px] focus:outline-none leading-relaxed [&_a]:cursor-pointer [&_a]:text-green-600 [&_a]:underline [&_a:hover]:text-green-800 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:space-y-2 [&_li]:leading-relaxed"
                   onInput={handleEditorInput}
                   onClick={(event) => {
                     const target = event.target as HTMLElement;

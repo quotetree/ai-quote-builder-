@@ -19,7 +19,7 @@ export default async function QuotesPage() {
           <div className="flex justify-between h-16 items-center">
             <Link
               href="/dashboard"
-              className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"
+              className="text-2xl font-bold bg-gradient-to-r from-green-600 to-purple-600 bg-clip-text text-transparent"
             >
               QuoteTree.ai
             </Link>
@@ -34,7 +34,7 @@ export default async function QuotesPage() {
           </h2>
           <Link
             href="/quotes/new"
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
           >
             New Quote
           </Link>

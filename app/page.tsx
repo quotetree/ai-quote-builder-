@@ -7,7 +7,7 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-gray-200 dark:border-gray-800">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-purple-600 bg-clip-text text-transparent">
             QuoteTree.ai
           </h1>
           <div className="flex gap-4">
@@ -19,7 +19,7 @@ export default function Home() {
             </Link>
             <Link
               href="/auth/signup"
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >
               Sign Up
             </Link>
@@ -32,7 +32,7 @@ export default function Home() {
         <div className="text-center max-w-4xl mx-auto">
           <h2 className="text-5xl md:text-6xl font-bold mb-6">
             Generate Professional Quotes in{" "}
-            <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-green-600 to-purple-600 bg-clip-text text-transparent">
               10 Minutes
             </span>
           </h2>
@@ -44,7 +44,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
               href="/auth/signup"
-              className="px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold text-lg"
+              className="px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold text-lg"
             >
               Get Started Free
             </Link>
@@ -59,8 +59,8 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-lg">
-            <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center mb-4">
-              <Zap className="text-blue-600" size={24} />
+            <div className="w-12 h-12 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center mb-4">
+              <Zap className="text-green-600" size={24} />
             </div>
             <h3 className="text-xl font-bold mb-3">AI-Powered Speed</h3>
             <p className="text-gray-600 dark:text-gray-400">
@@ -99,7 +99,7 @@ export default function Home() {
             { step: "4", title: "Export & Send", desc: "Download professional PDF and send to your client" },
           ].map((item) => (
             <div key={item.step} className="flex gap-6 items-start">
-              <div className="flex-shrink-0 w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-lg">
+              <div className="flex-shrink-0 w-12 h-12 bg-green-600 text-white rounded-full flex items-center justify-center font-bold text-lg">
                 {item.step}
               </div>
               <div>
@@ -119,7 +119,7 @@ export default function Home() {
         </p>
         <Link
           href="/auth/signup"
-          className="inline-block px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold text-lg"
+          className="inline-block px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold text-lg"
         >
           Start Free Trial
         </Link>

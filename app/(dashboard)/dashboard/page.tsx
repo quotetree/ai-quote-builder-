@@ -248,7 +248,11 @@ export default function DashboardPage() {
         <button
           onClick={handleCreateProject}
           disabled={!projectName.trim() || creating}
-          className="w-full py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-xl font-medium text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gray-800"
+          className={`w-full py-4 text-white rounded-xl font-medium text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            projectName.trim() && !creating
+              ? "bg-brand-green hover:bg-brand-green-dark"
+              : "bg-gray-800 hover:bg-gray-900 disabled:hover:bg-gray-800"
+          }`}
         >
           {creating
             ? uploadingFiles

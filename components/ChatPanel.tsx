@@ -76,7 +76,7 @@ function renderFormattedContent(content: string) {
     if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
       return (
         <div key={index} className="flex gap-2 ml-2 mb-1">
-          <span className="text-blue-600 font-bold">•</span>
+          <span className="text-green-600 font-bold">•</span>
           <span>{line.replace(/^[\s•\-]+/, '')}</span>
         </div>
       );
@@ -424,12 +424,12 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
       <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl mx-auto w-full">
         {/* Optional: Show context summary for longer conversations */}
         {messages.length > 5 && conversationContext.lastQuoteGenerated && (
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-            <div className="flex items-center gap-2 text-blue-700 font-medium mb-1">
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
+            <div className="flex items-center gap-2 text-green-700 font-medium mb-1">
               <Sparkles size={14} />
               <span>Conversation Summary</span>
             </div>
-            <div className="text-blue-600 text-xs whitespace-pre-line">
+            <div className="text-green-600 text-xs whitespace-pre-line">
               {contextSummary}
             </div>
           </div>
@@ -448,7 +448,7 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
                   message.role === "user"
                     ? "bg-[#f4f4f4] text-gray-900"
                     : isQuote 
-                      ? "bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 shadow-md"
+                      ? "bg-gradient-to-br from-green-50 to-indigo-50 border-2 border-green-200 shadow-md"
                       : hasRecommendations
                         ? "bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-200"
                         : "bg-white border border-gray-200"
@@ -459,8 +459,8 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
                   <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-300">
                     {isQuote ? (
                       <>
-                        <TrendingUp size={16} className="text-blue-600" />
-                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                        <TrendingUp size={16} className="text-green-600" />
+                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
                           Quote Generated
                         </span>
                       </>
@@ -482,7 +482,7 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
 
                 {/* Commit to Quote Log button for quote messages */}
                 {message.role === "assistant" && isQuote && (
-                  <div className="mt-4 pt-3 border-t border-blue-200">
+                  <div className="mt-4 pt-3 border-t border-green-200">
                     {committedQuotes.has(message.id) ? (
                       <div className="flex items-center gap-2 text-green-600 text-sm font-medium">
                         <CheckCircle size={16} />
@@ -492,7 +492,7 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
                       <button
                         onClick={() => commitQuoteToLog(message.id, message.content)}
                         disabled={committingQuote === message.id}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         <Save size={16} />
                         {committingQuote === message.id ? "Committing..." : "Commit to Quote Log"}
@@ -508,7 +508,7 @@ export default function ChatPanel({ projectId, projectName }: ChatPanelProps) {
           <div className="flex justify-start">
             <div className="bg-white border border-gray-200 rounded-2xl px-5 py-3">
               <div className="flex items-center gap-2">
-                <Sparkles size={16} className="text-blue-500 animate-pulse" />
+                <Sparkles size={16} className="text-green-500 animate-pulse" />
                 <div className="flex gap-1.5">
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>

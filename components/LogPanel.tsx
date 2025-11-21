@@ -728,7 +728,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
           <p className="text-gray-500">Loading quotes...</p>
         </div>
       </div>
@@ -742,7 +742,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
         <h2 className="text-2xl font-bold">Quote Log</h2>
         <button 
           onClick={() => setShowNewQuoteModal(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
+          className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors inline-flex items-center gap-2"
         >
           <Plus size={18} />
           <span>Add New Quote</span>
@@ -978,7 +978,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                         type="button"
                         onClick={handleProfitSummaryClick}
                         disabled={!canOpenProfitBreakdown}
-                        className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors p-2 -m-2"
+                        className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors p-2 -m-2"
                         title="View profit margin breakdown"
                       >
                         <p className="text-sm text-gray-500 flex items-center gap-2">
@@ -1069,7 +1069,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     handleRenameQuote(showRenameModal);
                   }
                 }}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                 placeholder="Enter quote name"
                 autoFocus
               />
@@ -1086,7 +1086,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
               </button>
               <button
                 onClick={() => showRenameModal && handleRenameQuote(showRenameModal)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 Rename
               </button>
@@ -1105,7 +1105,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
           }}
         >
           <div
-            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full p-6"
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full p-6 border-4 border-brand-green"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
@@ -1133,7 +1133,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     handleStartNewQuote();
                   }
                 }}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                className="w-full px-3 py-2 border-2 border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-brand-green bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                 placeholder="Enter quote name (e.g., Q-0005)"
                 autoFocus
               />
@@ -1150,7 +1150,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
               </button>
               <button
                 onClick={handleStartNewQuote}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors"
               >
                 Start Quote
               </button>
@@ -1323,7 +1323,7 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                         value={getPriceDisplayValue(row.id, 'list', row.listPrice)}
                         onChange={(event) => handlePriceInputChange(row.id, 'list', event.target.value)}
                         onBlur={() => handlePriceInputBlur(row.id, 'list', row.listPrice)}
-                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-left text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
+                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-left text-xs focus:border-green-500 focus:ring-1 focus:ring-green-500 tabular-nums"
                       />
                     </div>
                   </td>
@@ -1336,7 +1336,7 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                         value={getPriceDisplayValue(row.id, 'sales', row.salesPrice)}
                         onChange={(event) => handlePriceInputChange(row.id, 'sales', event.target.value)}
                         onBlur={() => handlePriceInputBlur(row.id, 'sales', row.salesPrice)}
-                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 tabular-nums"
+                        className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 pl-5 pr-1 py-1 text-right text-xs focus:border-green-500 focus:ring-1 focus:ring-green-500 tabular-nums"
                       />
                     </div>
                   </td>
@@ -1385,7 +1385,7 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors"
         >
           Done
         </button>
