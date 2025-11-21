@@ -98,11 +98,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const supabase = createClient();
   const currentUser = useCurrentUser(); // Get current authenticated user
 
-  // Inline mic indicator state (iMessage-style floating mic)
-  const [showInlineMic, setShowInlineMic] = useState(false);
-  const [inlineMicPosition, setInlineMicPosition] = useState({ x: 0, y: 0 });
-  const inputWrapperRef = useRef<HTMLDivElement>(null);
-
   // Speech-to-text hook for microphone button
   const handleSpeechResult = (text: string) => {
     // Append recognized text to existing input
@@ -110,11 +105,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const trimmedPrev = prevInput.trim();
       return trimmedPrev ? `${trimmedPrev} ${text}` : text;
     });
-    
-    // Update inline mic position after text is added
-    if (showInlineMic) {
-      setTimeout(() => updateInlineMicPosition(), 0);
-    }
   };
   
   const { isRecording, isSupported: isSpeechSupported, toggleRecording } = useSpeechToText(handleSpeechResult);
@@ -2436,88 +2426,14 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     toast.success("Generation stopped - you can edit and resend");
   }
 
-  // Helper function to compute caret position for inline mic indicator
-  function updateInlineMicPosition() {
-    if (!textareaRef.current || !inputWrapperRef.current) return;
-    
-    const textarea = textareaRef.current;
-    const wrapper = inputWrapperRef.current;
-    
-    // Get the caret position (end of text)
-    const caretPosition = textarea.selectionStart || textarea.value.length;
-    
-    // Create a mirror div to measure text position
-    const mirror = document.createElement('div');
-    const computedStyle = window.getComputedStyle(textarea);
-    
-    // Copy styles from textarea to mirror
-    [
-      'fontSize', 'fontFamily', 'fontWeight', 'lineHeight',
-      'letterSpacing', 'padding', 'border', 'whiteSpace',
-      'wordWrap', 'width'
-    ].forEach(prop => {
-      mirror.style[prop as any] = computedStyle[prop as any];
-    });
-    
-    mirror.style.position = 'absolute';
-    mirror.style.visibility = 'hidden';
-    mirror.style.top = '0';
-    mirror.style.left = '0';
-    mirror.style.whiteSpace = 'pre-wrap';
-    mirror.style.wordWrap = 'break-word';
-    
-    // Set the text up to caret position
-    mirror.textContent = textarea.value.substring(0, caretPosition);
-    
-    // Add a span to measure the exact position
-    const caretSpan = document.createElement('span');
-    caretSpan.textContent = '|';
-    mirror.appendChild(caretSpan);
-    
-    document.body.appendChild(mirror);
-    
-    // Get the position of the caret span
-    const caretRect = caretSpan.getBoundingClientRect();
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const textareaRect = textarea.getBoundingClientRect();
-    
-    // Calculate position relative to wrapper
-    const x = caretRect.left - wrapperRect.left;
-    const y = caretRect.top - textareaRect.top + textarea.scrollTop;
-    
-    // Clean up
-    document.body.removeChild(mirror);
-    
-    setInlineMicPosition({ x, y });
-  }
-
-  // Start/stop recording with inline mic indicator
+  // Simple mic button click handler - just toggle recording
   function handleMicButtonClick() {
     if (!isSpeechSupported) {
       toast.error("Speech-to-text is not supported in this browser", { duration: 3000 });
       return;
     }
     
-    if (isRecording) {
-      // Stop recording
-      toggleRecording();
-      setShowInlineMic(false);
-    } else {
-      // Start recording
-      toggleRecording();
-      setShowInlineMic(true);
-      
-      // Position the inline mic at the end of current text
-      setTimeout(() => {
-        if (textareaRef.current) {
-          // Move caret to end
-          const length = textareaRef.current.value.length;
-          textareaRef.current.setSelectionRange(length, length);
-          textareaRef.current.focus();
-        }
-        updateInlineMicPosition();
-      }, 0);
-    }
+    toggleRecording();
   }
 
   // Click outside handler to stop recording
@@ -2527,15 +2443,11 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     function handleClickOutside(event: MouseEvent) {
       const target = event.target as HTMLElement;
       
-      // Check if click is outside the input wrapper and mic button
-      if (inputWrapperRef.current && !inputWrapperRef.current.contains(target)) {
-        // Also check if not clicking the mic button itself
-        const micButton = target.closest('button[title="Start voice input"], button[title="Stop recording"]');
-        if (!micButton) {
-          // Stop recording
-          toggleRecording();
-          setShowInlineMic(false);
-        }
+      // Check if not clicking the mic button itself
+      const micButton = target.closest('button[title="Start voice input"], button[title="Stop recording"]');
+      if (!micButton) {
+        // Stop recording on any other click
+        toggleRecording();
       }
     }
     
@@ -2543,20 +2455,12 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isRecording, toggleRecording]);
 
-  // Update inline mic position when input changes during recording
-  useEffect(() => {
-    if (isRecording && showInlineMic) {
-      updateInlineMicPosition();
-    }
-  }, [input, isRecording, showInlineMic]);
-
   async function sendMessage() {
     if (!input.trim() || loading) return;
     
     // Stop recording if active
     if (isRecording) {
       toggleRecording();
-      setShowInlineMic(false);
     }
 
     const userMessage: Partial<ChatMessage> = {
@@ -3114,25 +3018,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
 
         {/* Input */}
         <div className="border-t border-gray-200 bg-white p-4">
-          <div 
-            ref={inputWrapperRef}
-            className="flex gap-3 items-center bg-[#f4f4f4] rounded-3xl px-4 py-2 relative"
-          >
-            {/* Inline mic indicator (iMessage style) */}
-            {showInlineMic && (
-              <div 
-                className="absolute z-10 pointer-events-none transition-all duration-100"
-                style={{
-                  left: `${inlineMicPosition.x}px`,
-                  top: `${inlineMicPosition.y + 2}px`,
-                }}
-              >
-                <div className="bg-blue-600 text-white rounded-full p-1.5 shadow-lg animate-pulse">
-                  <Mic size={12} />
-                </div>
-              </div>
-            )}
-            
+          <div className="flex gap-3 items-center bg-[#f4f4f4] rounded-3xl px-4 py-2">
             <textarea
               ref={textareaRef}
               value={input}
@@ -3147,7 +3033,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               onClick={handleMicButtonClick}
               className={`p-2 rounded-lg transition-all flex-shrink-0 ${
                 isRecording 
-                  ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
+                  ? 'bg-red-500 hover:bg-red-600 text-white' 
                   : 'hover:bg-gray-300 text-gray-600'
               }`}
               title={isRecording ? "Stop recording" : "Start voice input"}
