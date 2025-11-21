@@ -7,6 +7,7 @@ import { ChatMessage, ProductSuggestion, QuotePreview, ChargeConfig } from "@/ty
 import { trackAIChatMessage } from "@/lib/analytics";
 import toast from "react-hot-toast";
 import { useCurrentUser, getCurrentUserClient, getAnonymousUser, type UserRef } from "@/lib/auth/client";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
 import { generateStableKey } from "@/lib/stableKey";
 
 interface SplitChatPanelProps {
@@ -96,6 +97,19 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const currentPoolIdRef = useRef<string | null>(null); // Track current pool ID for product isolation
   const supabase = createClient();
   const currentUser = useCurrentUser(); // Get current authenticated user
+
+  // Track the base text when recording starts (for real-time updates)
+  const baseTextRef = useRef<string>('');
+  
+  // Speech-to-text hook for microphone button
+  const handleSpeechResult = (text: string) => {
+    // Replace input with base text + current transcript (real-time update)
+    const base = baseTextRef.current;
+    const newInput = base ? `${base} ${text}` : text;
+    setInput(newInput);
+  };
+  
+  const { isRecording, isSupported: isSpeechSupported, toggleRecording } = useSpeechToText(handleSpeechResult);
 
   // Global orphan cleanup that survives component lifecycle
   useEffect(() => {
@@ -2414,8 +2428,47 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
     toast.success("Generation stopped - you can edit and resend");
   }
 
+  // Simple mic button click handler - just toggle recording
+  function handleMicButtonClick() {
+    if (!isSpeechSupported) {
+      toast.error("Speech-to-text is not supported in this browser", { duration: 3000 });
+      return;
+    }
+    
+    if (!isRecording) {
+      // Starting recording - save the current input as base text
+      baseTextRef.current = input.trim();
+    }
+    
+    toggleRecording();
+  }
+
+  // Click outside handler to stop recording
+  useEffect(() => {
+    if (!isRecording) return;
+    
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as HTMLElement;
+      
+      // Check if not clicking the mic button itself
+      const micButton = target.closest('button[title="Start voice input"], button[title="Stop recording"]');
+      if (!micButton) {
+        // Stop recording on any other click
+        toggleRecording();
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isRecording, toggleRecording]);
+
   async function sendMessage() {
     if (!input.trim() || loading) return;
+    
+    // Stop recording if active
+    if (isRecording) {
+      toggleRecording();
+    }
 
     const userMessage: Partial<ChatMessage> = {
       project_id: projectId,
@@ -2973,9 +3026,6 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         {/* Input */}
         <div className="border-t border-gray-200 bg-white p-4">
           <div className="flex gap-3 items-center bg-[#f4f4f4] rounded-3xl px-4 py-2">
-            <button className="p-2 hover:bg-gray-300 rounded-lg transition-colors flex-shrink-0">
-              <Plus size={20} className="text-gray-600" />
-            </button>
             <textarea
               ref={textareaRef}
               value={input}
@@ -2986,8 +3036,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] placeholder-gray-500 disabled:opacity-50 overflow-hidden leading-tight"
               style={{ height: '20px', maxHeight: '160px' }}
             />
-            <button className="p-2 hover:bg-gray-300 rounded-lg transition-colors flex-shrink-0">
-              <Mic size={20} className="text-gray-600" />
+            <button 
+              onClick={handleMicButtonClick}
+              className={`p-2 rounded-lg transition-all flex-shrink-0 ${
+                isRecording 
+                  ? 'bg-red-500 hover:bg-red-600 text-white' 
+                  : 'hover:bg-gray-300 text-gray-600'
+              }`}
+              title={isRecording ? "Stop recording" : "Start voice input"}
+            >
+              <Mic size={20} />
             </button>
             <button
               onClick={sendMessage}
