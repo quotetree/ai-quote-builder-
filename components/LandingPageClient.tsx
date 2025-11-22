@@ -501,16 +501,16 @@ export default function LandingPageClient() {
                       /{plan.period}
                     </span>
                   </div>
-                  {"savings" in plan && plan.savings && (
-                    <p className="text-sm text-green-100 mt-2 font-medium">{plan.savings}</p>
+                  {(plan as any).savings && (
+                    <p className="text-sm text-green-100 mt-2 font-medium">{(plan as any).savings}</p>
                   )}
-                  {"yearlyTotal" in plan && plan.yearlyTotal && (
+                  {(plan as any).yearlyTotal && (
                     <p
                       className={`text-sm mt-1 ${
                         plan.highlighted ? "text-green-100" : "text-gray-600"
                       }`}
                     >
-                      Billed ${plan.yearlyTotal} annually
+                      Billed ${(plan as any).yearlyTotal} annually
                     </p>
                   )}
                 </div>
