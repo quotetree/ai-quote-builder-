@@ -12,7 +12,7 @@ export default async function Home() {
 
   // If user is logged in, redirect to dashboard
   if (user) {
-    redirect("/projects");
+    redirect("/dashboard");
   }
 
   return <LandingPageClient />;
