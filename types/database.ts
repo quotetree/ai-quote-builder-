@@ -7,12 +7,117 @@ export interface Profile {
   company_name: string | null;
   company_logo_url: string | null;
   company_address: string | null;
-  role: 'user' | 'admin' | 'owner';
-  license_type: 'trial' | 'basic' | 'pro' | 'enterprise';
-  license_seats: number;
   created_at: string;
   updated_at: string;
 }
+
+// ============================================
+// WORKSPACE & ORGANIZATION TYPES
+// ============================================
+
+export interface Organization {
+  id: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MemberRole = 'owner' | 'super_admin' | 'admin';
+
+export interface OrganizationMembership {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  role: MemberRole;
+  invited_by: string | null;
+  invited_at: string | null;
+  joined_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PlanType = 'free' | 'individual' | 'organization';
+export type BillingCycle = 'monthly' | 'yearly';
+export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired';
+
+export interface Subscription {
+  id: string;
+  organization_id: string;
+  plan_type: PlanType;
+  billing_cycle: BillingCycle | null;
+  status: SubscriptionStatus;
+  trial_start_date: string | null;
+  trial_end_date: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  base_licenses: number;
+  additional_licenses: number;
+  total_licenses: number; // computed field
+  base_price_cents: number;
+  additional_license_price_cents: number;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  stripe_price_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked';
+
+export interface OrganizationInvitation {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: Exclude<MemberRole, 'owner'>; // Can't invite as owner
+  invited_by: string;
+  invitation_token: string;
+  status: InvitationStatus;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Helper type for user's organization context
+export interface UserOrganizationContext {
+  organization_id: string;
+  organization_name: string;
+  role: MemberRole;
+  plan_type: PlanType;
+  subscription_status: SubscriptionStatus;
+  total_licenses: number;
+  used_licenses: number;
+  available_licenses: number;
+  trial_end_date: string | null;
+}
+
+// Member with user profile information
+export interface OrganizationMemberWithProfile extends OrganizationMembership {
+  profile: {
+    email: string;
+    full_name: string | null;
+    company_name: string | null;
+  };
+}
+
+// Plan pricing constants
+export const PLAN_PRICING = {
+  individual: {
+    monthly: 9700, // $97.00 in cents
+    yearly: 7900, // $79.00 in cents (per month, billed yearly)
+  },
+  organization: {
+    monthly: {
+      base: 24500, // $245.00 in cents
+      perAdditionalLicense: 7900, // $79.00 in cents
+    },
+    yearly: {
+      base: 19700, // $197.00 in cents (per month, billed yearly)
+      perAdditionalLicense: 6500, // $65.00 in cents (per month, billed yearly)
+    },
+    baseLicenses: 3,
+  },
+} as const;
 
 export interface ProductFamily {
   id: string;

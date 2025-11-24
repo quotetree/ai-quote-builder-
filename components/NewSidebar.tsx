@@ -17,6 +17,8 @@ import Image from "next/image";
 import PriceBookModal from "./PriceBookModal";
 import { useSidebar } from "@/contexts/SidebarContext";
 import PersonalizationModal from "./PersonalizationModal";
+import BillingModal from "./BillingModal";
+import MembersModal from "./MembersModal";
 
 interface NewSidebarProps {
   userEmail?: string;
@@ -29,6 +31,8 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const [priceBookOpen, setPriceBookOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [personalizationOpen, setPersonalizationOpen] = useState(false);
+  const [billingOpen, setBillingOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [profile, setProfile] = useState<{
     company_name: string | null;
     company_address: string | null;
@@ -346,18 +350,24 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               <ChevronRight size={14} className="text-gray-400" />
             </button>
             <button
-              disabled
-              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 cursor-not-allowed"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                setMembersOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
-              <span>Workspace settings</span>
-              <span className="text-xs uppercase tracking-wide">Soon</span>
+              <span>Members</span>
+              <ChevronRight size={14} className="text-gray-400" />
             </button>
             <button
-              disabled
-              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 cursor-not-allowed"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                setBillingOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
-              <span>Add teammates</span>
-              <span className="text-xs uppercase tracking-wide">Soon</span>
+              <span>Billing</span>
+              <ChevronRight size={14} className="text-gray-400" />
             </button>
           </div>
         </div>
@@ -423,6 +433,16 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         onUpdated={(updated) => {
           setProfile(updated);
         }}
+      />
+
+      <BillingModal
+        isOpen={billingOpen}
+        onClose={() => setBillingOpen(false)}
+      />
+
+      <MembersModal
+        isOpen={membersOpen}
+        onClose={() => setMembersOpen(false)}
       />
     </>
   );
