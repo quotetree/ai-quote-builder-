@@ -271,35 +271,27 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         <div className={`border-t border-gray-200 ${isOpen ? "p-3" : "p-2 flex flex-col items-center"}`}>
           {isOpen ? (
             <>
-              <div className="mb-3">
-                <button
-                  ref={accountButtonRef}
-                  onClick={() => setAccountMenuOpen((prev) => !prev)}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-left"
-                >
-                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
-                    {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {profile?.company_name || userName || userEmail}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {userEmail}
-                    </p>
-                  </div>
-                  <ChevronRight
-                    size={16}
-                    className={`text-gray-400 transition-transform ${accountMenuOpen ? "rotate-90" : ""}`}
-                  />
-                </button>
-                <div className="flex items-center justify-between px-3 mt-2">
-                  <span className="text-xs text-gray-500">Free</span>
-                  <button className="text-xs px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors">
-                    Upgrade
-                  </button>
+              <button
+                ref={accountButtonRef}
+                onClick={() => setAccountMenuOpen((prev) => !prev)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-left mb-2"
+              >
+                <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
+                  {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
                 </div>
-              </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {profile?.company_name || userName || userEmail}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {userEmail}
+                  </p>
+                </div>
+                <ChevronRight
+                  size={16}
+                  className={`text-gray-400 transition-transform ${accountMenuOpen ? "rotate-90" : ""}`}
+                />
+              </button>
               <button
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors text-sm"
