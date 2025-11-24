@@ -29,7 +29,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
   const [searchFilter, setSearchFilter] = useState("");
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showAddLicenseModal, setShowAddLicenseModal] = useState(false);
-  const [inviteEmails, setInviteEmails] = useState("");
+  const [emailPills, setEmailPills] = useState<string[]>([]);
+  const [currentEmailInput, setCurrentEmailInput] = useState("");
   const [inviteRole, setInviteRole] = useState<"super_admin" | "admin">("admin");
   const [inviting, setInviting] = useState(false);
   const [additionalLicensesToAdd, setAdditionalLicensesToAdd] = useState(1);
@@ -144,27 +145,80 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
   const canManageMembers = orgContext?.role === "owner" || orgContext?.role === "super_admin";
 
+  // Validate email format
+  const isValidEmail = (email: string) => {
+    return email.includes("@") && email.length > 3;
+  };
+
+  // Handle email input - create pills on comma or space
+  const handleEmailInput = (value: string) => {
+    // Check if comma or space was entered
+    if (value.includes(",") || value.includes(" ")) {
+      const emails = value
+        .split(/[,\s]+/)
+        .map((e) => e.trim().toLowerCase())
+        .filter((e) => e.length > 0);
+
+      const validEmails = emails.filter(isValidEmail);
+      const newPills = [...emailPills];
+
+      validEmails.forEach((email) => {
+        if (!newPills.includes(email)) {
+          newPills.push(email);
+        }
+      });
+
+      setEmailPills(newPills);
+      setCurrentEmailInput("");
+    } else {
+      setCurrentEmailInput(value);
+    }
+  };
+
+  // Handle key down for Enter and Backspace
+  const handleEmailKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && currentEmailInput.trim()) {
+      e.preventDefault();
+      const email = currentEmailInput.trim().toLowerCase();
+      if (isValidEmail(email) && !emailPills.includes(email)) {
+        setEmailPills([...emailPills, email]);
+      }
+      setCurrentEmailInput("");
+    } else if (e.key === "Backspace" && !currentEmailInput && emailPills.length > 0) {
+      // Remove last pill if backspace on empty input
+      setEmailPills(emailPills.slice(0, -1));
+    }
+  };
+
+  // Remove email pill
+  const removeEmailPill = (email: string) => {
+    setEmailPills(emailPills.filter((e) => e !== email));
+  };
+
   const handleInviteMembers = async () => {
     if (!orgContext || !canManageMembers) {
       toast.error("You don't have permission to invite members");
       return;
     }
 
-    // Parse emails (comma or space separated)
-    const emailList = inviteEmails
-      .split(/[,\s]+/)
-      .map((e) => e.trim().toLowerCase())
-      .filter((e) => e.length > 0 && e.includes("@"));
+    // Add current input to pills if it's a valid email
+    let finalEmailList = [...emailPills];
+    if (currentEmailInput.trim() && isValidEmail(currentEmailInput.trim().toLowerCase())) {
+      const email = currentEmailInput.trim().toLowerCase();
+      if (!finalEmailList.includes(email)) {
+        finalEmailList.push(email);
+      }
+    }
 
-    if (emailList.length === 0) {
+    if (finalEmailList.length === 0) {
       toast.error("Please enter at least one valid email address");
       return;
     }
 
     // Check if there are enough available licenses
-    if (orgContext.available_licenses < emailList.length) {
+    if (orgContext.available_licenses < finalEmailList.length) {
       toast.error(
-        `Not enough licenses available. You have ${orgContext.available_licenses} license(s) but trying to invite ${emailList.length} member(s). Please add more licenses first.`,
+        `Not enough licenses available. You have ${orgContext.available_licenses} license(s) but trying to invite ${finalEmailList.length} member(s). Please add more licenses first.`,
         { duration: 5000 }
       );
       return;
@@ -178,7 +232,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      for (const email of emailList) {
+      for (const email of finalEmailList) {
         try {
           // Check if user already exists
           const { data: existingUser } = await supabase
@@ -253,7 +307,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
         toast.error(`Failed to invite ${errorCount} member${errorCount !== 1 ? "s" : ""}`);
       }
 
-      setInviteEmails("");
+      setEmailPills([]);
+      setCurrentEmailInput("");
       setInviteRole("admin");
       setShowInviteModal(false);
       await loadData();
@@ -687,7 +742,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
               <button
                 onClick={() => {
                   setShowInviteModal(false);
-                  setInviteEmails("");
+                  setEmailPills([]);
+                  setCurrentEmailInput("");
                   setInviteRole("admin");
                 }}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -698,18 +754,40 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
             {/* Content */}
             <div className="px-6 py-6 space-y-5">
-              {/* Email Input */}
+              {/* Email Input with Pills */}
               <div>
                 <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
                   Add Invitees
                 </label>
-                <textarea
-                  value={inviteEmails}
-                  onChange={(e) => setInviteEmails(e.target.value)}
-                  placeholder="Use commas or spaces to separate email addresses"
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none text-sm"
-                />
+                <div className="w-full min-h-[100px] px-3 py-2 border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-gray-900 focus-within:border-transparent bg-white">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {/* Email Pills */}
+                    {emailPills.map((email) => (
+                      <div
+                        key={email}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-900 rounded-full text-sm"
+                      >
+                        <span>{email}</span>
+                        <button
+                          onClick={() => removeEmailPill(email)}
+                          className="hover:bg-amber-200 rounded-full p-0.5 transition-colors"
+                          type="button"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {/* Input Field */}
+                    <input
+                      type="text"
+                      value={currentEmailInput}
+                      onChange={(e) => handleEmailInput(e.target.value)}
+                      onKeyDown={handleEmailKeyDown}
+                      placeholder={emailPills.length === 0 ? "Use commas or spaces to separate email addresses" : ""}
+                      className="flex-1 min-w-[200px] border-none outline-none bg-transparent text-sm py-1"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Role Selection */}
@@ -759,7 +837,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                 onClick={handleInviteMembers}
                 disabled={
                   inviting ||
-                  !inviteEmails.trim() ||
+                  (emailPills.length === 0 && !currentEmailInput.trim()) ||
                   !orgContext ||
                   orgContext.available_licenses === 0
                 }
