@@ -550,14 +550,6 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                       <Plus size={18} />
                       Invite member
                     </button>
-                    <button
-                      onClick={() => {}}
-                      disabled
-                      className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      title="More options"
-                    >
-                      <MoreVertical size={20} />
-                    </button>
                   </div>
                 </div>
 
