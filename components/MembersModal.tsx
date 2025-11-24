@@ -832,6 +832,20 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                 )}
               </div>
 
+              {/* Add License Button */}
+              {orgContext?.role === "owner" && (
+                <button
+                  onClick={() => {
+                    setShowInviteModal(false);
+                    setShowAddLicenseModal(true);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-lg transition-colors"
+                >
+                  <Plus size={18} />
+                  Add license
+                </button>
+              )}
+
               {/* Invite Button */}
               <button
                 onClick={handleInviteMembers}
