@@ -13,6 +13,7 @@ import {
   BillingCycle,
   PLAN_PRICING
 } from "@/types/database";
+import { addLicenses } from "@/lib/stripe/client-utils";
 
 interface MembersModalProps {
   isOpen: boolean;
@@ -396,35 +397,25 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       return;
     }
 
-    // For Organization plan, update licenses
+    // For Organization plan, add licenses via Stripe
     try {
-      const cycle: BillingCycle = subscription.billing_cycle || "yearly";
-      const newAdditionalLicenses = subscription.additional_licenses + additionalLicensesToAdd;
-      const perLicensePrice = PLAN_PRICING.organization[cycle].perAdditionalLicense;
-      const newBasePriceCents = PLAN_PRICING.organization[cycle].base + (newAdditionalLicenses * perLicensePrice);
-
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({
-          additional_licenses: newAdditionalLicenses,
-          base_price_cents: newBasePriceCents,
-          total_licenses: PLAN_PRICING.organization.baseLicenses + newAdditionalLicenses,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("organization_id", orgContext.organization_id);
-
-      if (error) throw error;
-
-      toast.success(
-        `Successfully added ${additionalLicensesToAdd} license${additionalLicensesToAdd !== 1 ? "s" : ""}! (Stripe payment integration coming soon)`,
-        { duration: 5000 }
-      );
+      toast.loading("Adding licenses...");
+      
+      const result = await addLicenses(additionalLicensesToAdd);
+      
+      toast.dismiss();
+      toast.success(result.message || `Successfully added ${additionalLicensesToAdd} license${additionalLicensesToAdd !== 1 ? "s" : ""}!`);
       
       setAdditionalLicensesToAdd(1);
       setShowAddLicenseModal(false);
-      await loadData();
+      
+      // Reload data after a brief delay to allow webhook to process
+      setTimeout(() => {
+        loadData();
+      }, 2000);
     } catch (error: any) {
       console.error("Failed to add licenses:", error);
+      toast.dismiss();
       toast.error(error.message || "Failed to add licenses");
     }
   };
@@ -979,7 +970,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                   </button>
 
                   <p className="text-xs text-gray-500 text-center">
-                    Stripe payment integration coming soon
+                    You'll be charged prorated amount immediately
                   </p>
                 </>
               ) : (

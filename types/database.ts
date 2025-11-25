@@ -7,6 +7,8 @@ export interface Profile {
   company_name: string | null;
   company_logo_url: string | null;
   company_address: string | null;
+  organization_id: string | null;
+  stripe_customer_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +53,7 @@ export interface Subscription {
   trial_end_date: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
+  cancel_at_period_end: boolean;
   base_licenses: number;
   additional_licenses: number;
   total_licenses: number; // computed field

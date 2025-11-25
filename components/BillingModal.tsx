@@ -11,6 +11,7 @@ import {
   UserOrganizationContext,
   PLAN_PRICING 
 } from "@/types/database";
+import { createCheckoutSession, openCustomerPortal } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -120,17 +121,50 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     return Math.max(0, diffDays);
   };
 
+  const handleUpgradePlan = async (plan: PlanType, cycle: BillingCycle) => {
+    if (!isOwner) {
+      toast.error("Only the owner can upgrade the plan");
+      return;
+    }
+
+    try {
+      toast.loading("Redirecting to checkout...");
+      await createCheckoutSession(plan, cycle, additionalLicenses);
+    } catch (error: any) {
+      console.error("Upgrade error:", error);
+      toast.error(error.message || "Failed to start checkout");
+    }
+  };
+
+  const handleManagePayment = async () => {
+    if (!isOwner) {
+      toast.error("Only the owner can manage payment methods");
+      return;
+    }
+
+    try {
+      toast.loading("Opening billing portal...");
+      await openCustomerPortal();
+    } catch (error: any) {
+      console.error("Portal error:", error);
+      toast.error(error.message || "Failed to open billing portal");
+    }
+  };
+
   const handleCancelSubscription = async () => {
     if (!cancelReason.trim()) {
       toast.error("Please tell us why you're canceling");
       return;
     }
 
-    // For now, just show confirmation
-    toast.success("Cancellation feedback received. We'll process this when Stripe is integrated.");
-    setViewMode("overview");
-    setCancelReason("");
-    setManageDropdownOpen(false);
+    // Open Customer Portal for cancellation
+    try {
+      toast.loading("Opening cancellation flow...");
+      await openCustomerPortal();
+    } catch (error: any) {
+      console.error("Cancel error:", error);
+      toast.error(error.message || "Failed to open cancellation flow");
+    }
   };
 
   const getPlanDisplayName = (plan: PlanType) => {
@@ -264,15 +298,18 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                   <div className="mb-6">
                     <h3 className="font-semibold text-gray-900 mb-3">PAYMENT METHOD</h3>
                     <button
-                      disabled
-                      className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center justify-center gap-2 text-gray-500 cursor-not-allowed"
+                      onClick={handleManagePayment}
+                      disabled={!isOwner || !subscription?.stripe_subscription_id}
+                      className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Plus size={20} />
                       <span>Add payment method</span>
                     </button>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Payment processing will be available after Stripe integration
-                    </p>
+                    {!subscription?.stripe_subscription_id && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Subscribe to a plan to add payment methods
+                      </p>
+                    )}
                   </div>
 
                   {/* Billing Information Section */}
@@ -407,6 +444,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       </ul>
 
                       <button
+                        onClick={() => handleUpgradePlan("individual", selectedCycle)}
                         disabled={subscription?.plan_type === "individual" && subscription?.billing_cycle === selectedCycle}
                         className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
                       >
@@ -505,6 +543,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       </div>
 
                       <button
+                        onClick={() => handleUpgradePlan("organization", selectedCycle)}
                         disabled={
                           subscription?.plan_type === "organization" && 
                           subscription?.billing_cycle === selectedCycle &&
