@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
 import { STRIPE_PRICE_IDS, STRIPE_CONFIG } from "@/lib/stripe/config";
 import type { PlanType, BillingCycle } from "@/types/database";
+import Stripe from "stripe";
 
 export async function POST(request: NextRequest) {
   try {
