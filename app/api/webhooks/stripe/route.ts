@@ -106,7 +106,7 @@ async function handleCheckoutCompleted(
     return;
   }
 
-  const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const stripeSubscription: Stripe.Subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
   // Calculate licenses
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
@@ -137,8 +137,12 @@ async function handleCheckoutCompleted(
         planType === "organization"
           ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
           : 0,
-      current_period_start: new Date(stripeSubscription.current_period_start * 1000).toISOString(),
-      current_period_end: new Date(stripeSubscription.current_period_end * 1000).toISOString(),
+      current_period_start: stripeSubscription.current_period_start
+        ? new Date(stripeSubscription.current_period_start * 1000).toISOString()
+        : null,
+      current_period_end: stripeSubscription.current_period_end
+        ? new Date(stripeSubscription.current_period_end * 1000).toISOString()
+        : null,
       cancel_at_period_end: false,
       updated_at: new Date().toISOString(),
     })
