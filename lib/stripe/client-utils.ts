@@ -84,3 +84,59 @@ export async function addLicenses(additionalLicensesToAdd: number) {
   return await response.json();
 }
 
+/**
+ * Fetch payment methods for the current user
+ */
+export async function fetchPaymentMethods() {
+  const response = await fetch("/api/stripe/payment-methods");
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch payment methods");
+  }
+
+  const data = await response.json();
+  return data.paymentMethods || [];
+}
+
+/**
+ * Fetch customer billing details
+ */
+export async function fetchCustomerDetails() {
+  const response = await fetch("/api/stripe/customer");
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch customer details");
+  }
+
+  const data = await response.json();
+  return data.customer || null;
+}
+
+/**
+ * Fetch invoices for the current user
+ */
+export async function fetchInvoices(limit: number = 10, startingAfter?: string) {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+  });
+  
+  if (startingAfter) {
+    params.append("starting_after", startingAfter);
+  }
+
+  const response = await fetch(`/api/stripe/invoices?${params.toString()}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch invoices");
+  }
+
+  const data = await response.json();
+  return {
+    invoices: data.invoices || [],
+    hasMore: data.hasMore || false,
+  };
+}
+

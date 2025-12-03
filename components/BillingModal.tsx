@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { X, Check, CreditCard, AlertCircle, ChevronDown, ArrowLeft, Plus } from "lucide-react";
+import { X, Check, CreditCard, AlertCircle, ChevronDown, ArrowLeft, Plus, Download, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import toast from "react-hot-toast";
 import { 
@@ -9,9 +9,12 @@ import {
   PlanType, 
   BillingCycle, 
   UserOrganizationContext,
-  PLAN_PRICING 
+  PLAN_PRICING,
+  StripePaymentMethod,
+  StripeBillingInfo,
+  StripeInvoice
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchCustomerDetails, fetchInvoices } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -33,6 +36,14 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   const [planTab, setPlanTab] = useState<PlanTab>("individual");
   const [manageDropdownOpen, setManageDropdownOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  
+  // Billing data state
+  const [paymentMethods, setPaymentMethods] = useState<StripePaymentMethod[]>([]);
+  const [billingInfo, setBillingInfo] = useState<StripeBillingInfo | null>(null);
+  const [invoices, setInvoices] = useState<StripeInvoice[]>([]);
+  const [invoicesPagination, setInvoicesPagination] = useState<string | null>(null);
+  const [hasMoreInvoices, setHasMoreInvoices] = useState(false);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   const loadSubscriptionData = useCallback(async () => {
     setLoading(true);
@@ -70,6 +81,32 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       setSelectedPlan(subData.plan_type);
       setSelectedCycle(subData.billing_cycle || "yearly");
       setAdditionalLicenses(subData.additional_licenses);
+
+      // Fetch billing data if user has an active Stripe subscription
+      if (subData.stripe_subscription_id) {
+        try {
+          // Fetch payment methods, customer details, and invoices in parallel
+          const [paymentMethodsData, customerData, invoicesData] = await Promise.all([
+            fetchPaymentMethods(),
+            fetchCustomerDetails(),
+            fetchInvoices(10),
+          ]);
+
+          setPaymentMethods(paymentMethodsData);
+          setBillingInfo(customerData);
+          setInvoices(invoicesData.invoices);
+          setHasMoreInvoices(invoicesData.hasMore);
+          
+          // Set pagination cursor to last invoice ID if there are more
+          if (invoicesData.hasMore && invoicesData.invoices.length > 0) {
+            const lastInvoice = invoicesData.invoices[invoicesData.invoices.length - 1];
+            setInvoicesPagination(lastInvoice.id);
+          }
+        } catch (billingError: any) {
+          console.error("Failed to load billing data:", billingError);
+          // Don't show error toast for billing data - it's not critical
+        }
+      }
     } catch (error: any) {
       console.error("Failed to load subscription:", error);
       console.error("Error details:", JSON.stringify(error, null, 2));
@@ -86,6 +123,31 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       setViewMode("overview");
     }
   }, [isOpen, loadSubscriptionData]);
+
+  const loadMoreInvoices = async () => {
+    if (!invoicesPagination || loadingInvoices) return;
+    
+    setLoadingInvoices(true);
+    try {
+      const invoicesData = await fetchInvoices(10, invoicesPagination);
+      
+      setInvoices(prev => [...prev, ...invoicesData.invoices]);
+      setHasMoreInvoices(invoicesData.hasMore);
+      
+      // Update pagination cursor
+      if (invoicesData.hasMore && invoicesData.invoices.length > 0) {
+        const lastInvoice = invoicesData.invoices[invoicesData.invoices.length - 1];
+        setInvoicesPagination(lastInvoice.id);
+      } else {
+        setInvoicesPagination(null);
+      }
+    } catch (error: any) {
+      console.error("Failed to load more invoices:", error);
+      toast.error("Failed to load more invoices");
+    } finally {
+      setLoadingInvoices(false);
+    }
+  };
 
   const calculatePrice = (plan: PlanType, cycle: BillingCycle, addLicenses: number = 0) => {
     if (plan === "free") return { monthly: 0, total: 0 };
@@ -297,38 +359,177 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                   {/* Payment Method Section */}
                   <div className="mb-6">
                     <h3 className="font-semibold text-gray-900 mb-3">PAYMENT METHOD</h3>
-                    <button
-                      onClick={handleManagePayment}
-                      disabled={!isOwner || !subscription?.stripe_subscription_id}
-                      className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Plus size={20} />
-                      <span>Add payment method</span>
-                    </button>
-                    {!subscription?.stripe_subscription_id && (
-                      <p className="text-xs text-gray-500 mt-2">
-                        Subscribe to a plan to add payment methods
-                      </p>
+                    {paymentMethods.length > 0 ? (
+                      <div className="space-y-3">
+                        {paymentMethods.map((pm) => (
+                          <div
+                            key={pm.id}
+                            className="p-4 border border-gray-200 rounded-lg flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-3">
+                              <CreditCard size={24} className="text-gray-600" />
+                              <div>
+                                <p className="font-medium text-gray-900 capitalize">
+                                  {pm.brand} •••• {pm.last4}
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                  Expires {pm.exp_month}/{pm.exp_year}
+                                </p>
+                              </div>
+                            </div>
+                            {isOwner && (
+                              <button
+                                onClick={handleManagePayment}
+                                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                              >
+                                Manage
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={handleManagePayment}
+                          disabled={!isOwner || !subscription?.stripe_subscription_id}
+                          className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Plus size={20} />
+                          <span>Add payment method</span>
+                        </button>
+                        {!subscription?.stripe_subscription_id && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            Subscribe to a plan to add payment methods
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
 
                   {/* Billing Information Section */}
                   <div className="mb-6">
                     <h3 className="font-semibold text-gray-900 mb-3">BILLING INFORMATION</h3>
-                    <div className="p-4 bg-gray-50 rounded-lg text-sm text-gray-600">
-                      <p>Billing information will appear here after adding a payment method</p>
-                    </div>
+                    {billingInfo && (billingInfo.name || billingInfo.email || billingInfo.address) ? (
+                      <div className="p-4 border border-gray-200 rounded-lg space-y-2 text-sm">
+                        {billingInfo.name && (
+                          <p className="font-medium text-gray-900">{billingInfo.name}</p>
+                        )}
+                        {billingInfo.email && (
+                          <p className="text-gray-600">{billingInfo.email}</p>
+                        )}
+                        {billingInfo.address && (
+                          <div className="text-gray-600 pt-2 border-t border-gray-100">
+                            {billingInfo.address.line1 && <p>{billingInfo.address.line1}</p>}
+                            {billingInfo.address.line2 && <p>{billingInfo.address.line2}</p>}
+                            {(billingInfo.address.city || billingInfo.address.state || billingInfo.address.postal_code) && (
+                              <p>
+                                {[
+                                  billingInfo.address.city,
+                                  billingInfo.address.state,
+                                  billingInfo.address.postal_code,
+                                ].filter(Boolean).join(", ")}
+                              </p>
+                            )}
+                            {billingInfo.address.country && (
+                              <p>{billingInfo.address.country}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-gray-50 rounded-lg text-sm text-gray-600">
+                        <p>Billing information will appear here after adding a payment method</p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Invoice History Section */}
                   <div>
                     <h3 className="font-semibold text-gray-900 mb-3">INVOICE HISTORY</h3>
-                    <div className="p-8 bg-gray-50 rounded-lg text-center">
-                      <p className="text-sm text-gray-500">No invoices yet</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Your invoice history will appear here once billing starts
-                      </p>
-                    </div>
+                    {invoices.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 border-b border-gray-200">
+                              <tr>
+                                <th className="px-4 py-3 text-left font-medium text-gray-700">Invoice #</th>
+                                <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+                                <th className="px-4 py-3 text-left font-medium text-gray-700">Amount</th>
+                                <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+                                <th className="px-4 py-3 text-right font-medium text-gray-700">Download</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {invoices.map((invoice) => (
+                                <tr key={invoice.id} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-gray-900">
+                                    {invoice.number || invoice.id.slice(-8)}
+                                  </td>
+                                  <td className="px-4 py-3 text-gray-600">
+                                    {new Date(invoice.created * 1000).toLocaleDateString()}
+                                  </td>
+                                  <td className="px-4 py-3 text-gray-900 font-medium">
+                                    ${(invoice.amount_paid / 100).toFixed(2)}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                      invoice.status === "paid"
+                                        ? "bg-green-100 text-green-800"
+                                        : invoice.status === "open"
+                                        ? "bg-yellow-100 text-yellow-800"
+                                        : "bg-gray-100 text-gray-800"
+                                    }`}>
+                                      {invoice.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    {invoice.invoice_pdf && (
+                                      <a
+                                        href={invoice.invoice_pdf}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+                                      >
+                                        <Download size={16} />
+                                        <span>PDF</span>
+                                      </a>
+                                    )}
+                                    {!invoice.invoice_pdf && invoice.hosted_invoice_url && (
+                                      <a
+                                        href={invoice.hosted_invoice_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+                                      >
+                                        <ExternalLink size={16} />
+                                        <span>View</span>
+                                      </a>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {hasMoreInvoices && (
+                          <button
+                            onClick={loadMoreInvoices}
+                            disabled={loadingInvoices}
+                            className="w-full py-2 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {loadingInvoices ? "Loading..." : "Load more invoices"}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-8 bg-gray-50 rounded-lg text-center">
+                        <p className="text-sm text-gray-500">No invoices yet</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Your invoice history will appear here once billing starts
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {!isOwner && (

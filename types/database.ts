@@ -473,3 +473,39 @@ export interface AIQuoteResponse {
   recommendations: string[];
 }
 
+// ============================================
+// STRIPE BILLING TYPES
+// ============================================
+
+export interface StripePaymentMethod {
+  id: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+}
+
+export interface StripeBillingInfo {
+  name: string | null;
+  email: string | null;
+  address: {
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    postal_code: string | null;
+    country: string | null;
+  } | null;
+}
+
+export interface StripeInvoice {
+  id: string;
+  number: string | null;
+  created: number;
+  amount_paid: number;
+  currency: string;
+  status: string;
+  hosted_invoice_url: string | null;
+  invoice_pdf: string | null;
+}
+
