@@ -894,8 +894,9 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                   <button
                     onClick={() => {
                       setShowAddLicenseModal(false);
-                      toast.info("Please go to Billing to upgrade to an Organization plan", {
+                      toast("Please go to Billing to upgrade to an Organization plan", {
                         duration: 4000,
+                        icon: "ℹ️",
                       });
                     }}
                     className="w-full py-3 px-4 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-lg transition-colors"
