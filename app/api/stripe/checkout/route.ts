@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get or create Stripe customer
-    let customerId: string | null = null;
+    let customerId: string;
 
     // Check if user already has a Stripe customer ID in the database
     const { data: profile } = await supabase
