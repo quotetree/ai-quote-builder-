@@ -106,7 +106,7 @@ async function handleCheckoutCompleted(
     return;
   }
 
-  const stripeSubscription: Stripe.Subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
 
   // Calculate licenses
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
