@@ -100,20 +100,31 @@ export async function POST(request: NextRequest) {
     // If active subscription exists, update it instead of creating new one
     if (existingSubscription?.stripe_subscription_id) {
       try {
+        // Retrieve subscription with expanded items to get subscription item IDs
         const stripeSubscription = await stripe.subscriptions.retrieve(
-          existingSubscription.stripe_subscription_id
+          existingSubscription.stripe_subscription_id,
+          { expand: ['items'] }
         ) as any;
 
-        // Build new subscription items
-        const items: any[] = [];
+        // Build items array: delete all old items, then add new ones
+        const itemUpdates: any[] = [];
 
+        // Mark all existing items for deletion
+        stripeSubscription.items.data.forEach((item: any) => {
+          itemUpdates.push({
+            id: item.id,
+            deleted: true,
+          });
+        });
+
+        // Add new items based on plan type
         if (planType === "individual") {
           const priceId =
             billingCycle === "monthly"
               ? STRIPE_PRICE_IDS.individual.monthly
               : STRIPE_PRICE_IDS.individual.yearly;
 
-          items.push({
+          itemUpdates.push({
             price: priceId,
             quantity: 1,
           });
@@ -123,7 +134,7 @@ export async function POST(request: NextRequest) {
               ? STRIPE_PRICE_IDS.organization.base.monthly
               : STRIPE_PRICE_IDS.organization.base.yearly;
 
-          items.push({
+          itemUpdates.push({
             price: basePriceId,
             quantity: 1,
           });
@@ -134,7 +145,7 @@ export async function POST(request: NextRequest) {
                 ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
                 : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
 
-            items.push({
+            itemUpdates.push({
               price: licensePriceId,
               quantity: additionalLicenses,
             });
@@ -145,7 +156,7 @@ export async function POST(request: NextRequest) {
         const updatedSubscription = await stripe.subscriptions.update(
           existingSubscription.stripe_subscription_id,
           {
-            items: items,
+            items: itemUpdates,
             proration_behavior: "always_invoice",
             metadata: {
               user_id: user.id,
