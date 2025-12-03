@@ -75,45 +75,6 @@ export async function POST(request: NextRequest) {
         .eq("id", user.id);
     }
 
-    // Build line items based on plan type
-    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
-
-    if (planType === "individual") {
-      const priceId =
-        billingCycle === "monthly"
-          ? STRIPE_PRICE_IDS.individual.monthly
-          : STRIPE_PRICE_IDS.individual.yearly;
-
-      lineItems.push({
-        price: priceId,
-        quantity: 1,
-      });
-    } else if (planType === "organization") {
-      // Add base organization plan
-      const basePriceId =
-        billingCycle === "monthly"
-          ? STRIPE_PRICE_IDS.organization.base.monthly
-          : STRIPE_PRICE_IDS.organization.base.yearly;
-
-      lineItems.push({
-        price: basePriceId,
-        quantity: 1,
-      });
-
-      // Add additional licenses if any
-      if (additionalLicenses > 0) {
-        const licensePriceId =
-          billingCycle === "monthly"
-            ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
-            : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
-
-        lineItems.push({
-          price: licensePriceId,
-          quantity: additionalLicenses,
-        });
-      }
-    }
-
     // Get organization ID for metadata
     const { data: orgData } = await supabase.rpc(
       "get_user_organization_membership",
