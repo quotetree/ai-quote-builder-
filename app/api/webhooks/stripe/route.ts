@@ -6,6 +6,11 @@ import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
 
 export async function POST(request: NextRequest) {
+  // Runtime check for Stripe key
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
+  }
+
   const body = await request.text();
   const headersList = await headers();
   const signature = headersList.get("stripe-signature");

@@ -4,6 +4,11 @@ import { stripe } from "@/lib/stripe/client";
 
 export async function POST(request: NextRequest) {
   try {
+    // Runtime check for Stripe key
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
+    }
+
     const supabase = await createClient();
 
     // Get the authenticated user
