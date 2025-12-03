@@ -11,10 +11,9 @@ import {
   UserOrganizationContext,
   PLAN_PRICING,
   StripePaymentMethod,
-  StripeBillingInfo,
   StripeInvoice
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchCustomerDetails, fetchInvoices } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -39,7 +38,6 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   
   // Billing data state
   const [paymentMethods, setPaymentMethods] = useState<StripePaymentMethod[]>([]);
-  const [billingInfo, setBillingInfo] = useState<StripeBillingInfo | null>(null);
   const [invoices, setInvoices] = useState<StripeInvoice[]>([]);
   const [invoicesPagination, setInvoicesPagination] = useState<string | null>(null);
   const [hasMoreInvoices, setHasMoreInvoices] = useState(false);
@@ -85,15 +83,13 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       // Fetch billing data if user has an active Stripe subscription
       if (subData.stripe_subscription_id) {
         try {
-          // Fetch payment methods, customer details, and invoices in parallel
-          const [paymentMethodsData, customerData, invoicesData] = await Promise.all([
+          // Fetch payment methods and invoices in parallel
+          const [paymentMethodsData, invoicesData] = await Promise.all([
             fetchPaymentMethods(),
-            fetchCustomerDetails(),
             fetchInvoices(10),
           ]);
 
           setPaymentMethods(paymentMethodsData);
-          setBillingInfo(customerData);
           setInvoices(invoicesData.invoices);
           setHasMoreInvoices(invoicesData.hasMore);
           
@@ -404,43 +400,6 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                           </p>
                         )}
                       </>
-                    )}
-                  </div>
-
-                  {/* Billing Information Section */}
-                  <div className="mb-6">
-                    <h3 className="font-semibold text-gray-900 mb-3">BILLING INFORMATION</h3>
-                    {billingInfo && (billingInfo.name || billingInfo.email || billingInfo.address) ? (
-                      <div className="p-4 border border-gray-200 rounded-lg space-y-2 text-sm">
-                        {billingInfo.name && (
-                          <p className="font-medium text-gray-900">{billingInfo.name}</p>
-                        )}
-                        {billingInfo.email && (
-                          <p className="text-gray-600">{billingInfo.email}</p>
-                        )}
-                        {billingInfo.address && (
-                          <div className="text-gray-600 pt-2 border-t border-gray-100">
-                            {billingInfo.address.line1 && <p>{billingInfo.address.line1}</p>}
-                            {billingInfo.address.line2 && <p>{billingInfo.address.line2}</p>}
-                            {(billingInfo.address.city || billingInfo.address.state || billingInfo.address.postal_code) && (
-                              <p>
-                                {[
-                                  billingInfo.address.city,
-                                  billingInfo.address.state,
-                                  billingInfo.address.postal_code,
-                                ].filter(Boolean).join(", ")}
-                              </p>
-                            )}
-                            {billingInfo.address.country && (
-                              <p>{billingInfo.address.country}</p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="p-4 bg-gray-50 rounded-lg text-sm text-gray-600">
-                        <p>Billing information will appear here after adding a payment method</p>
-                      </div>
                     )}
                   </div>
 
