@@ -116,15 +116,27 @@ export async function POST(request: NextRequest) {
 
     const organizationId = orgData?.[0]?.organization_id;
 
+    // Build success URL - hard-coded for now since env var isn't loading
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3003";
+    const successUrl = `${baseUrl}/dashboard?session_id={CHECKOUT_SESSION_ID}&plan=${planType}`;
+    const cancelUrl = `${baseUrl}/dashboard`;
+
+    console.log("Creating Stripe Checkout with success_url:", successUrl);
+    console.log("Base URL from env:", process.env.NEXT_PUBLIC_APP_URL);
+
     // Create Checkout Session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
-      success_url: `${STRIPE_CONFIG.successUrl}&plan=${planType}`,
-      cancel_url: STRIPE_CONFIG.cancelUrl,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       allow_promotion_codes: true,
       billing_address_collection: "auto",
+      payment_method_types: ["card"],
+      consent_collection: {
+        terms_of_service: "none",
+      },
       metadata: {
         user_id: user.id,
         organization_id: organizationId || "",

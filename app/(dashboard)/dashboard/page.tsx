@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { useProjects } from "@/hooks/useProjects";
 import { trackProjectCreated } from "@/lib/analytics";
@@ -18,6 +18,7 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [projectInputFocused, setProjectInputFocused] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const searchParams = useSearchParams();
   const {
     attachments,
     fileInputRef,
@@ -30,6 +31,23 @@ export default function DashboardPage() {
   const { createProject } = useProjects();
   const router = useRouter();
   const supabase = createClient();
+
+  // Handle Stripe redirect
+  useEffect(() => {
+    const sessionId = searchParams.get("session_id");
+    const plan = searchParams.get("plan");
+    
+    if (sessionId) {
+      // Show success message
+      toast.success(
+        `🎉 Payment successful! Your ${plan === "individual" ? "Individual" : "Organization"} plan is now active.`,
+        { duration: 5000 }
+      );
+      
+      // Clean up URL
+      router.replace("/dashboard");
+    }
+  }, [searchParams, router]);
 
   const sanitizeFileName = (name: string) => {
     const trimmed = name?.trim() || "untitled";

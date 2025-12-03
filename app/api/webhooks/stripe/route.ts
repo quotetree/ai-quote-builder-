@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { stripe } from "@/lib/stripe/client";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
 
@@ -30,7 +30,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = await createClient();
+  // Use service role client to bypass RLS
+  const supabase = createServiceRoleClient();
 
   try {
     switch (event.type) {
@@ -109,7 +110,6 @@ async function handleCheckoutCompleted(
 
   // Calculate licenses
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
-  const totalLicenses = baseLicenses + additionalLicenses;
 
   // Calculate price
   let basePriceCents = 0;
@@ -122,7 +122,7 @@ async function handleCheckoutCompleted(
   }
 
   // Update subscription in database
-  const { error } = await supabase
+  const { data: updateData, error } = await supabase
     .from("subscriptions")
     .update({
       stripe_subscription_id: subscriptionId,
@@ -131,7 +131,7 @@ async function handleCheckoutCompleted(
       status: "active",
       base_licenses: baseLicenses,
       additional_licenses: additionalLicenses,
-      total_licenses: totalLicenses,
+      // Remove total_licenses - it's a generated column
       base_price_cents: basePriceCents,
       additional_license_price_cents:
         planType === "organization"
@@ -142,14 +142,35 @@ async function handleCheckoutCompleted(
       cancel_at_period_end: false,
       updated_at: new Date().toISOString(),
     })
-    .eq("organization_id", organizationId);
+    .eq("organization_id", organizationId)
+    .select();
 
   if (error) {
     console.error("Failed to update subscription:", error);
+    console.error("Organization ID:", organizationId);
+    console.error("Subscription ID:", subscriptionId);
     throw error;
   }
 
-  console.log(`Subscription activated for organization ${organizationId}`);
+  if (!updateData || updateData.length === 0) {
+    console.error("No subscription found for organization:", organizationId);
+    throw new Error("Subscription update returned no rows");
+  }
+
+  console.log(`Subscription activated for organization ${organizationId}`, updateData[0]);
+  
+  // VERIFY: Read back from database to confirm update actually worked
+  const { data: verifyData, error: verifyError } = await supabase
+    .from("subscriptions")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .single();
+  
+  if (verifyError) {
+    console.error("Failed to verify subscription update:", verifyError);
+  } else {
+    console.log("VERIFICATION - Database actually contains:", verifyData);
+  }
 }
 
 async function handleSubscriptionUpdate(
@@ -176,27 +197,50 @@ async function handleSubscriptionUpdate(
   }
 
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
-  const totalLicenses = baseLicenses + additionalLicenses;
 
-  const { error } = await supabase
+  // Safely handle timestamps
+  const currentPeriodStart = subscription.current_period_start
+    ? new Date(subscription.current_period_start * 1000).toISOString()
+    : null;
+  const currentPeriodEnd = subscription.current_period_end
+    ? new Date(subscription.current_period_end * 1000).toISOString()
+    : null;
+
+  const updateData: any = {
+    status: subscription.status,
+    cancel_at_period_end: subscription.cancel_at_period_end,
+    additional_licenses: additionalLicenses,
+    // Remove total_licenses - it's a generated column
+    updated_at: new Date().toISOString(),
+  };
+
+  // Only add timestamps if they exist
+  if (currentPeriodStart) updateData.current_period_start = currentPeriodStart;
+  if (currentPeriodEnd) updateData.current_period_end = currentPeriodEnd;
+
+  console.log("Updating subscription with data:", {
+    stripe_subscription_id: subscription.id,
+    updateData,
+  });
+
+  const { data: updatedData, error } = await supabase
     .from("subscriptions")
-    .update({
-      status: subscription.status,
-      current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-      current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-      cancel_at_period_end: subscription.cancel_at_period_end,
-      additional_licenses: additionalLicenses,
-      total_licenses: totalLicenses,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("stripe_subscription_id", subscription.id);
+    .update(updateData)
+    .eq("stripe_subscription_id", subscription.id)
+    .select();
 
   if (error) {
     console.error("Failed to update subscription:", error);
+    console.error("Subscription ID:", subscription.id);
     throw error;
   }
 
-  console.log(`Subscription ${subscription.id} updated`);
+  if (!updatedData || updatedData.length === 0) {
+    console.error("No subscription found with stripe_subscription_id:", subscription.id);
+    throw new Error("Subscription update returned no rows");
+  }
+
+  console.log(`Subscription ${subscription.id} updated`, updatedData[0]);
 }
 
 async function handleSubscriptionDeleted(
