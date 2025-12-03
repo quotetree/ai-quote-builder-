@@ -278,8 +278,10 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice, supabase: any) {
 }
 
 async function handlePaymentFailed(invoice: Stripe.Invoice, supabase: any) {
+  // Type assertion to work around Stripe type issues
+  const inv = invoice as any;
   const subscriptionId =
-    typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+    typeof inv.subscription === "string" ? inv.subscription : inv.subscription?.id;
 
   if (!subscriptionId) return;
 
