@@ -181,7 +181,9 @@ async function handleSubscriptionUpdate(
   subscription: Stripe.Subscription,
   supabase: any
 ) {
-  const organizationId = subscription.metadata?.organization_id;
+  // Type assertion to work around Stripe type issues
+  const sub = subscription as any;
+  const organizationId = sub.metadata?.organization_id;
 
   if (!organizationId) {
     console.error("Missing organization_id in subscription metadata");
@@ -189,7 +191,7 @@ async function handleSubscriptionUpdate(
   }
 
   // Determine plan details from subscription items
-  const items = subscription.items.data;
+  const items = sub.items.data;
   let planType: "individual" | "organization" = "individual";
   let additionalLicenses = 0;
 
@@ -203,16 +205,16 @@ async function handleSubscriptionUpdate(
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
 
   // Safely handle timestamps
-  const currentPeriodStart = subscription.current_period_start
-    ? new Date(subscription.current_period_start * 1000).toISOString()
+  const currentPeriodStart = sub.current_period_start
+    ? new Date(sub.current_period_start * 1000).toISOString()
     : null;
-  const currentPeriodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
+  const currentPeriodEnd = sub.current_period_end
+    ? new Date(sub.current_period_end * 1000).toISOString()
     : null;
 
   const updateData: any = {
-    status: subscription.status,
-    cancel_at_period_end: subscription.cancel_at_period_end,
+    status: sub.status,
+    cancel_at_period_end: sub.cancel_at_period_end,
     additional_licenses: additionalLicenses,
     // Remove total_licenses - it's a generated column
     updated_at: new Date().toISOString(),
