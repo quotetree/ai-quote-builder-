@@ -23,6 +23,7 @@ interface MembersModalProps {
 export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [orgContext, setOrgContext] = useState<UserOrganizationContext | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [members, setMembers] = useState<OrganizationMemberWithProfile[]>([]);
@@ -43,6 +44,9 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) throw userError;
       if (!user) throw new Error("Not authenticated");
+
+      // Store current user ID
+      setCurrentUserId(user.id);
 
       // Get organization context
       const { data: contextData, error: contextError } = await supabase
@@ -628,7 +632,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                     ) : (
                       filteredMembers.map((member) => {
                         const initials = getInitials(member.profile.full_name, member.profile.email);
-                        const isCurrentUser = member.user_id === orgContext?.user_id;
+                        const isCurrentUser = member.user_id === currentUserId;
 
                         return (
                           <div key={member.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
