@@ -82,6 +82,23 @@ export async function createCheckoutSession(
 }
 
 /**
+ * Cancel a pending plan change (scheduled downgrade)
+ */
+export async function cancelPendingPlanChange(): Promise<void> {
+  const response = await fetch("/api/stripe/cancel-pending-change", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to cancel pending change");
+  }
+}
+
+/**
  * Open Stripe Customer Portal for managing billing
  */
 export async function openCustomerPortal() {

@@ -14,7 +14,7 @@ import {
   StripeInvoice,
   ProrationPreview
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -239,8 +239,27 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
           true // Force checkout
         );
         toast.dismiss(loadingToast);
+      } else if (prorationData.scheduledForPeriodEnd) {
+        // Downgrade scheduled for period end
+        const result = await createCheckoutSession(
+          pendingPlanChange.plan,
+          pendingPlanChange.cycle,
+          pendingPlanChange.licenses,
+          false // Don't force checkout
+        );
+        
+        toast.dismiss(loadingToast);
+        
+        if (result?.scheduled) {
+          toast.success("Downgrade scheduled successfully!");
+          await loadSubscriptionData();
+          setViewMode("overview");
+          setShowProrationPreview(false);
+          setPendingPlanChange(null);
+          setProrationData(null);
+        }
       } else {
-        // Downgrade or same-cycle change - instant update
+        // Instant update (shouldn't happen with current logic, but keep as fallback)
         const result = await createCheckoutSession(
           pendingPlanChange.plan,
           pendingPlanChange.cycle,
@@ -277,6 +296,23 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     } catch (error: any) {
       console.error("Portal error:", error);
       toast.error(error.message || "Failed to open billing portal");
+    }
+  };
+
+  const handleCancelPendingChange = async () => {
+    if (!isOwner) {
+      toast.error("Only the owner can cancel pending changes");
+      return;
+    }
+
+    try {
+      toast.loading("Canceling...", { id: "cancelToast" });
+      await cancelPendingPlanChange();
+      toast.success("Pending plan change canceled", { id: "cancelToast" });
+      await loadSubscriptionData(); // Reload to clear pending change from UI
+    } catch (error: any) {
+      console.error("Cancel error:", error);
+      toast.error(error.message || "Failed to cancel pending change", { id: "cancelToast" });
     }
   };
 
@@ -349,6 +385,43 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
               {/* OVERVIEW VIEW */}
               {viewMode === "overview" && (
                 <>
+                  {/* Pending Downgrade Banner */}
+                  {subscription?.pending_plan_change && (
+                    <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <AlertCircle className="w-5 h-5 text-blue-600" />
+                            <h4 className="font-semibold text-blue-900">Downgrade Scheduled</h4>
+                          </div>
+                          <p className="text-sm text-blue-700 mb-2">
+                            Your plan will change to{" "}
+                            <span className="font-bold">
+                              {subscription.pending_plan_change.plan_type === "individual" ? "Individual" : "Organization"}{" "}
+                              {subscription.pending_plan_change.billing_cycle === "monthly" ? "Monthly" : "Yearly"}
+                            </span>{" "}
+                            on{" "}
+                            <span className="font-bold">
+                              {new Date(subscription.pending_plan_change.scheduled_for).toLocaleDateString('en-US', {
+                                month: 'long',
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </span>
+                          </p>
+                          {isOwner && (
+                            <button
+                              onClick={handleCancelPendingChange}
+                              className="text-sm text-blue-700 hover:text-blue-900 font-medium underline"
+                            >
+                              Cancel scheduled downgrade
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Current Plan Card */}
                   {subscription && (
                     <div className="mb-6">
@@ -881,7 +954,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                     <p className={`font-semibold mb-1 ${
                       prorationData.isUpgrade ? 'text-green-900' : 'text-blue-900'
                     }`}>
-                      {prorationData.isUpgrade ? 'Upgrade Charge' : 'Plan Change'}
+                      {prorationData.isUpgrade ? 'Upgrade Charge' : 'Downgrade Scheduled'}
                     </p>
                     <p className={`text-sm ${
                       prorationData.isUpgrade ? 'text-green-700' : 'text-blue-700'
@@ -891,10 +964,21 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                           You'll be charged <span className="font-bold">{formatCurrency(prorationData.prorationAmount)}</span> today.
                           This prorated amount covers the difference between your plans for the remainder of your billing period.
                         </>
-                      ) : prorationData.prorationAmount > 0 ? (
+                      ) : prorationData.scheduledForPeriodEnd ? (
                         <>
-                          A credit of <span className="font-bold">{formatCurrency(prorationData.prorationAmount)}</span> will be
-                          applied to your next billing cycle.
+                          Downgrade scheduled for{" "}
+                          <span className="font-bold">
+                            {prorationData.nextBillingDate && new Date(prorationData.nextBillingDate).toLocaleDateString('en-US', {
+                              month: 'long',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                          </span>.
+                          {prorationData.futureSavings && prorationData.futureSavings > 0 && (
+                            <>
+                              {" "}You'll save <span className="font-bold">{formatCurrency(prorationData.futureSavings)}/month</span> starting then.
+                            </>
+                          )}
                         </>
                       ) : (
                         <>
@@ -907,7 +991,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
               </div>
 
               {/* Next Billing Info */}
-              {prorationData.currentPeriodEnd && (
+              {prorationData.currentPeriodEnd && !prorationData.scheduledForPeriodEnd && (
                 <div className="text-sm text-gray-600 pt-2 border-t border-gray-200">
                   <p>
                     Changes take effect immediately. Next billing date:{" "}
