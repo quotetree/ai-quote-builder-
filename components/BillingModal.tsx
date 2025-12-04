@@ -246,7 +246,14 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       if (result?.scheduled) {
         // Downgrade scheduled
         toast.success("Downgrade scheduled successfully!");
-        await loadSubscriptionData();
+        
+        // Use returned subscription data if available, otherwise reload
+        if (result.subscription) {
+          setSubscription(result.subscription);
+        } else {
+          await loadSubscriptionData();
+        }
+        
         setViewMode("overview");
         setShowProrationPreview(false);
         setPendingPlanChange(null);
@@ -254,7 +261,14 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       } else if (result?.updated) {
         // Upgrade completed in-place
         toast.success("Plan upgraded successfully! Payment processed.");
-        await loadSubscriptionData();
+        
+        // Use returned subscription data if available, otherwise reload
+        if (result.subscription) {
+          setSubscription(result.subscription);
+        } else {
+          await loadSubscriptionData();
+        }
+        
         setViewMode("overview");
         setShowProrationPreview(false);
         setPendingPlanChange(null);

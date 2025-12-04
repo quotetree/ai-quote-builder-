@@ -136,13 +136,15 @@ export async function POST(request: NextRequest) {
             created_at: new Date().toISOString(),
           };
 
-          const { error: updateError } = await supabase
+          const { data: updatedSub, error: updateError } = await supabase
             .from("subscriptions")
             .update({
               pending_plan_change: pendingChange,
               updated_at: new Date().toISOString(),
             })
-            .eq("organization_id", organizationId);
+            .eq("organization_id", organizationId)
+            .select()
+            .single();
 
           if (updateError) {
             console.error("Failed to store pending plan change:", updateError);
@@ -153,7 +155,8 @@ export async function POST(request: NextRequest) {
             updated: true,
             scheduled: true,
             effectiveDate: fullSubscription.current_period_end,
-            message: "Downgrade scheduled for next billing period"
+            message: "Downgrade scheduled for next billing period",
+            subscription: updatedSub // Include updated subscription
           });
         }
 
@@ -287,21 +290,35 @@ export async function POST(request: NextRequest) {
             base_price_cents: basePriceCents,
             additional_license_price_cents: additionalLicensePriceCents,
             pending_plan_change: null, // Clear any pending downgrade
+            current_period_start: updatedSubscription.current_period_start
+              ? new Date(updatedSubscription.current_period_start * 1000).toISOString()
+              : null,
+            current_period_end: updatedSubscription.current_period_end
+              ? new Date(updatedSubscription.current_period_end * 1000).toISOString()
+              : null,
             updated_at: new Date().toISOString(),
           })
           .eq("organization_id", organizationId)
-          .select();
+          .select()
+          .single();
 
         if (dbError) {
           console.error("Database update error:", dbError);
-        } else {
-          console.log("Database updated successfully:", dbUpdate);
+          return NextResponse.json({ 
+            updated: true,
+            subscriptionId: updatedSubscription.id,
+            message: "Subscription updated successfully"
+          });
         }
 
+        console.log("Database updated successfully:", dbUpdate);
+
+        // Return the updated subscription data so UI can refresh immediately
         return NextResponse.json({ 
           updated: true,
           subscriptionId: updatedSubscription.id,
-          message: "Subscription updated successfully"
+          message: "Subscription updated successfully",
+          subscription: dbUpdate // Include the updated subscription
         });
       } catch (updateError: any) {
         console.error("Failed to update subscription:", updateError);
