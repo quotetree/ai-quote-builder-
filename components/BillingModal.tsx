@@ -186,11 +186,22 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     }
 
     try {
-      toast.loading("Redirecting to checkout...");
-      await createCheckoutSession(plan, cycle, additionalLicenses);
+      const loadingToast = toast.loading("Processing...");
+      const result = await createCheckoutSession(plan, cycle, additionalLicenses);
+      
+      toast.dismiss(loadingToast);
+      
+      // If subscription was updated in-place (no redirect)
+      if (result?.updated) {
+        toast.success("Subscription updated successfully!");
+        // Reload subscription data to show new plan
+        await loadSubscriptionData();
+        setViewMode("overview");
+      }
+      // If redirecting to checkout, the createCheckoutSession handles it
     } catch (error: any) {
       console.error("Upgrade error:", error);
-      toast.error(error.message || "Failed to start checkout");
+      toast.error(error.message || "Failed to update plan");
     }
   };
 

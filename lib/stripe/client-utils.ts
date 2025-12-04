@@ -10,6 +10,7 @@ const stripePromise = loadStripe(
 
 /**
  * Create a Stripe Checkout session and redirect the user
+ * Returns the result object if subscription was updated in-place
  */
 export async function createCheckoutSession(
   planType: PlanType,
@@ -33,12 +34,20 @@ export async function createCheckoutSession(
     throw new Error(error.error || "Failed to create checkout session");
   }
 
-  const { url } = await response.json();
+  const data = await response.json();
 
-  // Redirect to Stripe Checkout
-  if (url) {
-    window.location.href = url;
+  // Check if this was an in-place update (no redirect needed)
+  if (data.updated) {
+    return data; // Return the update result
   }
+
+  // Otherwise redirect to Stripe Checkout
+  if (data.url) {
+    window.location.href = data.url;
+    return null; // Redirecting
+  }
+
+  return data;
 }
 
 /**
