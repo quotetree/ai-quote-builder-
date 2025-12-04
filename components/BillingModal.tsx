@@ -962,48 +962,41 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                     <p className={`text-sm ${
                       prorationData.isUpgrade ? 'text-green-700' : 'text-blue-700'
                     }`}>
-                      {prorationData.requiresCheckout ? (
-                        <>
-                          You'll be charged <span className="font-bold">{formatCurrency(prorationData.prorationAmount)}</span> today.
-                          This prorated amount covers the difference between your plans for the remainder of your billing period.
-                        </>
-                      ) : prorationData.scheduledForPeriodEnd ? (
-                        <>
-                          Downgrade scheduled for{" "}
-                          <span className="font-bold">
-                            {prorationData.nextBillingDate && new Date(prorationData.nextBillingDate).toLocaleDateString('en-US', {
-                              month: 'long',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          </span>.
-                          {prorationData.futureSavings && prorationData.futureSavings > 0 && (
-                            <>
-                              {" "}You'll save <span className="font-bold">{formatCurrency(prorationData.futureSavings)}/month</span> starting then.
-                            </>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          Your plan will be updated immediately with no additional charge.
-                        </>
-                      )}
+                      {prorationData.billingMessage || 'Your plan will be updated.'}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Next Billing Info */}
-              {prorationData.currentPeriodEnd && !prorationData.scheduledForPeriodEnd && (
+              {/* Billing Anchor Reset Notice */}
+              {prorationData.resetsBillingAnchor && (
+                <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                  <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Your billing date will reset to today. Your next renewal will be one {pendingPlanChange.cycle === "monthly" ? "month" : "year"} from now.</span>
+                </div>
+              )}
+
+              {/* Next Billing Info for immediate changes */}
+              {!prorationData.scheduledForPeriodEnd && prorationData.resetsBillingAnchor && (
                 <div className="text-sm text-gray-600 pt-2 border-t border-gray-200">
                   <p>
-                    Changes take effect immediately. Next billing date:{" "}
+                    Next billing date:{" "}
                     <span className="font-medium text-gray-900">
-                      {new Date(prorationData.currentPeriodEnd).toLocaleDateString('en-US', {
-                        month: 'long',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
+                      {(() => {
+                        const nextDate = new Date();
+                        if (pendingPlanChange.cycle === "monthly") {
+                          nextDate.setMonth(nextDate.getMonth() + 1);
+                        } else {
+                          nextDate.setFullYear(nextDate.getFullYear() + 1);
+                        }
+                        return nextDate.toLocaleDateString('en-US', {
+                          month: 'long',
+                          day: 'numeric',
+                          year: 'numeric'
+                        });
+                      })()}
                     </span>
                   </p>
                 </div>

@@ -107,12 +107,12 @@ export interface ProrationPreview {
   isUpgrade: boolean;
   requiresCheckout: boolean; // true if needs to go through Stripe Checkout
   scheduledForPeriodEnd?: boolean; // true for downgrades (takes effect at period end)
+  resetsBillingAnchor?: boolean; // true if billing anchor resets to today
   effectiveDate: string;
   currentPlanDescription: string;
   newPlanDescription: string;
   currentPeriodEnd?: string | null;
-  futureSavings?: number; // monthly savings in cents for downgrades
-  nextBillingDate?: string | null; // when downgrade takes effect
+  billingMessage?: string; // Custom message explaining the charge/change
 }
 
 // Member with user profile information

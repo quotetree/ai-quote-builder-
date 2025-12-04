@@ -5,6 +5,28 @@ import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 import type { PlanType, BillingCycle } from "@/types/database";
 import { PLAN_PRICING } from "@/types/database";
 
+// Helper: Get price per period (monthly equivalent)
+function getPricePerPeriod(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
+  if (planType === "individual") {
+    return billingCycle === "monthly" ? 97 : 79; // per month
+  } else {
+    const base = billingCycle === "monthly" ? 245 : 197; // per month
+    const licenseRate = billingCycle === "monthly" ? 79 : 65; // per license per month
+    return base + (additionalLicenses * licenseRate);
+  }
+}
+
+// Helper: Get total charge for the billing period (in cents)
+function getTotalCharge(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
+  if (planType === "individual") {
+    return billingCycle === "monthly" ? 9700 : 94800; // $97 or $948
+  } else {
+    const base = billingCycle === "monthly" ? 24500 : 236400; // $245 or $2,364
+    const licenseRate = billingCycle === "monthly" ? 7900 : 78000; // $79/mo or $780/yr per license
+    return base + (additionalLicenses * licenseRate);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Runtime check for Stripe key
@@ -59,116 +81,109 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Determine if this is an upgrade or downgrade
-    const isUpgrade = determineIfUpgrade(
-      currentSubscription.plan_type,
-      currentSubscription.billing_cycle,
-      currentSubscription.additional_licenses,
-      planType,
-      billingCycle,
-      additionalLicenses
-    );
+    const currentPlan = currentSubscription.plan_type;
+    const currentCycle = currentSubscription.billing_cycle;
+    const currentLicenses = currentSubscription.additional_licenses || 0;
+    const newPlan = planType;
+    const newCycle = billingCycle;
+    const newLicenses = additionalLicenses;
 
-    // Build the new subscription items for preview
-    const items: any[] = [];
+    const currentPricePerPeriod = getPricePerPeriod(currentPlan, currentCycle, currentLicenses);
+    const newPricePerPeriod = getPricePerPeriod(newPlan, newCycle, newLicenses);
+    const currentTotalCharge = getTotalCharge(currentPlan, currentCycle, currentLicenses);
+    const newTotalCharge = getTotalCharge(newPlan, newCycle, newLicenses);
 
-    if (planType === "individual") {
-      const priceId =
-        billingCycle === "monthly"
-          ? STRIPE_PRICE_IDS.individual.monthly
-          : STRIPE_PRICE_IDS.individual.yearly;
-      items.push({ price: priceId, quantity: 1 });
-    } else if (planType === "organization") {
-      const basePriceId =
-        billingCycle === "monthly"
-          ? STRIPE_PRICE_IDS.organization.base.monthly
-          : STRIPE_PRICE_IDS.organization.base.yearly;
-      items.push({ price: basePriceId, quantity: 1 });
+    const currentPlanDescription = formatPlanDescription(currentPlan, currentCycle, currentLicenses);
+    const newPlanDescription = formatPlanDescription(newPlan, newCycle, newLicenses);
 
-      if (additionalLicenses > 0) {
-        const licensePriceId =
-          billingCycle === "monthly"
-            ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
-            : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
-        items.push({ price: licensePriceId, quantity: additionalLicenses });
+    let prorationAmount = 0;
+    let requiresCheckout = false;
+    let isUpgrade = false;
+    let scheduledForPeriodEnd = false;
+    let billingMessage = "";
+    let resetsBillingAnchor = false;
+
+    // Branch 1: Monthly → Yearly (always upgrade, charge full year)
+    if (currentCycle === "monthly" && newCycle === "yearly") {
+      prorationAmount = newTotalCharge;
+      requiresCheckout = true;
+      isUpgrade = true;
+      scheduledForPeriodEnd = false;
+      resetsBillingAnchor = true;
+      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today.`;
+    }
+    // Branch 2: Yearly → Monthly (always downgrade, schedule for period end)
+    else if (currentCycle === "yearly" && newCycle === "monthly") {
+      prorationAmount = 0;
+      requiresCheckout = false;
+      isUpgrade = false;
+      scheduledForPeriodEnd = true;
+      const savings = currentPricePerPeriod - newPricePerPeriod;
+      billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
+    }
+    // Branch 3: Monthly → Monthly
+    else if (currentCycle === "monthly" && newCycle === "monthly") {
+      if (newPricePerPeriod > currentPricePerPeriod) {
+        // Monthly upgrade
+        prorationAmount = newTotalCharge;
+        requiresCheckout = true;
+        isUpgrade = true;
+        scheduledForPeriodEnd = false;
+        resetsBillingAnchor = true;
+        billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for the new monthly rate today. Your billing date will reset to today.`;
+      } else {
+        // Monthly downgrade
+        prorationAmount = 0;
+        requiresCheckout = false;
+        isUpgrade = false;
+        scheduledForPeriodEnd = true;
+        const savings = currentPricePerPeriod - newPricePerPeriod;
+        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
+      }
+    }
+    // Branch 4: Yearly → Yearly
+    else if (currentCycle === "yearly" && newCycle === "yearly") {
+      if (newPricePerPeriod > currentPricePerPeriod) {
+        // Yearly upgrade - calculate prorated difference
+        const currentPeriodStart = new Date(currentSubscription.current_period_start!);
+        const currentPeriodEnd = new Date(currentSubscription.current_period_end!);
+        const now = new Date();
+        
+        const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
+        const remainingDays = Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const remainingFraction = remainingDays / totalDays;
+        
+        const priceDiff = newTotalCharge - currentTotalCharge;
+        prorationAmount = Math.round(priceDiff * remainingFraction);
+        
+        requiresCheckout = true;
+        isUpgrade = true;
+        scheduledForPeriodEnd = false;
+        resetsBillingAnchor = false;
+        billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining in your billing period). Your renewal date stays the same.`;
+      } else {
+        // Yearly downgrade
+        prorationAmount = 0;
+        requiresCheckout = false;
+        isUpgrade = false;
+        scheduledForPeriodEnd = true;
+        const savings = currentPricePerPeriod - newPricePerPeriod;
+        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
       }
     }
 
-    // Preview the upcoming invoice with the changes
-    try {
-      const upcomingInvoice = await stripe.invoices.retrieveUpcoming({
-        customer: currentSubscription.stripe_customer_id || undefined,
-        subscription: currentSubscription.stripe_subscription_id,
-        subscription_items: items.map((item, index) => ({
-          id: index === 0 ? undefined : undefined, // Will be replaced by Stripe
-          price: item.price,
-          quantity: item.quantity,
-        })),
-        subscription_proration_behavior: "always_invoice",
-      } as any);
-
-      // Calculate the proration amount (can be positive for charge or negative for credit)
-      const prorationAmount = upcomingInvoice.amount_due || 0;
-
-      // Get plan descriptions
-      const currentPlanDescription = formatPlanDescription(
-        currentSubscription.plan_type,
-        currentSubscription.billing_cycle,
-        currentSubscription.additional_licenses
-      );
-
-      const newPlanDescription = formatPlanDescription(
-        planType,
-        billingCycle,
-        additionalLicenses
-      );
-
-      // Determine effective date
-      const effectiveDate = new Date().toISOString();
-
-      // For downgrades: no checkout, no proration charge, scheduled for period end
-      // For upgrades: checkout with immediate charge
-      const scheduledForPeriodEnd = !isUpgrade;
-      const requiresCheckout = isUpgrade && prorationAmount > 0;
-
-      // Calculate monthly savings for downgrades
-      const currentMonthlyCost = calculateMonthlyCost(
-        currentSubscription.plan_type,
-        currentSubscription.billing_cycle,
-        currentSubscription.additional_licenses
-      );
-      const newMonthlyCost = calculateMonthlyCost(
-        planType,
-        billingCycle,
-        additionalLicenses
-      );
-      const futureSavings = !isUpgrade ? currentMonthlyCost - newMonthlyCost : 0;
-
-      return NextResponse.json({
-        prorationAmount: isUpgrade ? prorationAmount : 0, // No charge for downgrades
-        isUpgrade,
-        requiresCheckout,
-        scheduledForPeriodEnd,
-        effectiveDate,
-        currentPlanDescription,
-        newPlanDescription,
-        currentPeriodEnd: currentSubscription.current_period_end,
-        futureSavings,
-        nextBillingDate: currentSubscription.current_period_end,
-      });
-    } catch (invoiceError: any) {
-      console.error("Failed to preview invoice:", invoiceError);
-      
-      // Fallback calculation if Stripe preview fails
-      const fallbackProration = calculateFallbackProration(
-        currentSubscription,
-        planType,
-        billingCycle,
-        additionalLicenses
-      );
-
-      return NextResponse.json(fallbackProration);
-    }
+    return NextResponse.json({
+      prorationAmount,
+      isUpgrade,
+      requiresCheckout,
+      scheduledForPeriodEnd,
+      resetsBillingAnchor,
+      effectiveDate: scheduledForPeriodEnd ? currentSubscription.current_period_end : new Date().toISOString(),
+      currentPlanDescription,
+      newPlanDescription,
+      currentPeriodEnd: currentSubscription.current_period_end,
+      billingMessage,
+    });
   } catch (error: any) {
     console.error("Proration preview error:", error);
     return NextResponse.json(
@@ -178,63 +193,18 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function calculateMonthlyCost(
-  planType: PlanType,
-  billingCycle: BillingCycle,
-  additionalLicenses: number
-): number {
-  if (planType === "individual") {
-    return PLAN_PRICING.individual[billingCycle];
-  } else {
-    return (
-      PLAN_PRICING.organization[billingCycle].base +
-      additionalLicenses * PLAN_PRICING.organization[billingCycle].perAdditionalLicense
-    );
-  }
+function formatCurrency(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
-function determineIfUpgrade(
-  currentPlan: PlanType,
-  currentCycle: BillingCycle,
-  currentAdditionalLicenses: number,
-  newPlan: PlanType,
-  newCycle: BillingCycle,
-  newAdditionalLicenses: number
-): boolean {
-  // Calculate total price per billing period for current plan
-  let currentTotalPrice = 0;
-  if (currentPlan === "individual") {
-    currentTotalPrice = PLAN_PRICING.individual[currentCycle];
-    if (currentCycle === "yearly") {
-      currentTotalPrice *= 12; // Convert to yearly total
-    }
-  } else {
-    const baseCost = PLAN_PRICING.organization[currentCycle].base;
-    const licenseCost = currentAdditionalLicenses * PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
-    currentTotalPrice = baseCost + licenseCost;
-    if (currentCycle === "yearly") {
-      currentTotalPrice *= 12; // Convert to yearly total
-    }
-  }
-
-  // Calculate total price per billing period for new plan
-  let newTotalPrice = 0;
-  if (newPlan === "individual") {
-    newTotalPrice = PLAN_PRICING.individual[newCycle];
-    if (newCycle === "yearly") {
-      newTotalPrice *= 12; // Convert to yearly total
-    }
-  } else {
-    const baseCost = PLAN_PRICING.organization[newCycle].base;
-    const licenseCost = newAdditionalLicenses * PLAN_PRICING.organization[newCycle].perAdditionalLicense;
-    newTotalPrice = baseCost + licenseCost;
-    if (newCycle === "yearly") {
-      newTotalPrice *= 12; // Convert to yearly total
-    }
-  }
-
-  // Upgrade if new price is higher than current price
-  return newTotalPrice > currentTotalPrice;
+function formatDate(dateString: string | null): string {
+  if (!dateString) return "your next renewal";
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
 }
 
 function formatPlanDescription(
@@ -254,59 +224,5 @@ function formatPlanDescription(
       : '';
     return `Organization ${cycleText} (${basePrice}/month${licenseText})`;
   }
-}
-
-function calculateFallbackProration(
-  currentSubscription: any,
-  newPlanType: PlanType,
-  newBillingCycle: BillingCycle,
-  newAdditionalLicenses: number
-) {
-  const isUpgrade = determineIfUpgrade(
-    currentSubscription.plan_type,
-    currentSubscription.billing_cycle,
-    currentSubscription.additional_licenses,
-    newPlanType,
-    newBillingCycle,
-    newAdditionalLicenses
-  );
-
-  // Calculate monthly costs
-  const currentMonthlyCost = calculateMonthlyCost(
-    currentSubscription.plan_type,
-    currentSubscription.billing_cycle,
-    currentSubscription.additional_licenses
-  );
-  
-  const newMonthlyCost = calculateMonthlyCost(
-    newPlanType,
-    newBillingCycle,
-    newAdditionalLicenses
-  );
-
-  const priceDifference = newMonthlyCost - currentMonthlyCost;
-  const futureSavings = !isUpgrade ? currentMonthlyCost - newMonthlyCost : 0;
-  const scheduledForPeriodEnd = !isUpgrade;
-
-  return {
-    prorationAmount: isUpgrade && priceDifference > 0 ? Math.abs(priceDifference) : 0,
-    isUpgrade,
-    requiresCheckout: isUpgrade && priceDifference > 0,
-    scheduledForPeriodEnd,
-    effectiveDate: new Date().toISOString(),
-    currentPlanDescription: formatPlanDescription(
-      currentSubscription.plan_type,
-      currentSubscription.billing_cycle,
-      currentSubscription.additional_licenses
-    ),
-    newPlanDescription: formatPlanDescription(
-      newPlanType,
-      newBillingCycle,
-      newAdditionalLicenses
-    ),
-    currentPeriodEnd: currentSubscription.current_period_end,
-    futureSavings,
-    nextBillingDate: currentSubscription.current_period_end,
-  };
 }
 

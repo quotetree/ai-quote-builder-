@@ -158,9 +158,13 @@ export async function POST(request: NextRequest) {
         }
 
         // If upgrade, proceed with immediate update
-        console.log("Processing immediate upgrade with proration");
+        console.log("Processing immediate upgrade");
 
-        // Retrieve subscription with expanded items to get subscription item IDs
+        // Determine billing behavior based on plan change type
+        const currentCycle = existingSubscription.billing_cycle;
+        const newCycle = billingCycle;
+        
+        // Retrieve subscription with expanded items
         const stripeSubscription = await stripe.subscriptions.retrieve(
           existingSubscription.stripe_subscription_id,
           { expand: ['items'] }
@@ -212,19 +216,49 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Determine proration_behavior and billing_cycle_anchor based on scenario
+        let prorationBehavior: "none" | "always_invoice" = "always_invoice";
+        let billingCycleAnchor: "now" | "unchanged" | undefined = undefined;
+
+        // Monthly → Yearly: No proration, reset anchor
+        if (currentCycle === "monthly" && newCycle === "yearly") {
+          prorationBehavior = "none";
+          billingCycleAnchor = "now";
+          console.log("Monthly → Yearly: Charging full year, resetting billing anchor");
+        }
+        // Monthly → Monthly (upgrade): No proration, reset anchor
+        else if (currentCycle === "monthly" && newCycle === "monthly") {
+          prorationBehavior = "none";
+          billingCycleAnchor = "now";
+          console.log("Monthly → Monthly upgrade: Charging full month, resetting billing anchor");
+        }
+        // Yearly → Yearly (upgrade): Prorate, keep anchor
+        else if (currentCycle === "yearly" && newCycle === "yearly") {
+          prorationBehavior = "always_invoice";
+          billingCycleAnchor = "unchanged";
+          console.log("Yearly → Yearly upgrade: Prorating difference, keeping billing anchor");
+        }
+
         // Update the existing subscription
+        const updateParams: any = {
+          items: itemUpdates,
+          proration_behavior: prorationBehavior,
+          metadata: {
+            user_id: user.id,
+            organization_id: organizationId,
+            plan_type: planType,
+            billing_cycle: billingCycle,
+          },
+        };
+
+        // Add billing_cycle_anchor if we're resetting it
+        if (billingCycleAnchor === "now") {
+          updateParams.billing_cycle_anchor = "now";
+        }
+
         const updatedSubscription = await stripe.subscriptions.update(
           existingSubscription.stripe_subscription_id,
-          {
-            items: itemUpdates,
-            proration_behavior: "always_invoice",
-            metadata: {
-              user_id: user.id,
-              organization_id: organizationId,
-              plan_type: planType,
-              billing_cycle: billingCycle,
-            },
-          }
+          updateParams
         );
 
         console.log("Successfully updated Stripe subscription:", updatedSubscription.id);
