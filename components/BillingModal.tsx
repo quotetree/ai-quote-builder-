@@ -290,8 +290,9 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     }
 
     try {
-      toast.loading("Opening billing portal...");
+      const loadingToast = toast.loading("Opening billing portal...");
       await openCustomerPortal();
+      toast.dismiss(loadingToast);
     } catch (error: any) {
       console.error("Portal error:", error);
       toast.error(error.message || "Failed to open billing portal");
