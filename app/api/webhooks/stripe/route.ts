@@ -116,14 +116,12 @@ async function handleCheckoutCompleted(
   // Calculate licenses
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
 
-  // Calculate price
+  // Calculate price - ONLY store the base price, not additional licenses
   let basePriceCents = 0;
   if (planType === "individual") {
     basePriceCents = PLAN_PRICING.individual[billingCycle];
   } else {
-    basePriceCents =
-      PLAN_PRICING.organization[billingCycle].base +
-      additionalLicenses * PLAN_PRICING.organization[billingCycle].perAdditionalLicense;
+    basePriceCents = PLAN_PRICING.organization[billingCycle].base;
   }
 
   // Update subscription in database
