@@ -244,12 +244,12 @@ function formatPlanDescription(
   const cycleText = billingCycle === "monthly" ? "Monthly" : "Yearly";
   
   if (planType === "individual") {
-    const price = billingCycle === "monthly" ? "$97" : "$79";
-    return `Individual ${cycleText} (${price}/month)`;
+    const priceInDollars = PLAN_PRICING.individual[billingCycle] / 100;
+    return `Individual ${cycleText} ($${priceInDollars}/month)`;
   } else {
-    const base = billingCycle === "monthly" ? 245 : 197;
-    const licenseRate = billingCycle === "monthly" ? 79 : 65;
-    const total = base + (additionalLicenses * licenseRate);
+    const baseInDollars = PLAN_PRICING.organization[billingCycle].base / 100;
+    const licenseRateInDollars = PLAN_PRICING.organization[billingCycle].perAdditionalLicense / 100;
+    const total = baseInDollars + (additionalLicenses * licenseRateInDollars);
     return `Organization ${cycleText} ($${total}/month)`;
   }
 }
