@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe/client";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
+import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 
 export async function POST(request: NextRequest) {
   // Runtime check for Stripe key
@@ -196,16 +197,48 @@ async function handleSubscriptionUpdate(
   // Determine plan details from subscription items
   const items = sub.items.data;
   let planType: "individual" | "organization" = "individual";
+  let billingCycle: "monthly" | "yearly" = "monthly";
   let additionalLicenses = 0;
+
+  // Determine billing cycle from the first item's price interval
+  if (items.length > 0 && items[0].price) {
+    billingCycle = items[0].price.recurring?.interval === "year" ? "yearly" : "monthly";
+  }
 
   // Check if it's an organization plan by looking for multiple items or specific prices
   if (items.length > 1) {
     planType = "organization";
     // Second item is usually the additional licenses
     additionalLicenses = items[1]?.quantity || 0;
+  } else if (items.length === 1) {
+    // Check if the single item is an org base price
+    const priceId = items[0].price?.id;
+    if (priceId === STRIPE_PRICE_IDS.organization.base.monthly || 
+        priceId === STRIPE_PRICE_IDS.organization.base.yearly) {
+      planType = "organization";
+    }
+  }
+
+  // If metadata has explicit plan info, use that instead (from checkout route)
+  if (sub.metadata?.plan_type) {
+    planType = sub.metadata.plan_type as "individual" | "organization";
+  }
+  if (sub.metadata?.billing_cycle) {
+    billingCycle = sub.metadata.billing_cycle as "monthly" | "yearly";
   }
 
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
+
+  // Calculate pricing based on plan type and billing cycle
+  let basePriceCents = 0;
+  if (planType === "individual") {
+    basePriceCents = PLAN_PRICING.individual[billingCycle];
+  } else {
+    basePriceCents = PLAN_PRICING.organization[billingCycle].base;
+  }
+  const additionalLicensePriceCents = planType === "organization"
+    ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
+    : 0;
 
   // Safely handle timestamps
   const currentPeriodStart = sub.current_period_start
@@ -216,10 +249,14 @@ async function handleSubscriptionUpdate(
     : null;
 
   const updateData: any = {
+    plan_type: planType,
+    billing_cycle: billingCycle,
     status: sub.status,
     cancel_at_period_end: sub.cancel_at_period_end,
+    base_licenses: baseLicenses,
     additional_licenses: additionalLicenses,
-    // Remove total_licenses - it's a generated column
+    base_price_cents: basePriceCents,
+    additional_license_price_cents: additionalLicensePriceCents,
     updated_at: new Date().toISOString(),
   };
 
