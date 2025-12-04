@@ -167,16 +167,41 @@ export async function POST(request: NextRequest) {
           }
         );
 
+        console.log("Successfully updated Stripe subscription:", updatedSubscription.id);
+        console.log("New plan:", planType, "New cycle:", billingCycle);
+
+        // Calculate pricing for database update
+        const baseLicenses = planType === "organization" ? 3 : 1;
+        let basePriceCents = 0;
+        if (planType === "individual") {
+          basePriceCents = billingCycle === "monthly" ? 9700 : 7900;
+        } else {
+          basePriceCents = billingCycle === "monthly" ? 24500 : 19700;
+        }
+        const additionalLicensePriceCents = planType === "organization"
+          ? (billingCycle === "monthly" ? 7900 : 6500)
+          : 0;
+
         // Update subscription in database
-        await supabase
+        const { data: dbUpdate, error: dbError } = await supabase
           .from("subscriptions")
           .update({
             plan_type: planType,
             billing_cycle: billingCycle,
+            base_licenses: baseLicenses,
             additional_licenses: additionalLicenses,
+            base_price_cents: basePriceCents,
+            additional_license_price_cents: additionalLicensePriceCents,
             updated_at: new Date().toISOString(),
           })
-          .eq("organization_id", organizationId);
+          .eq("organization_id", organizationId)
+          .select();
+
+        if (dbError) {
+          console.error("Database update error:", dbError);
+        } else {
+          console.log("Database updated successfully:", dbUpdate);
+        }
 
         return NextResponse.json({ 
           updated: true,
@@ -185,6 +210,7 @@ export async function POST(request: NextRequest) {
         });
       } catch (updateError: any) {
         console.error("Failed to update subscription:", updateError);
+        console.error("Update error details:", updateError.message);
         // If update fails, fall through to create new checkout session
       }
     }
