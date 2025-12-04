@@ -279,6 +279,9 @@ export async function POST(request: NextRequest) {
           ? (billingCycle === "monthly" ? 7900 : 6500)
           : 0;
 
+        // Cast to any to work around Stripe API type mismatch
+        const sub = updatedSubscription as any;
+
         // Update subscription in database
         const { data: dbUpdate, error: dbError } = await supabase
           .from("subscriptions")
@@ -290,11 +293,11 @@ export async function POST(request: NextRequest) {
             base_price_cents: basePriceCents,
             additional_license_price_cents: additionalLicensePriceCents,
             pending_plan_change: null, // Clear any pending downgrade
-            current_period_start: updatedSubscription.current_period_start
-              ? new Date(updatedSubscription.current_period_start * 1000).toISOString()
+            current_period_start: sub.current_period_start
+              ? new Date(sub.current_period_start * 1000).toISOString()
               : null,
-            current_period_end: updatedSubscription.current_period_end
-              ? new Date(updatedSubscription.current_period_end * 1000).toISOString()
+            current_period_end: sub.current_period_end
+              ? new Date(sub.current_period_end * 1000).toISOString()
               : null,
             updated_at: new Date().toISOString(),
           })
