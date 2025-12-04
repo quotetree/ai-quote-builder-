@@ -101,10 +101,68 @@ export async function POST(request: NextRequest) {
       .eq("organization_id", organizationId)
       .single();
 
-    // If active subscription exists AND forceCheckout is not true, update it in-place
-    // Otherwise, create a new checkout session (for upgrades requiring immediate payment)
+    // If active subscription exists AND forceCheckout is not true, check if upgrade or downgrade
+    // Upgrades: immediate with proration, Downgrades: scheduled for period end
     if (existingSubscription?.stripe_subscription_id && !forceCheckout) {
       try {
+        // Determine if this is an upgrade by comparing total prices
+        const isUpgrade = determineIfUpgrade(
+          existingSubscription.plan_type,
+          existingSubscription.billing_cycle,
+          0, // We'll get this from full subscription data
+          planType,
+          billingCycle,
+          additionalLicenses
+        );
+
+        // Get full subscription data for current_period_end
+        const { data: fullSubscription } = await supabase
+          .from("subscriptions")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .single();
+
+        if (!fullSubscription) {
+          throw new Error("Subscription not found");
+        }
+
+        // If downgrade, schedule it for period end
+        if (!isUpgrade) {
+          console.log("Scheduling downgrade for period end");
+          
+          // Store pending plan change in database
+          const pendingChange = {
+            plan_type: planType,
+            billing_cycle: billingCycle,
+            additional_licenses: additionalLicenses,
+            scheduled_for: fullSubscription.current_period_end,
+            created_at: new Date().toISOString(),
+          };
+
+          const { error: updateError } = await supabase
+            .from("subscriptions")
+            .update({
+              pending_plan_change: pendingChange,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("organization_id", organizationId);
+
+          if (updateError) {
+            console.error("Failed to store pending plan change:", updateError);
+            throw updateError;
+          }
+
+          return NextResponse.json({
+            updated: true,
+            scheduled: true,
+            effectiveDate: fullSubscription.current_period_end,
+            message: "Downgrade scheduled for next billing period"
+          });
+        }
+
+        // If upgrade, proceed with immediate update
+        console.log("Processing immediate upgrade with proration");
+
         // Retrieve subscription with expanded items to get subscription item IDs
         const stripeSubscription = await stripe.subscriptions.retrieve(
           existingSubscription.stripe_subscription_id,
@@ -197,6 +255,7 @@ export async function POST(request: NextRequest) {
             additional_licenses: additionalLicenses,
             base_price_cents: basePriceCents,
             additional_license_price_cents: additionalLicensePriceCents,
+            pending_plan_change: null, // Clear any pending downgrade
             updated_at: new Date().toISOString(),
           })
           .eq("organization_id", organizationId)
@@ -306,5 +365,69 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Helper function to determine if a plan change is an upgrade based on total price
+function determineIfUpgrade(
+  currentPlan: PlanType,
+  currentCycle: BillingCycle | null,
+  currentAdditionalLicenses: number,
+  newPlan: PlanType,
+  newCycle: BillingCycle,
+  newAdditionalLicenses: number
+): boolean {
+  if (!currentCycle) return true; // Free trial to paid is always upgrade
+
+  // Use same pricing constants as proration API
+  const PLAN_PRICING = {
+    individual: {
+      monthly: 9700,
+      yearly: 7900,
+    },
+    organization: {
+      monthly: {
+        base: 24500,
+        perAdditionalLicense: 7900,
+      },
+      yearly: {
+        base: 19700,
+        perAdditionalLicense: 6500,
+      },
+    },
+  };
+
+  // Calculate total price per billing period for current plan
+  let currentTotalPrice = 0;
+  if (currentPlan === "individual") {
+    currentTotalPrice = PLAN_PRICING.individual[currentCycle];
+    if (currentCycle === "yearly") {
+      currentTotalPrice *= 12;
+    }
+  } else if (currentPlan === "organization") {
+    const baseCost = PLAN_PRICING.organization[currentCycle].base;
+    const licenseCost = currentAdditionalLicenses * PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
+    currentTotalPrice = baseCost + licenseCost;
+    if (currentCycle === "yearly") {
+      currentTotalPrice *= 12;
+    }
+  }
+
+  // Calculate total price per billing period for new plan
+  let newTotalPrice = 0;
+  if (newPlan === "individual") {
+    newTotalPrice = PLAN_PRICING.individual[newCycle];
+    if (newCycle === "yearly") {
+      newTotalPrice *= 12;
+    }
+  } else if (newPlan === "organization") {
+    const baseCost = PLAN_PRICING.organization[newCycle].base;
+    const licenseCost = newAdditionalLicenses * PLAN_PRICING.organization[newCycle].perAdditionalLicense;
+    newTotalPrice = baseCost + licenseCost;
+    if (newCycle === "yearly") {
+      newTotalPrice *= 12;
+    }
+  }
+
+  return newTotalPrice > currentTotalPrice;
 }
 
