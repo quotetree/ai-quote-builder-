@@ -118,8 +118,7 @@ export async function POST(request: NextRequest) {
       requiresCheckout = false;
       isUpgrade = false;
       scheduledForPeriodEnd = true;
-      const savings = currentPricePerPeriod - newPricePerPeriod;
-      billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
+      billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
     }
     // Branch 3: Monthly → Monthly
     else if (currentCycle === "monthly" && newCycle === "monthly") {
@@ -137,8 +136,7 @@ export async function POST(request: NextRequest) {
         requiresCheckout = false;
         isUpgrade = false;
         scheduledForPeriodEnd = true;
-        const savings = currentPricePerPeriod - newPricePerPeriod;
-        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
+        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
       }
     }
     // Branch 4: Yearly → Yearly
@@ -149,26 +147,36 @@ export async function POST(request: NextRequest) {
         const currentPeriodEnd = new Date(currentSubscription.current_period_end!);
         const now = new Date();
         
-        const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
-        const remainingDays = Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        const remainingFraction = remainingDays / totalDays;
-        
-        const priceDiff = newTotalCharge - currentTotalCharge;
-        prorationAmount = Math.round(priceDiff * remainingFraction);
-        
-        requiresCheckout = true;
-        isUpgrade = true;
-        scheduledForPeriodEnd = false;
-        resetsBillingAnchor = false;
-        billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining in your billing period). Your renewal date stays the same.`;
+        // Validate dates
+        if (isNaN(currentPeriodStart.getTime()) || isNaN(currentPeriodEnd.getTime())) {
+          // Fallback: charge full difference if dates are invalid
+          prorationAmount = newTotalCharge - currentTotalCharge;
+          requiresCheckout = true;
+          isUpgrade = true;
+          scheduledForPeriodEnd = false;
+          resetsBillingAnchor = false;
+          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today. Your renewal date stays the same.`;
+        } else {
+          const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
+          const remainingDays = Math.max(0, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+          const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 0;
+          
+          const priceDiff = newTotalCharge - currentTotalCharge;
+          prorationAmount = Math.max(0, Math.round(priceDiff * remainingFraction));
+          
+          requiresCheckout = true;
+          isUpgrade = true;
+          scheduledForPeriodEnd = false;
+          resetsBillingAnchor = false;
+          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining in your billing period). Your renewal date stays the same.`;
+        }
       } else {
         // Yearly downgrade
         prorationAmount = 0;
         requiresCheckout = false;
         isUpgrade = false;
         scheduledForPeriodEnd = true;
-        const savings = currentPricePerPeriod - newPricePerPeriod;
-        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}. No refunds will be issued. You'll save ${formatCurrency(savings * 100)} per month starting then.`;
+        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
       }
     }
 
@@ -218,11 +226,10 @@ function formatPlanDescription(
     const price = billingCycle === "monthly" ? "$97" : "$79";
     return `Individual ${cycleText} (${price}/month)`;
   } else {
-    const basePrice = billingCycle === "monthly" ? "$245" : "$197";
-    const licenseText = additionalLicenses > 0 
-      ? ` + ${additionalLicenses} additional license${additionalLicenses > 1 ? 's' : ''}`
-      : '';
-    return `Organization ${cycleText} (${basePrice}/month${licenseText})`;
+    const base = billingCycle === "monthly" ? 245 : 197;
+    const licenseRate = billingCycle === "monthly" ? 79 : 65;
+    const total = base + (additionalLicenses * licenseRate);
+    return `Organization ${cycleText} ($${total}/month)`;
   }
 }
 
