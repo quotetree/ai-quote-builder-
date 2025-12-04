@@ -799,7 +799,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       <ul className="space-y-3 mb-6">
                         <li className="flex items-start gap-2 text-sm">
                           <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>3 user licenses included</span>
+                          <span>2 user licenses included</span>
                         </li>
                         <li className="flex items-start gap-2 text-sm">
                           <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />

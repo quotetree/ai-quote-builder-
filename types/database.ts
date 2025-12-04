@@ -132,14 +132,14 @@ export const PLAN_PRICING = {
   },
   organization: {
     monthly: {
-      base: 24500, // $245.00 in cents
+      base: 15800, // $158.00 in cents (2 licenses included)
       perAdditionalLicense: 7900, // $79.00 in cents
     },
     yearly: {
-      base: 19700, // $197.00 in cents (per month, billed yearly)
+      base: 13000, // $130.00 in cents (per month, billed yearly - 2 licenses included)
       perAdditionalLicense: 6500, // $65.00 in cents (per month, billed yearly)
     },
-    baseLicenses: 3,
+    baseLicenses: 2, // Changed from 3 to 2
   },
 } as const;
 
