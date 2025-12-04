@@ -36,9 +36,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Create portal session
+    // Use production URL or fallback to localhost for development
+    const returnUrl = process.env.NEXT_PUBLIC_APP_URL 
+      ? `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`
+      : 'https://quotetree.ai/dashboard'; // Fallback to production URL
+    
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: profile.stripe_customer_id,
-      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      return_url: returnUrl,
     });
 
     return NextResponse.json({ url: portalSession.url });
