@@ -81,12 +81,12 @@ const pricingPlans = {
     },
     {
       name: "Organization",
-      price: 245,
+      price: 158,
       period: "month",
       description: "Best for growing teams",
       features: [
         "Everything in Single User",
-        "Up to 3 team members",
+        "Up to 2 team members",
         "Shared price book",
         "Team collaboration",
         "Centralized quote log",
@@ -136,13 +136,13 @@ const pricingPlans = {
     },
     {
       name: "Organization",
-      price: 197,
+      price: 130,
       period: "month",
-      yearlyTotal: 2364,
+      yearlyTotal: 1560,
       description: "Best for growing teams",
       features: [
         "Everything in Single User",
-        "Up to 3 team members",
+        "Up to 2 team members",
         "Shared price book",
         "Team collaboration",
         "Centralized quote log",
@@ -152,7 +152,7 @@ const pricingPlans = {
       ],
       cta: "Start Free Trial",
       highlighted: false,
-      savings: "Save $576/year",
+      savings: "Save $336/year",
     },
   ],
 };
