@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
 import { STRIPE_PRICE_IDS, STRIPE_CONFIG } from "@/lib/stripe/config";
 import type { PlanType, BillingCycle } from "@/types/database";
+import { PLAN_PRICING } from "@/types/database";
 import Stripe from "stripe";
 
 export async function POST(request: NextRequest) {
@@ -267,16 +268,16 @@ export async function POST(request: NextRequest) {
         console.log("Successfully updated Stripe subscription:", updatedSubscription.id);
         console.log("New plan:", planType, "New cycle:", billingCycle);
 
-        // Calculate pricing for database update
-        const baseLicenses = planType === "organization" ? 3 : 1;
+        // Calculate pricing for database update using PLAN_PRICING constant
+        const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
         let basePriceCents = 0;
         if (planType === "individual") {
-          basePriceCents = billingCycle === "monthly" ? 9700 : 7900;
+          basePriceCents = PLAN_PRICING.individual[billingCycle];
         } else {
-          basePriceCents = billingCycle === "monthly" ? 24500 : 19700;
+          basePriceCents = PLAN_PRICING.organization[billingCycle].base;
         }
         const additionalLicensePriceCents = planType === "organization"
-          ? (billingCycle === "monthly" ? 7900 : 6500)
+          ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
           : 0;
 
         // Cast to any to work around Stripe API type mismatch
@@ -428,24 +429,6 @@ function determineIfUpgrade(
   newAdditionalLicenses: number
 ): boolean {
   if (!currentCycle) return true; // Free trial to paid is always upgrade
-
-  // Use same pricing constants as proration API
-  const PLAN_PRICING = {
-    individual: {
-      monthly: 9700,
-      yearly: 7900,
-    },
-    organization: {
-      monthly: {
-        base: 24500,
-        perAdditionalLicense: 7900,
-      },
-      yearly: {
-        base: 19700,
-        perAdditionalLicense: 6500,
-      },
-    },
-  };
 
   // Calculate total price per billing period for current plan
   let currentTotalPrice = 0;

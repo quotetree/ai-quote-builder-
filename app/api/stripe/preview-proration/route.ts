@@ -8,10 +8,10 @@ import { PLAN_PRICING } from "@/types/database";
 // Helper: Get price per period (monthly equivalent)
 function getPricePerPeriod(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
   if (planType === "individual") {
-    return billingCycle === "monthly" ? 97 : 79; // per month
+    return PLAN_PRICING.individual[billingCycle] / 100; // Convert cents to dollars
   } else {
-    const base = billingCycle === "monthly" ? 245 : 197; // per month
-    const licenseRate = billingCycle === "monthly" ? 79 : 65; // per license per month
+    const base = PLAN_PRICING.organization[billingCycle].base / 100; // Convert cents to dollars
+    const licenseRate = PLAN_PRICING.organization[billingCycle].perAdditionalLicense / 100;
     return base + (additionalLicenses * licenseRate);
   }
 }
@@ -19,11 +19,13 @@ function getPricePerPeriod(planType: PlanType, billingCycle: BillingCycle, addit
 // Helper: Get total charge for the billing period (in cents)
 function getTotalCharge(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
   if (planType === "individual") {
-    return billingCycle === "monthly" ? 9700 : 94800; // $97 or $948
+    const pricePerMonth = PLAN_PRICING.individual[billingCycle];
+    return billingCycle === "monthly" ? pricePerMonth : pricePerMonth * 12;
   } else {
-    const base = billingCycle === "monthly" ? 24500 : 236400; // $245 or $2,364
-    const licenseRate = billingCycle === "monthly" ? 7900 : 78000; // $79/mo or $780/yr per license
-    return base + (additionalLicenses * licenseRate);
+    const basePerMonth = PLAN_PRICING.organization[billingCycle].base;
+    const licensePerMonth = PLAN_PRICING.organization[billingCycle].perAdditionalLicense;
+    const totalPerMonth = basePerMonth + (additionalLicenses * licensePerMonth);
+    return billingCycle === "monthly" ? totalPerMonth : totalPerMonth * 12;
   }
 }
 
