@@ -32,9 +32,6 @@ export async function POST(request: NextRequest) {
       additionalLicenses: number;
       forceCheckout?: boolean; // If true, always create checkout session instead of updating in-place
     };
-      billingCycle: BillingCycle;
-      additionalLicenses?: number;
-    };
 
     if (!planType || !billingCycle) {
       return NextResponse.json(
