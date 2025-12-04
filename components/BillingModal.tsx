@@ -888,12 +888,12 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                     }`}>
                       {prorationData.requiresCheckout ? (
                         <>
-                          You'll be charged <span className="font-bold">{formatPrice(prorationData.prorationAmount)}</span> today.
+                          You'll be charged <span className="font-bold">{formatCurrency(prorationData.prorationAmount)}</span> today.
                           This prorated amount covers the difference between your plans for the remainder of your billing period.
                         </>
                       ) : prorationData.prorationAmount > 0 ? (
                         <>
-                          A credit of <span className="font-bold">{formatPrice(prorationData.prorationAmount)}</span> will be
+                          A credit of <span className="font-bold">{formatCurrency(prorationData.prorationAmount)}</span> will be
                           applied to your next billing cycle.
                         </>
                       ) : (
