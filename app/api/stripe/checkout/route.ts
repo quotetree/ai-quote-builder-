@@ -26,8 +26,12 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { planType, billingCycle, additionalLicenses = 0 } = body as {
+    const { planType, billingCycle, additionalLicenses = 0, forceCheckout = false } = body as {
       planType: PlanType;
+      billingCycle: BillingCycle;
+      additionalLicenses: number;
+      forceCheckout?: boolean; // If true, always create checkout session instead of updating in-place
+    };
       billingCycle: BillingCycle;
       additionalLicenses?: number;
     };
@@ -97,8 +101,9 @@ export async function POST(request: NextRequest) {
       .eq("organization_id", organizationId)
       .single();
 
-    // If active subscription exists, update it instead of creating new one
-    if (existingSubscription?.stripe_subscription_id) {
+    // If active subscription exists AND forceCheckout is not true, update it in-place
+    // Otherwise, create a new checkout session (for upgrades requiring immediate payment)
+    if (existingSubscription?.stripe_subscription_id && !forceCheckout) {
       try {
         // Retrieve subscription with expanded items to get subscription item IDs
         const stripeSubscription = await stripe.subscriptions.retrieve(

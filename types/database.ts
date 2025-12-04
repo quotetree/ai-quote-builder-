@@ -94,6 +94,17 @@ export interface UserOrganizationContext {
   trial_end_date: string | null;
 }
 
+// Proration preview for plan changes
+export interface ProrationPreview {
+  prorationAmount: number; // in cents (positive for charge, negative for credit)
+  isUpgrade: boolean;
+  requiresCheckout: boolean; // true if needs to go through Stripe Checkout
+  effectiveDate: string;
+  currentPlanDescription: string;
+  newPlanDescription: string;
+  currentPeriodEnd?: string | null;
+}
+
 // Member with user profile information
 export interface OrganizationMemberWithProfile extends OrganizationMembership {
   profile: {

@@ -11,9 +11,10 @@ import {
   UserOrganizationContext,
   PLAN_PRICING,
   StripePaymentMethod,
-  StripeInvoice
+  StripeInvoice,
+  ProrationPreview
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -42,6 +43,16 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   const [invoicesPagination, setInvoicesPagination] = useState<string | null>(null);
   const [hasMoreInvoices, setHasMoreInvoices] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  // Proration preview state
+  const [showProrationPreview, setShowProrationPreview] = useState(false);
+  const [prorationData, setProrationData] = useState<ProrationPreview | null>(null);
+  const [loadingProration, setLoadingProration] = useState(false);
+  const [pendingPlanChange, setPendingPlanChange] = useState<{
+    plan: PlanType;
+    cycle: BillingCycle;
+    licenses: number;
+  } | null>(null);
 
   const loadSubscriptionData = useCallback(async () => {
     setLoading(true);
@@ -185,20 +196,69 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       return;
     }
 
+    // Check if this is a free trial - go straight to checkout
+    if (subscription?.status === "trialing") {
+      try {
+        toast.loading("Redirecting to checkout...", { id: "checkoutToast" });
+        await createCheckoutSession(plan, cycle, additionalLicenses, true);
+      } catch (error: any) {
+        console.error("Upgrade error:", error);
+        toast.error(error.message || "Failed to create checkout session", { id: "checkoutToast" });
+      }
+      return;
+    }
+
+    // For existing subscriptions, show proration preview first
+    try {
+      setLoadingProration(true);
+      const preview = await fetchProrationPreview(plan, cycle, additionalLicenses);
+      
+      setProrationData(preview);
+      setPendingPlanChange({ plan, cycle, licenses: additionalLicenses });
+      setShowProrationPreview(true);
+    } catch (error: any) {
+      console.error("Proration preview error:", error);
+      toast.error(error.message || "Failed to preview changes");
+    } finally {
+      setLoadingProration(false);
+    }
+  };
+
+  const handleConfirmPlanChange = async () => {
+    if (!pendingPlanChange || !prorationData) return;
+
     try {
       const loadingToast = toast.loading("Processing...");
-      const result = await createCheckoutSession(plan, cycle, additionalLicenses);
       
-      toast.dismiss(loadingToast);
-      
-      // If subscription was updated in-place (no redirect)
-      if (result?.updated) {
-        toast.success("Subscription updated successfully!");
-        // Reload subscription data to show new plan
-        await loadSubscriptionData();
-        setViewMode("overview");
+      // If requires checkout (upgrade with payment), force checkout flow
+      if (prorationData.requiresCheckout) {
+        await createCheckoutSession(
+          pendingPlanChange.plan,
+          pendingPlanChange.cycle,
+          pendingPlanChange.licenses,
+          true // Force checkout
+        );
+        toast.dismiss(loadingToast);
+      } else {
+        // Downgrade or same-cycle change - instant update
+        const result = await createCheckoutSession(
+          pendingPlanChange.plan,
+          pendingPlanChange.cycle,
+          pendingPlanChange.licenses,
+          false // Allow in-place update
+        );
+        
+        toast.dismiss(loadingToast);
+        
+        if (result?.updated) {
+          toast.success("Subscription updated successfully!");
+          await loadSubscriptionData();
+          setViewMode("overview");
+          setShowProrationPreview(false);
+          setPendingPlanChange(null);
+          setProrationData(null);
+        }
       }
-      // If redirecting to checkout, the createCheckoutSession handles it
     } catch (error: any) {
       console.error("Upgrade error:", error);
       toast.error(error.message || "Failed to update plan");
@@ -772,6 +832,133 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
           )}
         </div>
       </div>
+
+      {/* Proration Preview Modal */}
+      {showProrationPreview && prorationData && pendingPlanChange && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-xl font-semibold text-gray-900">
+                Confirm Plan Change
+              </h3>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-6 space-y-4">
+              {/* Plan Comparison */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Current Plan</span>
+                  <span className="font-medium text-gray-900">
+                    {prorationData.currentPlanDescription}
+                  </span>
+                </div>
+                <div className="flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border-2 border-blue-200">
+                  <span className="text-sm text-blue-700 font-medium">New Plan</span>
+                  <span className="font-semibold text-blue-900">
+                    {prorationData.newPlanDescription}
+                  </span>
+                </div>
+              </div>
+
+              {/* Proration Details */}
+              <div className={`p-4 rounded-lg ${
+                prorationData.isUpgrade 
+                  ? 'bg-green-50 border-2 border-green-200' 
+                  : 'bg-blue-50 border-2 border-blue-200'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className={`w-5 h-5 mt-0.5 ${
+                    prorationData.isUpgrade ? 'text-green-600' : 'text-blue-600'
+                  }`} />
+                  <div className="flex-1">
+                    <p className={`font-semibold mb-1 ${
+                      prorationData.isUpgrade ? 'text-green-900' : 'text-blue-900'
+                    }`}>
+                      {prorationData.isUpgrade ? 'Upgrade Charge' : 'Plan Change'}
+                    </p>
+                    <p className={`text-sm ${
+                      prorationData.isUpgrade ? 'text-green-700' : 'text-blue-700'
+                    }`}>
+                      {prorationData.requiresCheckout ? (
+                        <>
+                          You'll be charged <span className="font-bold">{formatPrice(prorationData.prorationAmount)}</span> today.
+                          This prorated amount covers the difference between your plans for the remainder of your billing period.
+                        </>
+                      ) : prorationData.prorationAmount > 0 ? (
+                        <>
+                          A credit of <span className="font-bold">{formatPrice(prorationData.prorationAmount)}</span> will be
+                          applied to your next billing cycle.
+                        </>
+                      ) : (
+                        <>
+                          Your plan will be updated immediately with no additional charge.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Next Billing Info */}
+              {prorationData.currentPeriodEnd && (
+                <div className="text-sm text-gray-600 pt-2 border-t border-gray-200">
+                  <p>
+                    Changes take effect immediately. Next billing date:{" "}
+                    <span className="font-medium text-gray-900">
+                      {new Date(prorationData.currentPeriodEnd).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowProrationPreview(false);
+                  setPendingPlanChange(null);
+                  setProrationData(null);
+                }}
+                className="flex-1 py-3 px-4 bg-white border-2 border-gray-300 hover:bg-gray-50 text-gray-700 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmPlanChange}
+                disabled={loadingProration}
+                className={`flex-1 py-3 px-4 font-medium rounded-lg transition-colors text-white ${
+                  prorationData.requiresCheckout
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                } disabled:bg-gray-300 disabled:cursor-not-allowed`}
+              >
+                {loadingProration ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Processing...</span>
+                  </div>
+                ) : prorationData.requiresCheckout ? (
+                  'Proceed to Checkout'
+                ) : (
+                  'Confirm Change'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

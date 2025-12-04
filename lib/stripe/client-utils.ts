@@ -1,12 +1,41 @@
 "use client";
 
 import { loadStripe } from "@stripe/stripe-js";
-import type { PlanType, BillingCycle } from "@/types/database";
+import type { PlanType, BillingCycle, ProrationPreview } from "@/types/database";
 
 // Initialize Stripe (client-side)
 const stripePromise = loadStripe(
   process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!
 );
+
+/**
+ * Fetch proration preview for a plan change
+ * Shows user what they'll be charged or credited before confirming
+ */
+export async function fetchProrationPreview(
+  newPlanType: PlanType,
+  newBillingCycle: BillingCycle,
+  additionalLicenses: number = 0
+): Promise<ProrationPreview> {
+  const response = await fetch("/api/stripe/preview-proration", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      planType: newPlanType,
+      billingCycle: newBillingCycle,
+      additionalLicenses,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to preview changes");
+  }
+
+  return await response.json();
+}
 
 /**
  * Create a Stripe Checkout session and redirect the user
@@ -15,7 +44,8 @@ const stripePromise = loadStripe(
 export async function createCheckoutSession(
   planType: PlanType,
   billingCycle: BillingCycle,
-  additionalLicenses: number = 0
+  additionalLicenses: number = 0,
+  forceCheckout: boolean = false
 ) {
   const response = await fetch("/api/stripe/checkout", {
     method: "POST",
@@ -26,6 +56,7 @@ export async function createCheckoutSession(
       planType,
       billingCycle,
       additionalLicenses,
+      forceCheckout,
     }),
   });
 
