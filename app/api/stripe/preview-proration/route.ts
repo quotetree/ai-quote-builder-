@@ -110,7 +110,9 @@ export async function POST(request: NextRequest) {
       isUpgrade = true;
       scheduledForPeriodEnd = false;
       resetsBillingAnchor = true;
-      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today.`;
+      const nextRenewal = new Date();
+      nextRenewal.setFullYear(nextRenewal.getFullYear() + 1);
+      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
     }
     // Branch 2: Yearly → Monthly (always downgrade, schedule for period end)
     else if (currentCycle === "yearly" && newCycle === "monthly") {
@@ -118,7 +120,8 @@ export async function POST(request: NextRequest) {
       requiresCheckout = false;
       isUpgrade = false;
       scheduledForPeriodEnd = true;
-      billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
+      const changeDate = currentSubscription.current_period_end || "your next renewal date";
+      billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
     }
     // Branch 3: Monthly → Monthly
     else if (currentCycle === "monthly" && newCycle === "monthly") {
@@ -129,46 +132,60 @@ export async function POST(request: NextRequest) {
         isUpgrade = true;
         scheduledForPeriodEnd = false;
         resetsBillingAnchor = true;
-        billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for the new monthly rate today. Your billing date will reset to today.`;
+        const nextRenewal = new Date();
+        nextRenewal.setMonth(nextRenewal.getMonth() + 1);
+        billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for the new monthly rate today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
       } else {
         // Monthly downgrade
         prorationAmount = 0;
         requiresCheckout = false;
         isUpgrade = false;
         scheduledForPeriodEnd = true;
-        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
+        const changeDate = currentSubscription.current_period_end || "your next renewal date";
+        billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
       }
     }
     // Branch 4: Yearly → Yearly
     else if (currentCycle === "yearly" && newCycle === "yearly") {
       if (newPricePerPeriod > currentPricePerPeriod) {
         // Yearly upgrade - calculate prorated difference
-        const currentPeriodStart = new Date(currentSubscription.current_period_start!);
-        const currentPeriodEnd = new Date(currentSubscription.current_period_end!);
-        const now = new Date();
+        const priceDiff = newTotalCharge - currentTotalCharge;
         
-        // Validate dates
-        if (isNaN(currentPeriodStart.getTime()) || isNaN(currentPeriodEnd.getTime())) {
-          // Fallback: charge full difference if dates are invalid
-          prorationAmount = newTotalCharge - currentTotalCharge;
-          requiresCheckout = true;
-          isUpgrade = true;
-          scheduledForPeriodEnd = false;
-          resetsBillingAnchor = false;
-          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today. Your renewal date stays the same.`;
+        // Check if we have valid period dates
+        if (currentSubscription.current_period_start && currentSubscription.current_period_end) {
+          const currentPeriodStart = new Date(currentSubscription.current_period_start);
+          const currentPeriodEnd = new Date(currentSubscription.current_period_end);
+          const now = new Date();
+          
+          // Validate dates
+          if (!isNaN(currentPeriodStart.getTime()) && !isNaN(currentPeriodEnd.getTime())) {
+            const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
+            const remainingDays = Math.max(1, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+            const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 1;
+            
+            prorationAmount = Math.max(0, Math.round(priceDiff * remainingFraction));
+            requiresCheckout = true;
+            isUpgrade = true;
+            scheduledForPeriodEnd = false;
+            resetsBillingAnchor = false;
+            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining). Your renewal date stays ${formatDate(currentSubscription.current_period_end)}.`;
+          } else {
+            // Invalid dates - charge full difference
+            prorationAmount = priceDiff;
+            requiresCheckout = true;
+            isUpgrade = true;
+            scheduledForPeriodEnd = false;
+            resetsBillingAnchor = false;
+            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for the upgrade.`;
+          }
         } else {
-          const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
-          const remainingDays = Math.max(0, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-          const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 0;
-          
-          const priceDiff = newTotalCharge - currentTotalCharge;
-          prorationAmount = Math.max(0, Math.round(priceDiff * remainingFraction));
-          
+          // No period dates - charge full difference
+          prorationAmount = priceDiff;
           requiresCheckout = true;
           isUpgrade = true;
           scheduledForPeriodEnd = false;
           resetsBillingAnchor = false;
-          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining in your billing period). Your renewal date stays the same.`;
+          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for the upgrade.`;
         }
       } else {
         // Yearly downgrade
@@ -176,7 +193,8 @@ export async function POST(request: NextRequest) {
         requiresCheckout = false;
         isUpgrade = false;
         scheduledForPeriodEnd = true;
-        billingMessage = `Your plan will change on ${formatDate(currentSubscription.current_period_end)}.`;
+        const changeDate = currentSubscription.current_period_end || "your next renewal date";
+        billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
       }
     }
 
@@ -206,8 +224,9 @@ function formatCurrency(cents: number): string {
 }
 
 function formatDate(dateString: string | null): string {
-  if (!dateString) return "your next renewal";
+  if (!dateString || dateString === "your next renewal date") return "your next renewal date";
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "your next renewal date";
   return date.toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
