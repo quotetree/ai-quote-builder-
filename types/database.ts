@@ -62,6 +62,13 @@ export interface Subscription {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   stripe_price_id: string | null;
+  pending_plan_change: {
+    plan_type: PlanType;
+    billing_cycle: BillingCycle;
+    additional_licenses: number;
+    scheduled_for: string; // ISO date when change will occur
+    created_at: string;
+  } | null;
   created_at: string;
   updated_at: string;
 }
@@ -96,13 +103,16 @@ export interface UserOrganizationContext {
 
 // Proration preview for plan changes
 export interface ProrationPreview {
-  prorationAmount: number; // in cents (positive for charge, negative for credit)
+  prorationAmount: number; // in cents (positive for charge, 0 for downgrades)
   isUpgrade: boolean;
   requiresCheckout: boolean; // true if needs to go through Stripe Checkout
+  scheduledForPeriodEnd?: boolean; // true for downgrades (takes effect at period end)
   effectiveDate: string;
   currentPlanDescription: string;
   newPlanDescription: string;
   currentPeriodEnd?: string | null;
+  futureSavings?: number; // monthly savings in cents for downgrades
+  nextBillingDate?: string | null; // when downgrade takes effect
 }
 
 // Member with user profile information

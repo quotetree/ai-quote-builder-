@@ -126,17 +126,35 @@ export async function POST(request: NextRequest) {
       // Determine effective date
       const effectiveDate = new Date().toISOString();
 
-      // Determine if we need to go through checkout (for upgrades requiring payment)
+      // For downgrades: no checkout, no proration charge, scheduled for period end
+      // For upgrades: checkout with immediate charge
+      const scheduledForPeriodEnd = !isUpgrade;
       const requiresCheckout = isUpgrade && prorationAmount > 0;
 
+      // Calculate monthly savings for downgrades
+      const currentMonthlyCost = calculateMonthlyCost(
+        currentSubscription.plan_type,
+        currentSubscription.billing_cycle,
+        currentSubscription.additional_licenses
+      );
+      const newMonthlyCost = calculateMonthlyCost(
+        planType,
+        billingCycle,
+        additionalLicenses
+      );
+      const futureSavings = !isUpgrade ? currentMonthlyCost - newMonthlyCost : 0;
+
       return NextResponse.json({
-        prorationAmount,
+        prorationAmount: isUpgrade ? prorationAmount : 0, // No charge for downgrades
         isUpgrade,
         requiresCheckout,
+        scheduledForPeriodEnd,
         effectiveDate,
         currentPlanDescription,
         newPlanDescription,
         currentPeriodEnd: currentSubscription.current_period_end,
+        futureSavings,
+        nextBillingDate: currentSubscription.current_period_end,
       });
     } catch (invoiceError: any) {
       console.error("Failed to preview invoice:", invoiceError);
@@ -160,6 +178,21 @@ export async function POST(request: NextRequest) {
   }
 }
 
+function calculateMonthlyCost(
+  planType: PlanType,
+  billingCycle: BillingCycle,
+  additionalLicenses: number
+): number {
+  if (planType === "individual") {
+    return PLAN_PRICING.individual[billingCycle];
+  } else {
+    return (
+      PLAN_PRICING.organization[billingCycle].base +
+      additionalLicenses * PLAN_PRICING.organization[billingCycle].perAdditionalLicense
+    );
+  }
+}
+
 function determineIfUpgrade(
   currentPlan: PlanType,
   currentCycle: BillingCycle,
@@ -168,21 +201,40 @@ function determineIfUpgrade(
   newCycle: BillingCycle,
   newAdditionalLicenses: number
 ): boolean {
-  // Organization is higher tier than Individual
-  if (currentPlan === "individual" && newPlan === "organization") {
-    return true;
-  }
-  if (currentPlan === "organization" && newPlan === "individual") {
-    return false;
+  // Calculate total price per billing period for current plan
+  let currentTotalPrice = 0;
+  if (currentPlan === "individual") {
+    currentTotalPrice = PLAN_PRICING.individual[currentCycle];
+    if (currentCycle === "yearly") {
+      currentTotalPrice *= 12; // Convert to yearly total
+    }
+  } else {
+    const baseCost = PLAN_PRICING.organization[currentCycle].base;
+    const licenseCost = currentAdditionalLicenses * PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
+    currentTotalPrice = baseCost + licenseCost;
+    if (currentCycle === "yearly") {
+      currentTotalPrice *= 12; // Convert to yearly total
+    }
   }
 
-  // Same plan type - check licenses
-  if (newAdditionalLicenses > currentAdditionalLicenses) {
-    return true;
+  // Calculate total price per billing period for new plan
+  let newTotalPrice = 0;
+  if (newPlan === "individual") {
+    newTotalPrice = PLAN_PRICING.individual[newCycle];
+    if (newCycle === "yearly") {
+      newTotalPrice *= 12; // Convert to yearly total
+    }
+  } else {
+    const baseCost = PLAN_PRICING.organization[newCycle].base;
+    const licenseCost = newAdditionalLicenses * PLAN_PRICING.organization[newCycle].perAdditionalLicense;
+    newTotalPrice = baseCost + licenseCost;
+    if (newCycle === "yearly") {
+      newTotalPrice *= 12; // Convert to yearly total
+    }
   }
 
-  // Cycle changes are considered neutral (not upgrades)
-  return false;
+  // Upgrade if new price is higher than current price
+  return newTotalPrice > currentTotalPrice;
 }
 
 function formatPlanDescription(
@@ -210,31 +262,6 @@ function calculateFallbackProration(
   newBillingCycle: BillingCycle,
   newAdditionalLicenses: number
 ) {
-  // Calculate current plan cost
-  let currentMonthlyCost = 0;
-  if (currentSubscription.plan_type === "individual") {
-    currentMonthlyCost = PLAN_PRICING.individual[currentSubscription.billing_cycle];
-  } else {
-    currentMonthlyCost = 
-      PLAN_PRICING.organization[currentSubscription.billing_cycle].base +
-      currentSubscription.additional_licenses * 
-      PLAN_PRICING.organization[currentSubscription.billing_cycle].perAdditionalLicense;
-  }
-
-  // Calculate new plan cost
-  let newMonthlyCost = 0;
-  if (newPlanType === "individual") {
-    newMonthlyCost = PLAN_PRICING.individual[newBillingCycle];
-  } else {
-    newMonthlyCost = 
-      PLAN_PRICING.organization[newBillingCycle].base +
-      newAdditionalLicenses * 
-      PLAN_PRICING.organization[newBillingCycle].perAdditionalLicense;
-  }
-
-  // Simple proration estimate (actual Stripe calculation is more complex)
-  const priceDifference = newMonthlyCost - currentMonthlyCost;
-  
   const isUpgrade = determineIfUpgrade(
     currentSubscription.plan_type,
     currentSubscription.billing_cycle,
@@ -244,10 +271,28 @@ function calculateFallbackProration(
     newAdditionalLicenses
   );
 
+  // Calculate monthly costs
+  const currentMonthlyCost = calculateMonthlyCost(
+    currentSubscription.plan_type,
+    currentSubscription.billing_cycle,
+    currentSubscription.additional_licenses
+  );
+  
+  const newMonthlyCost = calculateMonthlyCost(
+    newPlanType,
+    newBillingCycle,
+    newAdditionalLicenses
+  );
+
+  const priceDifference = newMonthlyCost - currentMonthlyCost;
+  const futureSavings = !isUpgrade ? currentMonthlyCost - newMonthlyCost : 0;
+  const scheduledForPeriodEnd = !isUpgrade;
+
   return {
-    prorationAmount: Math.abs(priceDifference),
+    prorationAmount: isUpgrade && priceDifference > 0 ? Math.abs(priceDifference) : 0,
     isUpgrade,
     requiresCheckout: isUpgrade && priceDifference > 0,
+    scheduledForPeriodEnd,
     effectiveDate: new Date().toISOString(),
     currentPlanDescription: formatPlanDescription(
       currentSubscription.plan_type,
@@ -260,6 +305,8 @@ function calculateFallbackProration(
       newAdditionalLicenses
     ),
     currentPeriodEnd: currentSubscription.current_period_end,
+    futureSavings,
+    nextBillingDate: currentSubscription.current_period_end,
   };
 }
 
