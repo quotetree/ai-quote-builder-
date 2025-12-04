@@ -432,7 +432,10 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                           </h3>
                           {subscription.plan_type !== "free" && (
                             <p className="text-3xl font-bold text-gray-900 mt-2">
-                              {formatCurrency(subscription.base_price_cents)}
+                              {formatCurrency(
+                                subscription.base_price_cents + 
+                                (subscription.additional_licenses * subscription.additional_license_price_cents)
+                              )}
                               <span className="text-lg font-normal text-gray-600"> per month</span>
                             </p>
                           )}
@@ -489,7 +492,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       {/* Plan Details */}
                       {subscription.plan_type !== "free" && (
                         <div className="text-sm text-gray-600 space-y-1">
-                          <p>Billed {subscription.billing_cycle}</p>
+                          <p>Billed {subscription.billing_cycle === "monthly" ? "monthly" : "yearly"}</p>
                           <p>{subscription.total_licenses} user license{subscription.total_licenses !== 1 ? "s" : ""}</p>
                         </div>
                       )}
