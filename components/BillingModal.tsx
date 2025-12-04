@@ -228,58 +228,43 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     if (!pendingPlanChange || !prorationData) return;
 
     try {
-      const loadingToast = toast.loading("Processing...");
+      const loadingToast = toast.loading("Processing payment...");
+
+      // For all changes on existing subscriptions:
+      // - Upgrades: Stripe automatically charges card on file via subscription update API
+      // - Downgrades: Scheduled for period end, no charge
+      // NO CHECKOUT REDIRECT needed
+      const result = await createCheckoutSession(
+        pendingPlanChange.plan,
+        pendingPlanChange.cycle,
+        pendingPlanChange.licenses,
+        false // Never force checkout for existing subscriptions
+      );
       
-      // If requires checkout (upgrade with payment), force checkout flow
-      if (prorationData.requiresCheckout) {
-        await createCheckoutSession(
-          pendingPlanChange.plan,
-          pendingPlanChange.cycle,
-          pendingPlanChange.licenses,
-          true // Force checkout
-        );
-        toast.dismiss(loadingToast);
-      } else if (prorationData.scheduledForPeriodEnd) {
-        // Downgrade scheduled for period end
-        const result = await createCheckoutSession(
-          pendingPlanChange.plan,
-          pendingPlanChange.cycle,
-          pendingPlanChange.licenses,
-          false // Don't force checkout
-        );
-        
-        toast.dismiss(loadingToast);
-        
-        if (result?.scheduled) {
-          toast.success("Downgrade scheduled successfully!");
-          await loadSubscriptionData();
-          setViewMode("overview");
-          setShowProrationPreview(false);
-          setPendingPlanChange(null);
-          setProrationData(null);
-        }
-      } else {
-        // Instant update (shouldn't happen with current logic, but keep as fallback)
-        const result = await createCheckoutSession(
-          pendingPlanChange.plan,
-          pendingPlanChange.cycle,
-          pendingPlanChange.licenses,
-          false // Allow in-place update
-        );
-        
-        toast.dismiss(loadingToast);
-        
-        if (result?.updated) {
-          toast.success("Subscription updated successfully!");
-          await loadSubscriptionData();
-          setViewMode("overview");
-          setShowProrationPreview(false);
-          setPendingPlanChange(null);
-          setProrationData(null);
-        }
+      toast.dismiss(loadingToast);
+      
+      if (result?.scheduled) {
+        // Downgrade scheduled
+        toast.success("Downgrade scheduled successfully!");
+        await loadSubscriptionData();
+        setViewMode("overview");
+        setShowProrationPreview(false);
+        setPendingPlanChange(null);
+        setProrationData(null);
+      } else if (result?.updated) {
+        // Upgrade completed in-place
+        toast.success("Plan upgraded successfully! Payment processed.");
+        await loadSubscriptionData();
+        setViewMode("overview");
+        setShowProrationPreview(false);
+        setPendingPlanChange(null);
+        setProrationData(null);
+      } else if (result?.url) {
+        // Only happens for first-time purchases (no existing subscription)
+        window.location.href = result.url;
       }
     } catch (error: any) {
-      console.error("Upgrade error:", error);
+      console.error("Plan change error:", error);
       toast.error(error.message || "Failed to update plan");
     }
   };
