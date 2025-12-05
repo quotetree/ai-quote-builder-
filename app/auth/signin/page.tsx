@@ -94,6 +94,14 @@ function SignInForm() {
                 className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:border-green-500 focus:outline-none focus:ring-green-500"
                 placeholder="••••••••"
               />
+              <div className="mt-2 text-right">
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-sm text-green-600 hover:text-green-700 font-medium"
+                >
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             {error && (
