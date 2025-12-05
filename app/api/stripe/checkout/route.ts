@@ -345,11 +345,12 @@ export async function POST(request: NextRequest) {
         // If update fails, fall through to create new checkout session
       }
     }
-    // End of authenticated user block
+  }
+  // End of authenticated user block
 
-    // No active subscription OR unauthenticated user - create new checkout session
-    // Build line items based on plan type
-    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+  // No active subscription OR unauthenticated user - create new checkout session
+  // Build line items based on plan type
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
     if (planType === "individual") {
       const priceId =
