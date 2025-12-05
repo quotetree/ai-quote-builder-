@@ -90,11 +90,99 @@ async function handleCheckoutCompleted(
   session: Stripe.Checkout.Session,
   supabase: any
 ) {
-  const userId = session.metadata?.user_id;
-  const organizationId = session.metadata?.organization_id;
+  let userId = session.metadata?.user_id;
+  let organizationId = session.metadata?.organization_id;
   const planType = session.metadata?.plan_type as "individual" | "organization";
   const billingCycle = session.metadata?.billing_cycle as "monthly" | "yearly";
   const additionalLicenses = parseInt(session.metadata?.additional_licenses || "0");
+  const isLandingPagePurchase = session.metadata?.landing_page_purchase === 'true';
+
+  // Handle landing page purchase (no existing user)
+  if (isLandingPagePurchase && !userId && session.customer_email) {
+    console.log('Processing landing page purchase for:', session.customer_email);
+    
+    try {
+      // Check if user already exists
+      const { data: existingUsers } = await supabase.auth.admin.listUsers();
+      
+      const existingUser = existingUsers?.users?.find(
+        (u: any) => u.email === session.customer_email
+      );
+      
+      if (existingUser) {
+        console.log('User already exists, using existing account:', existingUser.id);
+        userId = existingUser.id;
+        
+        // Get user's organization
+        const { data: orgData } = await supabase.rpc(
+          "get_user_organization_membership",
+          { p_user_id: userId }
+        );
+        
+        if (!orgData || orgData.length === 0) {
+          throw new Error('Existing user has no organization');
+        }
+        
+        organizationId = orgData[0].organization_id;
+      } else {
+        // Create new user account
+        console.log('Creating new user account for:', session.customer_email);
+        
+        const { data: newUser, error: createUserError } = await supabase.auth.admin.createUser({
+          email: session.customer_email,
+          email_confirm: true,
+          user_metadata: {
+            full_name: session.customer_details?.name || '',
+          },
+        });
+        
+        if (createUserError || !newUser.user) {
+          throw new Error(`Failed to create user: ${createUserError?.message}`);
+        }
+        
+        userId = newUser.user.id;
+        console.log('User created:', userId);
+        
+        // Wait for trigger to create organization
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        const { data: orgData, error: orgError } = await supabase.rpc(
+          "get_user_organization_membership",
+          { p_user_id: userId }
+        );
+        
+        if (orgError || !orgData || orgData.length === 0) {
+          throw new Error('Failed to get user organization');
+        }
+        
+        organizationId = orgData[0].organization_id;
+        console.log('Organization found:', organizationId);
+        
+        // Send password setup email
+        try {
+          const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+            session.customer_email,
+            {
+              redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/reset-password`,
+            }
+          );
+          
+          if (resetError) {
+            console.error('Failed to send password setup email:', resetError);
+          } else {
+            console.log('Password setup email sent to:', session.customer_email);
+          }
+        } catch (emailError) {
+          console.error('Error sending password setup email:', emailError);
+        }
+      }
+      
+      console.log('Landing page purchase setup complete, proceeding to create subscription');
+    } catch (error: any) {
+      console.error('Failed to handle landing page purchase:', error);
+      throw new Error(`Landing page purchase failed: ${error.message}`);
+    }
+  }
 
   if (!userId || !organizationId) {
     console.error("Missing user_id or organization_id in session metadata");

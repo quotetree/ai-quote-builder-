@@ -15,25 +15,31 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createClient();
     
-    // Get the authenticated user
+    // Parse request body first
+    const body = await request.json();
+    const { planType, billingCycle, additionalLicenses = 0, forceCheckout = false, trialPeriodDays, customerEmail } = body as {
+      planType: PlanType;
+      billingCycle: BillingCycle;
+      additionalLicenses: number;
+      forceCheckout?: boolean;
+      trialPeriodDays?: number;
+      customerEmail?: string; // For unauthenticated landing page purchases
+    };
+
+    // Check authentication (optional for landing page purchases)
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser();
 
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const isAuthenticated = !!user;
 
-    // Parse request body
-    const body = await request.json();
-    const { planType, billingCycle, additionalLicenses = 0, forceCheckout = false, trialPeriodDays } = body as {
-      planType: PlanType;
-      billingCycle: BillingCycle;
-      additionalLicenses: number;
-      forceCheckout?: boolean; // If true, always create checkout session instead of updating in-place
-      trialPeriodDays?: number; // Optional trial period (e.g., 14 for 14-day trial)
-    };
+    // For unauthenticated users, we'll create a checkout session without linking to a user
+    // The webhook will handle user creation after successful payment
+    if (!isAuthenticated) {
+      // For landing page purchases, proceed without user
+      console.log('Creating unauthenticated checkout session for landing page purchase');
+    }
 
     if (!planType || !billingCycle) {
       return NextResponse.json(
@@ -50,63 +56,66 @@ export async function POST(request: NextRequest) {
     }
 
     // Get or create Stripe customer
-    let customerId: string;
+    let customerId: string | undefined;
+    let organizationId: string | undefined;
 
-    // Check if user already has a Stripe customer ID in the database
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("stripe_customer_id")
-      .eq("id", user.id)
-      .single();
-
-    if (profile?.stripe_customer_id) {
-      customerId = profile.stripe_customer_id;
-    } else {
-      // Create new Stripe customer
-      const customer = await stripe.customers.create({
-        email: user.email,
-        metadata: {
-          supabase_user_id: user.id,
-        },
-      });
-      customerId = customer.id;
-
-      // Save customer ID to profile
-      await supabase
+    if (isAuthenticated && user) {
+      // Authenticated user flow - get/create customer and org
+      // Check if user already has a Stripe customer ID in the database
+      const { data: profile } = await supabase
         .from("profiles")
-        .update({ stripe_customer_id: customerId })
-        .eq("id", user.id);
-    }
+        .select("stripe_customer_id")
+        .eq("id", user.id)
+        .single();
 
-    // Get organization ID for metadata
-    const { data: orgData } = await supabase.rpc(
-      "get_user_organization_membership",
-      { p_user_id: user.id }
-    );
+      if (profile?.stripe_customer_id) {
+        customerId = profile.stripe_customer_id;
+      } else {
+        // Create new Stripe customer
+        const customer = await stripe.customers.create({
+          email: user.email,
+          metadata: {
+            supabase_user_id: user.id,
+          },
+        });
+        customerId = customer.id;
 
-    const organizationId = orgData?.[0]?.organization_id;
+        // Save customer ID to profile
+        await supabase
+          .from("profiles")
+          .update({ stripe_customer_id: customerId })
+          .eq("id", user.id);
+      }
 
-    if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
+      // Get organization ID for metadata
+      const { data: orgData } = await supabase.rpc(
+        "get_user_organization_membership",
+        { p_user_id: user.id }
       );
-    }
 
-    // Check if organization already has an active subscription
-    // Only look for active/trialing subscriptions, ordered by most recent
-    const { data: existingSubscription } = await supabase
-      .from("subscriptions")
-      .select("stripe_subscription_id, plan_type, billing_cycle, status")
-      .eq("organization_id", organizationId)
-      .in("status", ["active", "trialing"])
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
+      organizationId = orgData?.[0]?.organization_id;
 
-    // If active subscription exists AND forceCheckout is not true, check if upgrade or downgrade
-    // Upgrades: immediate with proration, Downgrades: scheduled for period end
-    if (existingSubscription?.stripe_subscription_id && !forceCheckout) {
+      if (!organizationId) {
+        return NextResponse.json(
+          { error: "Organization not found" },
+          { status: 404 }
+        );
+      }
+
+      // Check if organization already has an active subscription
+      // Only look for active/trialing subscriptions, ordered by most recent
+      const { data: existingSubscription } = await supabase
+        .from("subscriptions")
+        .select("stripe_subscription_id, plan_type, billing_cycle, status")
+        .eq("organization_id", organizationId)
+        .in("status", ["active", "trialing"])
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
+
+      // If active subscription exists AND forceCheckout is not true, check if upgrade or downgrade
+      // Upgrades: immediate with proration, Downgrades: scheduled for period end
+      if (existingSubscription?.stripe_subscription_id && !forceCheckout) {
       try {
         // Determine if this is an upgrade by comparing total prices
         const isUpgrade = determineIfUpgrade(
@@ -336,8 +345,9 @@ export async function POST(request: NextRequest) {
         // If update fails, fall through to create new checkout session
       }
     }
+    // End of authenticated user block
 
-    // No active subscription - create new checkout session
+    // No active subscription OR unauthenticated user - create new checkout session
     // Build line items based on plan type
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
@@ -379,15 +389,19 @@ export async function POST(request: NextRequest) {
 
     // Build success URL - hard-coded for now since env var isn't loading
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3003";
-    const successUrl = `${baseUrl}/dashboard?session_id={CHECKOUT_SESSION_ID}&plan=${planType}`;
-    const cancelUrl = `${baseUrl}/dashboard`;
+    
+    // Different success URLs for authenticated vs unauthenticated
+    const successUrl = isAuthenticated 
+      ? `${baseUrl}/dashboard?session_id={CHECKOUT_SESSION_ID}&plan=${planType}`
+      : `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = isAuthenticated ? `${baseUrl}/dashboard` : baseUrl;
 
     console.log("Creating Stripe Checkout with success_url:", successUrl);
     console.log("Base URL from env:", process.env.NEXT_PUBLIC_APP_URL);
+    console.log("Authenticated:", isAuthenticated);
 
     // Create Checkout Session
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
-      customer: customerId,
       mode: "subscription",
       line_items: lineItems,
       success_url: successUrl,
@@ -399,21 +413,31 @@ export async function POST(request: NextRequest) {
         terms_of_service: "none",
       },
       metadata: {
-        user_id: user.id,
-        organization_id: organizationId || "",
         plan_type: planType,
         billing_cycle: billingCycle,
         additional_licenses: additionalLicenses.toString(),
       },
       subscription_data: {
         metadata: {
-          user_id: user.id,
-          organization_id: organizationId || "",
           plan_type: planType,
           billing_cycle: billingCycle,
         },
       },
     };
+
+    // Add customer info based on authentication status
+    if (isAuthenticated && customerId) {
+      sessionParams.customer = customerId;
+      sessionParams.metadata!.user_id = user!.id;
+      sessionParams.metadata!.organization_id = organizationId || "";
+      sessionParams.subscription_data!.metadata!.user_id = user!.id;
+      sessionParams.subscription_data!.metadata!.organization_id = organizationId || "";
+    } else {
+      // For unauthenticated users, Stripe will collect email
+      sessionParams.customer_creation = 'always';
+      // Store flag to indicate this is a landing page purchase
+      sessionParams.metadata!.landing_page_purchase = 'true';
+    }
 
     // Add trial period if specified (e.g., 14-day trial)
     if (trialPeriodDays && trialPeriodDays > 0) {

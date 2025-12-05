@@ -200,13 +200,43 @@ export default function LandingPageClient() {
   const [isYearly, setIsYearly] = useState(false); // Default to monthly
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
 
   const billingCycle = isYearly ? "yearly" : "monthly";
   const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
 
-  // For landing page, redirect to signup - users must create account first
-  const handleSignup = () => {
-    window.location.href = '/auth/signup';
+  // Handle checkout for landing page users (unauthenticated)
+  const handleCheckout = async (
+    planType: 'individual' | 'organization',
+    trialDays?: number
+  ) => {
+    setIsCheckoutLoading(true);
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planType,
+          billingCycle: isYearly ? 'yearly' : 'monthly',
+          additionalLicenses: planType === 'organization' ? additionalLicenses : 0,
+          trialPeriodDays: trialDays,
+        }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create checkout');
+      }
+      
+      const { url } = await response.json();
+      if (url) {
+        window.location.href = url;
+      }
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      alert(error.message || 'Failed to start checkout. Please try again.');
+      setIsCheckoutLoading(false);
+    }
   };
 
   return (
@@ -488,10 +518,11 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={handleSignup}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md"
+                onClick={() => handleCheckout('individual', 14)}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Start 14-Day Trial
+                {isCheckoutLoading ? 'Loading...' : 'Start 14-Day Trial'}
               </button>
 
               <ul className="space-y-3">
@@ -545,10 +576,11 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={handleSignup}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg"
+                onClick={() => handleCheckout('individual')}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Get Started
+                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
               </button>
 
               <ul className="space-y-3">
@@ -647,10 +679,11 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={handleSignup}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md"
+                onClick={() => handleCheckout('organization')}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Get Started
+                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
               </button>
 
               <ul className="space-y-3">
