@@ -1,4 +1,31 @@
--- Function to automatically create profile, organization, and trial subscription when user signs up
+-- Add organization_id to profiles table for easier queries
+-- This maintains backwards compatibility while making it easier to query user's organization
+
+DO $$ 
+BEGIN
+  -- Add organization_id column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'profiles' AND column_name = 'organization_id'
+  ) THEN
+    ALTER TABLE profiles ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+    
+    -- Populate organization_id for existing profiles
+    UPDATE profiles p
+    SET organization_id = (
+      SELECT om.organization_id 
+      FROM organization_memberships om 
+      WHERE om.user_id = p.id 
+      LIMIT 1
+    )
+    WHERE organization_id IS NULL;
+    
+    -- Add index for performance
+    CREATE INDEX idx_profiles_organization_id ON profiles(organization_id);
+  END IF;
+END $$;
+
+-- Update the handle_new_user trigger to also set organization_id in profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -80,10 +107,4 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Trigger to call the function when a new user is created
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
