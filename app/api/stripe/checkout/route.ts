@@ -93,11 +93,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if organization already has an active subscription
+    // Only look for active/trialing subscriptions, ordered by most recent
     const { data: existingSubscription } = await supabase
       .from("subscriptions")
-      .select("stripe_subscription_id, plan_type, billing_cycle")
+      .select("stripe_subscription_id, plan_type, billing_cycle, status")
       .eq("organization_id", organizationId)
-      .single();
+      .in("status", ["active", "trialing"])
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
 
     // If active subscription exists AND forceCheckout is not true, check if upgrade or downgrade
     // Upgrades: immediate with proration, Downgrades: scheduled for period end
@@ -114,10 +118,11 @@ export async function POST(request: NextRequest) {
         );
 
         // Get full subscription data for current_period_end
+        // Query for the specific subscription we're updating
         const { data: fullSubscription } = await supabase
           .from("subscriptions")
           .select("*")
-          .eq("organization_id", organizationId)
+          .eq("stripe_subscription_id", existingSubscription.stripe_subscription_id)
           .single();
 
         if (!fullSubscription) {
