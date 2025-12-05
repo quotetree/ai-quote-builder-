@@ -114,6 +114,42 @@ async function handleCheckoutCompleted(
 
   const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
 
+  // CRITICAL FIX: Check if organization already has a different active subscription
+  // If so, cancel the old one to prevent double-billing
+  const { data: existingSubscriptions, error: checkError } = await supabase
+    .from("subscriptions")
+    .select("stripe_subscription_id, status")
+    .eq("organization_id", organizationId)
+    .neq("stripe_subscription_id", subscriptionId)
+    .in("status", ["active", "trialing"]);
+
+  if (!checkError && existingSubscriptions && existingSubscriptions.length > 0) {
+    console.log(`Found ${existingSubscriptions.length} existing active subscription(s) for organization ${organizationId}`);
+    
+    // Cancel all old subscriptions in Stripe
+    for (const oldSub of existingSubscriptions) {
+      try {
+        console.log(`Canceling old Stripe subscription: ${oldSub.stripe_subscription_id}`);
+        await stripe.subscriptions.cancel(oldSub.stripe_subscription_id);
+        
+        // Update database to mark as canceled
+        await supabase
+          .from("subscriptions")
+          .update({
+            status: "canceled",
+            cancel_at_period_end: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("stripe_subscription_id", oldSub.stripe_subscription_id);
+        
+        console.log(`Successfully canceled old subscription: ${oldSub.stripe_subscription_id}`);
+      } catch (cancelError: any) {
+        console.error(`Failed to cancel old subscription ${oldSub.stripe_subscription_id}:`, cancelError);
+        // Continue anyway - we'll still create the new subscription
+      }
+    }
+  }
+
   // Calculate licenses
   const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
 

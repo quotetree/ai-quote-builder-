@@ -430,38 +430,29 @@ function determineIfUpgrade(
 ): boolean {
   if (!currentCycle) return true; // Free trial to paid is always upgrade
 
-  // Calculate total price per billing period for current plan
-  let currentTotalPrice = 0;
+  // Calculate MONTHLY price for current plan (all prices in PLAN_PRICING are monthly)
+  let currentMonthlyPrice = 0;
   if (currentPlan === "individual") {
-    currentTotalPrice = PLAN_PRICING.individual[currentCycle];
-    if (currentCycle === "yearly") {
-      currentTotalPrice *= 12;
-    }
+    currentMonthlyPrice = PLAN_PRICING.individual[currentCycle];
   } else if (currentPlan === "organization") {
     const baseCost = PLAN_PRICING.organization[currentCycle].base;
     const licenseCost = currentAdditionalLicenses * PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
-    currentTotalPrice = baseCost + licenseCost;
-    if (currentCycle === "yearly") {
-      currentTotalPrice *= 12;
-    }
+    currentMonthlyPrice = baseCost + licenseCost;
   }
 
-  // Calculate total price per billing period for new plan
-  let newTotalPrice = 0;
+  // Calculate MONTHLY price for new plan (all prices in PLAN_PRICING are monthly)
+  let newMonthlyPrice = 0;
   if (newPlan === "individual") {
-    newTotalPrice = PLAN_PRICING.individual[newCycle];
-    if (newCycle === "yearly") {
-      newTotalPrice *= 12;
-    }
+    newMonthlyPrice = PLAN_PRICING.individual[newCycle];
   } else if (newPlan === "organization") {
     const baseCost = PLAN_PRICING.organization[newCycle].base;
     const licenseCost = newAdditionalLicenses * PLAN_PRICING.organization[newCycle].perAdditionalLicense;
-    newTotalPrice = baseCost + licenseCost;
-    if (newCycle === "yearly") {
-      newTotalPrice *= 12;
-    }
+    newMonthlyPrice = baseCost + licenseCost;
   }
 
-  return newTotalPrice > currentTotalPrice;
+  // Compare monthly prices - if new price is higher, it's an upgrade
+  // NOTE: All prices in PLAN_PRICING are already in MONTHLY amounts (even yearly plans)
+  // We don't multiply by 12 because we're comparing apples-to-apples monthly costs
+  return newMonthlyPrice > currentMonthlyPrice;
 }
 

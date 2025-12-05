@@ -76,11 +76,15 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       const context = contextData[0] as UserOrganizationContext;
       setOrgContext(context);
 
-      // Get full subscription details
+      // Get full subscription details - ORDER BY updated_at DESC to get the MOST RECENT subscription
+      // This fixes the issue where multiple subscriptions exist and we show the wrong one
       const { data: subData, error: subError } = await supabase
         .from("subscriptions")
         .select("*")
         .eq("organization_id", context.organization_id)
+        .in("status", ["active", "trialing", "past_due"]) // Only show active/relevant subscriptions
+        .order("updated_at", { ascending: false })
+        .limit(1)
         .single();
 
       if (subError) throw subError;
