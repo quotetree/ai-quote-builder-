@@ -98,15 +98,18 @@ async function handleCheckoutCompleted(
   const isLandingPagePurchase = session.metadata?.landing_page_purchase === 'true';
 
   // Handle landing page purchase (no existing user)
-  if (isLandingPagePurchase && !userId && session.customer_email) {
-    console.log('Processing landing page purchase for:', session.customer_email);
+  // Get customer email from either customer_email or customer_details.email
+  const customerEmail = session.customer_email || session.customer_details?.email;
+  
+  if (isLandingPagePurchase && !userId && customerEmail) {
+    console.log('Processing landing page purchase for:', customerEmail);
     
     try {
       // Check if user already exists
       const { data: existingUsers } = await supabase.auth.admin.listUsers();
       
       const existingUser = existingUsers?.users?.find(
-        (u: any) => u.email === session.customer_email
+        (u: any) => u.email === customerEmail
       );
       
       if (existingUser) {
@@ -126,10 +129,10 @@ async function handleCheckoutCompleted(
         organizationId = orgData[0].organization_id;
       } else {
         // Create new user account
-        console.log('Creating new user account for:', session.customer_email);
+        console.log('Creating new user account for:', customerEmail);
         
         const { data: newUser, error: createUserError } = await supabase.auth.admin.createUser({
-          email: session.customer_email,
+          email: customerEmail,
           email_confirm: true,
           user_metadata: {
             full_name: session.customer_details?.name || '',
@@ -161,7 +164,7 @@ async function handleCheckoutCompleted(
         // Send password setup email
         try {
           const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-            session.customer_email,
+            customerEmail,
             {
               redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/reset-password`,
             }
@@ -170,7 +173,7 @@ async function handleCheckoutCompleted(
           if (resetError) {
             console.error('Failed to send password setup email:', resetError);
           } else {
-            console.log('Password setup email sent to:', session.customer_email);
+            console.log('Password setup email sent to:', customerEmail);
           }
         } catch (emailError) {
           console.error('Error sending password setup email:', emailError);
