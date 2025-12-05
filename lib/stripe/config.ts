@@ -8,8 +8,8 @@ export const STRIPE_PRICE_IDS = {
   },
   organization: {
     base: {
-      monthly: process.env.STRIPE_PRICE_ORG_BASE_MONTHLY || "price_1SXAFhRiMM33f0noHER0kGb3", // $158/month (2 licenses)
-      yearly: process.env.STRIPE_PRICE_ORG_BASE_YEARLY || "price_1SXAEoRiMM33f0noEdOz3isR", // $130/month billed yearly (2 licenses)
+      monthly: process.env.STRIPE_PRICE_ORG_BASE_MONTHLY || "price_1Sale4RiMM33f0no5vlKWsly", // $158/month (2 licenses) - TEST MODE
+      yearly: process.env.STRIPE_PRICE_ORG_BASE_YEARLY || "price_1SaldJRiMM33f0no1uvw4pNQ", // $130/month billed yearly (2 licenses) - TEST MODE
     },
     additionalLicense: {
       monthly: process.env.STRIPE_PRICE_LICENSE_MONTHLY || "price_1SXAh6RiMM33f0nolptn9oFm", // $79/month per license
