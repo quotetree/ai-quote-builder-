@@ -430,6 +430,19 @@ function determineIfUpgrade(
 ): boolean {
   if (!currentCycle) return true; // Free trial to paid is always upgrade
 
+  // RULE: Monthly → Yearly is ALWAYS an upgrade (immediate change with charge)
+  // This is because yearly plans represent a commitment and should take effect immediately
+  if (currentCycle === "monthly" && newCycle === "yearly") {
+    return true;
+  }
+
+  // RULE: Yearly → Monthly is ALWAYS a downgrade (scheduled for period end)
+  // Customer is switching from committed yearly to flexible monthly
+  if (currentCycle === "yearly" && newCycle === "monthly") {
+    return false;
+  }
+
+  // For same billing cycle (monthly→monthly or yearly→yearly), compare prices
   // Calculate MONTHLY price for current plan (all prices in PLAN_PRICING are monthly)
   let currentMonthlyPrice = 0;
   if (currentPlan === "individual") {
@@ -451,8 +464,6 @@ function determineIfUpgrade(
   }
 
   // Compare monthly prices - if new price is higher, it's an upgrade
-  // NOTE: All prices in PLAN_PRICING are already in MONTHLY amounts (even yearly plans)
-  // We don't multiply by 12 because we're comparing apples-to-apples monthly costs
   return newMonthlyPrice > currentMonthlyPrice;
 }
 
