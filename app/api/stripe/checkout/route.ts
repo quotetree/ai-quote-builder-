@@ -434,8 +434,8 @@ export async function POST(request: NextRequest) {
       sessionParams.subscription_data!.metadata!.user_id = user!.id;
       sessionParams.subscription_data!.metadata!.organization_id = organizationId || "";
     } else {
-      // For unauthenticated users, Stripe will collect email
-      sessionParams.customer_creation = 'always';
+      // For unauthenticated users, Stripe will collect email automatically
+      // No need for customer_creation in subscription mode - Stripe creates customer automatically
       // Store flag to indicate this is a landing page purchase
       sessionParams.metadata!.landing_page_purchase = 'true';
     }
