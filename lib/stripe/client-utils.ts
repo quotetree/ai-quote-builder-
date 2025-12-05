@@ -45,7 +45,8 @@ export async function createCheckoutSession(
   planType: PlanType,
   billingCycle: BillingCycle,
   additionalLicenses: number = 0,
-  forceCheckout: boolean = false
+  forceCheckout: boolean = false,
+  trialPeriodDays?: number
 ) {
   const response = await fetch("/api/stripe/checkout", {
     method: "POST",
@@ -57,6 +58,7 @@ export async function createCheckoutSession(
       billingCycle,
       additionalLicenses,
       forceCheckout,
+      trialPeriodDays,
     }),
   });
 

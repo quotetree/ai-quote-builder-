@@ -197,10 +197,43 @@ const faqs = [
 
 export default function LandingPageClient() {
   const [activeStep, setActiveStep] = useState(1);
-  const [isYearly, setIsYearly] = useState(true);
+  const [isYearly, setIsYearly] = useState(false); // Default to monthly
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+  const [additionalLicenses, setAdditionalLicenses] = useState(0);
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
 
+  const billingCycle = isYearly ? "yearly" : "monthly";
   const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
+
+  // Handle checkout for different plans
+  const handleCheckout = async (planType: 'individual' | 'organization', trialDays?: number) => {
+    setIsCheckoutLoading(true);
+    try {
+      const { createCheckoutSession } = await import("@/lib/stripe/client-utils");
+      
+      if (planType === 'organization') {
+        await createCheckoutSession(
+          'organization',
+          isYearly ? 'yearly' : 'monthly',
+          additionalLicenses,
+          true, // forceCheckout
+          trialDays
+        );
+      } else {
+        await createCheckoutSession(
+          'individual',
+          isYearly ? 'yearly' : 'monthly',
+          0,
+          true, // forceCheckout
+          trialDays
+        );
+      }
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      alert(error.message || 'Failed to start checkout');
+      setIsCheckoutLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">
@@ -464,88 +497,226 @@ export default function LandingPageClient() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {currentPlans.map((plan, index) => (
-              <div
-                key={index}
-                className={`relative rounded-2xl p-8 ${
-                  plan.highlighted
-                    ? "bg-green-600 text-white shadow-2xl scale-105 border-4 border-green-500"
-                    : "bg-white text-gray-900 shadow-lg border-2 border-gray-200"
-                }`}
-              >
-                {plan.highlighted && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-yellow-400 text-gray-900 px-4 py-1 rounded-full text-sm font-bold">
-                    MOST POPULAR
-                  </div>
-                )}
-
-                <div className="mb-6">
-                  <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
-                  <p
-                    className={`text-sm ${
-                      plan.highlighted ? "text-green-100" : "text-gray-600"
-                    }`}
-                  >
-                    {plan.description}
-                  </p>
-                </div>
-
-                <div className="mb-6">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-5xl font-bold">${plan.price}</span>
-                    <span
-                      className={`text-lg ${
-                        plan.highlighted ? "text-green-100" : "text-gray-600"
-                      }`}
-                    >
-                      /{plan.period}
-                    </span>
-                  </div>
-                  {(plan as any).savings && (
-                    <p className="text-sm text-green-100 mt-2 font-medium">{(plan as any).savings}</p>
-                  )}
-                  {(plan as any).yearlyTotal && (
-                    <p
-                      className={`text-sm mt-1 ${
-                        plan.highlighted ? "text-green-100" : "text-gray-600"
-                      }`}
-                    >
-                      Billed ${(plan as any).yearlyTotal} annually
-                    </p>
-                  )}
-                </div>
-
-                <Link
-                  href="/auth/signup"
-                  className={`block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all ${
-                    plan.highlighted
-                      ? "bg-white text-green-600 hover:bg-green-50 shadow-lg"
-                      : "bg-green-600 text-white hover:bg-green-700 shadow-md"
-                  }`}
-                >
-                  {plan.cta}
-                </Link>
-
-                <ul className="space-y-3">
-                  {plan.features.map((feature, i) => (
-                    <li key={i} className="flex items-start gap-3">
-                      <CheckCircle
-                        className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                          plan.highlighted ? "text-white" : "text-green-600"
-                        }`}
-                      />
-                      <span
-                        className={`text-sm ${
-                          plan.highlighted ? "text-green-50" : "text-gray-600"
-                        }`}
-                      >
-                        {feature}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+            {/* Free Trial Card */}
+            <div className="relative rounded-2xl p-8 bg-white text-gray-900 shadow-lg border-2 border-gray-200">
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold mb-2">Free Trial</h3>
+                <p className="text-sm text-gray-600">
+                  Perfect for trying out QuoteTree
+                </p>
               </div>
-            ))}
+
+              <div className="mb-6">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-bold">$0</span>
+                  <span className="text-lg text-gray-600">/forever</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleCheckout('individual', 14)}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isCheckoutLoading ? 'Loading...' : 'Start 14-Day Trial'}
+              </button>
+
+              <ul className="space-y-3">
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">3 quotes per month</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Basic AI chat assistant</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Standard product library</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">PDF quote generation</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Email support</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Single User Card */}
+            <div className="relative rounded-2xl p-8 bg-green-600 text-white shadow-2xl scale-105 border-4 border-green-500">
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-yellow-400 text-gray-900 px-4 py-1 rounded-full text-sm font-bold">
+                MOST POPULAR
+              </div>
+
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold mb-2">Single User</h3>
+                <p className="text-sm text-green-100">
+                  Ideal for independent contractors
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-bold">${isYearly ? '79' : '97'}</span>
+                  <span className="text-lg text-green-100">/month</span>
+                </div>
+                {isYearly && (
+                  <>
+                    <p className="text-sm text-green-100 mt-2 font-medium">Save $216/year</p>
+                    <p className="text-sm mt-1 text-green-100">Billed $948 annually</p>
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={() => handleCheckout('individual')}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
+              </button>
+
+              <ul className="space-y-3">
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Unlimited quotes</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Advanced AI chat assistant</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Full product library access</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Custom price book</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">PDF & Excel export</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Priority support</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Chat history preservation</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Custom markup presets</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Organization Card */}
+            <div className="relative rounded-2xl p-8 bg-white text-gray-900 shadow-lg border-2 border-gray-200">
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold mb-2">Organization</h3>
+                <p className="text-sm text-gray-600">
+                  Best for growing teams
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-bold">${isYearly ? '130' : '158'}</span>
+                  <span className="text-lg text-gray-600">/month</span>
+                </div>
+                {isYearly && (
+                  <>
+                    <p className="text-sm text-green-600 mt-2 font-medium">Save $336/year</p>
+                    <p className="text-sm mt-1 text-gray-600">
+                      Billed ${(130 + additionalLicenses * 65) * 12} annually
+                    </p>
+                  </>
+                )}
+                {!isYearly && additionalLicenses > 0 && (
+                  <p className="text-sm mt-1 text-gray-600">
+                    ${158 + additionalLicenses * 79}/month total
+                  </p>
+                )}
+                <p className="text-sm text-gray-500 mt-2">2 licenses included</p>
+                <p className="text-sm text-gray-500">${isYearly ? '65' : '79'}/mo per additional license</p>
+              </div>
+
+              {/* License Selector */}
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Additional Licenses
+                </label>
+                <div className="flex items-center justify-between gap-4">
+                  <button
+                    onClick={() => setAdditionalLicenses(Math.max(0, additionalLicenses - 1))}
+                    disabled={additionalLicenses === 0}
+                    className="w-10 h-10 rounded-lg bg-white border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    -
+                  </button>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-gray-900">{additionalLicenses}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Total: {2 + additionalLicenses} licenses
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setAdditionalLicenses(additionalLicenses + 1)}
+                    className="w-10 h-10 rounded-lg bg-white border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 flex items-center justify-center"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleCheckout('organization')}
+                disabled={isCheckoutLoading}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
+              </button>
+
+              <ul className="space-y-3">
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Everything in Single User</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Up to 2 team members</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Shared price book</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Team collaboration</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Centralized quote log</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Admin dashboard</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Bulk product import</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">API access</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>

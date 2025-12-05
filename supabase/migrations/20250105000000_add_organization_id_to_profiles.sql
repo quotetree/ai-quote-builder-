@@ -31,7 +31,7 @@ RETURNS TRIGGER AS $$
 DECLARE
   new_org_id UUID;
   trial_start TIMESTAMPTZ := NOW();
-  trial_end TIMESTAMPTZ := NOW() + INTERVAL '30 days';
+  trial_end TIMESTAMPTZ := NOW() + INTERVAL '14 days';
 BEGIN
   -- Create organization for the new user first
   INSERT INTO organizations (owner_id, name, created_at, updated_at)
@@ -72,7 +72,7 @@ BEGIN
     NOW()
   );
   
-  -- Create free trial subscription (30 days)
+  -- Create free trial subscription (14 days)
   INSERT INTO subscriptions (
     organization_id,
     plan_type,

@@ -27,11 +27,12 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { planType, billingCycle, additionalLicenses = 0, forceCheckout = false } = body as {
+    const { planType, billingCycle, additionalLicenses = 0, forceCheckout = false, trialPeriodDays } = body as {
       planType: PlanType;
       billingCycle: BillingCycle;
       additionalLicenses: number;
       forceCheckout?: boolean; // If true, always create checkout session instead of updating in-place
+      trialPeriodDays?: number; // Optional trial period (e.g., 14 for 14-day trial)
     };
 
     if (!planType || !billingCycle) {
@@ -385,7 +386,7 @@ export async function POST(request: NextRequest) {
     console.log("Base URL from env:", process.env.NEXT_PUBLIC_APP_URL);
 
     // Create Checkout Session
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
@@ -412,7 +413,14 @@ export async function POST(request: NextRequest) {
           billing_cycle: billingCycle,
         },
       },
-    });
+    };
+
+    // Add trial period if specified (e.g., 14-day trial)
+    if (trialPeriodDays && trialPeriodDays > 0) {
+      sessionParams.subscription_data!.trial_period_days = trialPeriodDays;
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return NextResponse.json({ sessionId: session.id, url: session.url });
   } catch (error: any) {
