@@ -200,39 +200,13 @@ export default function LandingPageClient() {
   const [isYearly, setIsYearly] = useState(false); // Default to monthly
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
-  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
 
   const billingCycle = isYearly ? "yearly" : "monthly";
   const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
 
-  // Handle checkout for different plans
-  const handleCheckout = async (planType: 'individual' | 'organization', trialDays?: number) => {
-    setIsCheckoutLoading(true);
-    try {
-      const { createCheckoutSession } = await import("@/lib/stripe/client-utils");
-      
-      if (planType === 'organization') {
-        await createCheckoutSession(
-          'organization',
-          isYearly ? 'yearly' : 'monthly',
-          additionalLicenses,
-          true, // forceCheckout
-          trialDays
-        );
-      } else {
-        await createCheckoutSession(
-          'individual',
-          isYearly ? 'yearly' : 'monthly',
-          0,
-          true, // forceCheckout
-          trialDays
-        );
-      }
-    } catch (error: any) {
-      console.error('Checkout error:', error);
-      alert(error.message || 'Failed to start checkout');
-      setIsCheckoutLoading(false);
-    }
+  // For landing page, redirect to signup - users must create account first
+  const handleSignup = () => {
+    window.location.href = '/auth/signup';
   };
 
   return (
@@ -514,11 +488,10 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={() => handleCheckout('individual', 14)}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSignup}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md"
               >
-                {isCheckoutLoading ? 'Loading...' : 'Start 14-Day Trial'}
+                Start 14-Day Trial
               </button>
 
               <ul className="space-y-3">
@@ -572,11 +545,10 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={() => handleCheckout('individual')}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSignup}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg"
               >
-                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
+                Get Started
               </button>
 
               <ul className="space-y-3">
@@ -675,11 +647,10 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={() => handleCheckout('organization')}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSignup}
+                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md"
               >
-                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
+                Get Started
               </button>
 
               <ul className="space-y-3">
