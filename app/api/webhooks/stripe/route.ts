@@ -140,7 +140,9 @@ async function handleCheckoutCompleted(
         });
         
         if (createUserError || !newUser.user) {
-          throw new Error(`Failed to create user: ${createUserError?.message}`);
+          console.error('Detailed createUser error:', JSON.stringify(createUserError, null, 2));
+          console.error('newUser data:', JSON.stringify(newUser, null, 2));
+          throw new Error(`Failed to create user: ${createUserError?.message || 'Unknown error'}`);
         }
         
         userId = newUser.user.id;
