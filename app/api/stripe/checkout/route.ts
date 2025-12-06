@@ -113,6 +113,96 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
 
+      // SPECIAL CASE: Trial user with payment method but no Stripe subscription yet
+      // This happens when users sign up via landing page and get a card on file, but haven't upgraded yet
+      if (existingSubscription && existingSubscription.status === "trialing" && !existingSubscription.stripe_subscription_id && customerId) {
+        console.log("Trial user with payment method - creating subscription directly");
+        
+        // Build line items for the new subscription
+        const lineItems: any[] = [];
+        if (planType === "individual") {
+          const priceId = billingCycle === "monthly"
+            ? STRIPE_PRICE_IDS.individual.monthly
+            : STRIPE_PRICE_IDS.individual.yearly;
+          lineItems.push({ price: priceId, quantity: 1 });
+        } else if (planType === "organization") {
+          const basePriceId = billingCycle === "monthly"
+            ? STRIPE_PRICE_IDS.organization.base.monthly
+            : STRIPE_PRICE_IDS.organization.base.yearly;
+          lineItems.push({ price: basePriceId, quantity: 1 });
+          
+          if (additionalLicenses > 0) {
+            const licensePriceId = billingCycle === "monthly"
+              ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
+              : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
+            lineItems.push({ price: licensePriceId, quantity: additionalLicenses });
+          }
+        }
+
+        // Create subscription in Stripe (charges card immediately, no trial)
+        const newSubscription = await stripe.subscriptions.create({
+          customer: customerId,
+          items: lineItems,
+          metadata: {
+            user_id: user!.id,
+            organization_id: organizationId,
+            plan_type: planType,
+            billing_cycle: billingCycle,
+          },
+        });
+
+        // Calculate pricing
+        const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
+        let basePriceCents = 0;
+        if (planType === "individual") {
+          basePriceCents = PLAN_PRICING.individual[billingCycle];
+        } else {
+          basePriceCents = PLAN_PRICING.organization[billingCycle].base;
+        }
+        const additionalLicensePriceCents = planType === "organization"
+          ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
+          : 0;
+
+        // Cast newSubscription to any to access properties
+        const sub = newSubscription as any;
+
+        // Update database subscription
+        const { data: dbUpdate, error: dbError } = await supabase
+          .from("subscriptions")
+          .update({
+            stripe_subscription_id: newSubscription.id,
+            stripe_customer_id: customerId,
+            plan_type: planType,
+            billing_cycle: billingCycle,
+            status: "active",
+            base_licenses: baseLicenses,
+            additional_licenses: additionalLicenses,
+            base_price_cents: basePriceCents,
+            additional_license_price_cents: additionalLicensePriceCents,
+            current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
+            current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+            trial_start_date: null,
+            trial_end_date: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("organization_id", organizationId)
+          .select()
+          .single();
+
+        if (dbError) {
+          console.error("Database update error:", dbError);
+        }
+
+        console.log("Trial upgraded to paid subscription:", newSubscription.id);
+
+        return NextResponse.json({
+          updated: true,
+          subscriptionId: newSubscription.id,
+          message: "Subscription activated successfully",
+          subscription: dbUpdate
+        });
+      }
+
       // If active subscription exists AND forceCheckout is not true, check if upgrade or downgrade
       // Upgrades: immediate with proration, Downgrades: scheduled for period end
       if (existingSubscription?.stripe_subscription_id && !forceCheckout) {
@@ -270,6 +360,12 @@ export async function POST(request: NextRequest) {
           },
         };
 
+        // If subscription is in trial, end the trial immediately
+        if (stripeSubscription.status === "trialing") {
+          updateParams.trial_end = "now";
+          console.log("Ending trial immediately to allow billing cycle reset");
+        }
+
         // Add billing_cycle_anchor if we're resetting it
         if (billingCycleAnchor === "now") {
           updateParams.billing_cycle_anchor = "now";
@@ -342,7 +438,9 @@ export async function POST(request: NextRequest) {
       } catch (updateError: any) {
         console.error("Failed to update subscription:", updateError);
         console.error("Update error details:", updateError.message);
+        console.error("Full error object:", JSON.stringify(updateError, null, 2));
         // If update fails, fall through to create new checkout session
+        console.log("Falling through to create new checkout session due to update error");
       }
     }
   }

@@ -211,19 +211,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       return;
     }
 
-    // Check if this is a free trial - go straight to checkout
-    if (subscription?.status === "trialing") {
-      try {
-        toast.loading("Redirecting to checkout...", { id: "checkoutToast" });
-        await createCheckoutSession(plan, cycle, additionalLicenses, true);
-      } catch (error: any) {
-        console.error("Upgrade error:", error);
-        toast.error(error.message || "Failed to create checkout session", { id: "checkoutToast" });
-      }
-      return;
-    }
-
-    // For existing subscriptions, show proration preview first
+    // For all subscriptions (including trials), show proration preview first
     try {
       setLoadingProration(true);
       const preview = await fetchProrationPreview(plan, cycle, additionalLicenses);
