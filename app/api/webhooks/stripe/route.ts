@@ -209,6 +209,24 @@ async function handleCheckoutCompleted(
 
   const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId) as any;
 
+  // Save stripe_customer_id to the user's profile
+  const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
+  if (customerId && userId) {
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({
+        stripe_customer_id: customerId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+
+    if (profileError) {
+      console.error("Failed to save stripe_customer_id to profile:", profileError);
+    } else {
+      console.log(`Saved stripe_customer_id ${customerId} to profile ${userId}`);
+    }
+  }
+
   // CRITICAL FIX: Check if organization already has a different active subscription
   // If so, cancel the old one to prevent double-billing
   const { data: existingSubscriptions, error: checkError } = await supabase
@@ -261,6 +279,7 @@ async function handleCheckoutCompleted(
     .from("subscriptions")
     .update({
       stripe_subscription_id: subscriptionId,
+      stripe_customer_id: customerId,
       plan_type: planType,
       billing_cycle: billingCycle,
       status: "active",

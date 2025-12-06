@@ -120,7 +120,7 @@ export function getPlanDisplayName(planType: PlanType): string {
 export function getPlanDescription(planType: PlanType): string {
   switch (planType) {
     case "free":
-      return "30-day trial with full access to all features";
+      return "14-day trial with full access to all features";
     case "individual":
       return "For solo professionals";
     case "organization":

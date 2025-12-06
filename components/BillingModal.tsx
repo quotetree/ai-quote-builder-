@@ -36,6 +36,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   const [planTab, setPlanTab] = useState<PlanTab>("individual");
   const [manageDropdownOpen, setManageDropdownOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   
   // Billing data state
   const [paymentMethods, setPaymentMethods] = useState<StripePaymentMethod[]>([]);
@@ -95,8 +96,18 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       setSelectedCycle(subData.billing_cycle || "yearly");
       setAdditionalLicenses(subData.additional_licenses);
 
-      // Fetch billing data if user has an active Stripe subscription
-      if (subData.stripe_subscription_id) {
+      // Fetch billing data if user has a Stripe customer (includes trial users with payment methods)
+      // Get stripe_customer_id from profile
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("stripe_customer_id")
+        .eq("id", user.id)
+        .single();
+
+      const customerIdFromProfile = profileData?.stripe_customer_id;
+      setStripeCustomerId(customerIdFromProfile || null);
+
+      if (customerIdFromProfile || subData.stripe_subscription_id) {
         try {
           // Fetch payment methods and invoices in parallel
           const [paymentMethodsData, invoicesData] = await Promise.all([
@@ -488,7 +499,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                           <p className="text-sm text-blue-800">
                             <span className="font-medium">Free Trial Active</span> — You have{" "}
-                            <strong>{daysRemaining} days</strong> remaining in your 30-day free trial
+                            <strong>{daysRemaining} days</strong> remaining in your 14-day free trial
                           </p>
                         </div>
                       )}
@@ -539,13 +550,13 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       <>
                         <button
                           onClick={handleManagePayment}
-                          disabled={!isOwner || !subscription?.stripe_subscription_id}
+                          disabled={!isOwner || (!subscription?.stripe_subscription_id && !stripeCustomerId)}
                           className="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <Plus size={20} />
                           <span>Add payment method</span>
                         </button>
-                        {!subscription?.stripe_subscription_id && (
+                        {!subscription?.stripe_subscription_id && !stripeCustomerId && (
                           <p className="text-xs text-gray-500 mt-2">
                             Subscribe to a plan to add payment methods
                           </p>
