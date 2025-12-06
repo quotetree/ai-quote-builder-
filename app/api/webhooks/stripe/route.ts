@@ -137,6 +137,8 @@ async function handleCheckoutCompleted(
           user_metadata: {
             full_name: session.customer_details?.name || '',
           },
+          // Generate a random password - user will set their own via password reset email
+          password: crypto.randomUUID() + crypto.randomUUID(),
         });
         
         if (createUserError || !newUser.user) {
