@@ -105,8 +105,75 @@ export async function POST(request: NextRequest) {
     let billingMessage = "";
     let resetsBillingAnchor = false;
 
+    // Check if this is a license quantity change ONLY (same plan type and billing cycle)
+    const isLicenseOnlyChange = (
+      currentPlan === newPlan &&
+      currentCycle === newCycle &&
+      currentPlan === "organization" &&
+      currentLicenses !== newLicenses
+    );
+
+    // Branch 0: License quantity change only - TRUE SAAS PRORATION
+    if (isLicenseOnlyChange) {
+      if (newLicenses > currentLicenses) {
+        // Adding licenses - prorate for remaining period
+        const licenseDiff = newLicenses - currentLicenses;
+        const pricePerLicensePerMonth = PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
+        const pricePerLicensePerCycle = currentCycle === "monthly" 
+          ? pricePerLicensePerMonth 
+          : pricePerLicensePerMonth * 12;
+        
+        // Calculate proration based on remaining days in current period
+        if (currentSubscription.current_period_start && currentSubscription.current_period_end) {
+          const currentPeriodStart = new Date(currentSubscription.current_period_start);
+          const currentPeriodEnd = new Date(currentSubscription.current_period_end);
+          const now = new Date();
+          
+          if (!isNaN(currentPeriodStart.getTime()) && !isNaN(currentPeriodEnd.getTime())) {
+            const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
+            const remainingDays = Math.max(1, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+            const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 1;
+            
+            // Prorated amount for the additional licenses
+            prorationAmount = Math.round((pricePerLicensePerCycle * licenseDiff) * remainingFraction);
+            requiresCheckout = true;
+            isUpgrade = true;
+            scheduledForPeriodEnd = false;
+            resetsBillingAnchor = false; // KEEP the billing anchor
+            
+            const nextRenewalAmount = formatCurrency(newTotalCharge / (currentCycle === "monthly" ? 1 : 12));
+            billingMessage = `You'll be charged a prorated amount of ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''} (${remainingDays} days remaining in current period). Next billing date remains ${formatDate(currentSubscription.current_period_end)} — renewal will be ${nextRenewalAmount}/month.`;
+          } else {
+            // Invalid dates - charge full period for new licenses
+            prorationAmount = pricePerLicensePerCycle * licenseDiff;
+            requiresCheckout = true;
+            isUpgrade = true;
+            scheduledForPeriodEnd = false;
+            resetsBillingAnchor = false;
+            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''}.`;
+          }
+        } else {
+          // No period dates - charge full period for new licenses
+          prorationAmount = pricePerLicensePerCycle * licenseDiff;
+          requiresCheckout = true;
+          isUpgrade = true;
+          scheduledForPeriodEnd = false;
+          resetsBillingAnchor = false;
+          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''}.`;
+        }
+      } else {
+        // Removing licenses - schedule for period end (downgrade)
+        const licenseDiff = currentLicenses - newLicenses;
+        prorationAmount = 0;
+        requiresCheckout = false;
+        isUpgrade = false;
+        scheduledForPeriodEnd = true;
+        const changeDate = currentSubscription.current_period_end || "your next renewal date";
+        billingMessage = `${licenseDiff} license${licenseDiff > 1 ? 's' : ''} will be removed on ${formatDate(changeDate)}.`;
+      }
+    }
     // Branch 1: Monthly → Yearly (always upgrade, charge full year)
-    if (currentCycle === "monthly" && newCycle === "yearly") {
+    else if (currentCycle === "monthly" && newCycle === "yearly") {
       prorationAmount = newTotalCharge;
       requiresCheckout = true;
       isUpgrade = true;
@@ -125,7 +192,7 @@ export async function POST(request: NextRequest) {
       const changeDate = currentSubscription.current_period_end || "your next renewal date";
       billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
     }
-    // Branch 3: Monthly → Monthly
+    // Branch 3: Monthly → Monthly (plan type change)
     else if (currentCycle === "monthly" && newCycle === "monthly") {
       if (newPricePerPeriod > currentPricePerPeriod) {
         // Monthly upgrade
@@ -147,7 +214,7 @@ export async function POST(request: NextRequest) {
         billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
       }
     }
-    // Branch 4: Yearly → Yearly
+    // Branch 4: Yearly → Yearly (plan type change or with license changes)
     else if (currentCycle === "yearly" && newCycle === "yearly") {
       if (newPricePerPeriod > currentPricePerPeriod) {
         // Yearly upgrade - calculate prorated difference

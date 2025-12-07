@@ -279,69 +279,129 @@ export async function POST(request: NextRequest) {
           { expand: ['items'] }
         ) as any;
 
+        // Check if this is a license-only change (same plan type, same cycle, just different quantity)
+        const currentAdditionalLicenses = fullSubscription?.additional_licenses || 0;
+        const isLicenseOnlyChange = (
+          existingSubscription.plan_type === planType &&
+          currentCycle === billingCycle &&
+          planType === "organization" &&
+          currentAdditionalLicenses !== additionalLicenses
+        );
+
         // Build items array: delete all old items, then add new ones
         const itemUpdates: any[] = [];
 
-        // Mark all existing items for deletion
-        stripeSubscription.items.data.forEach((item: any) => {
-          itemUpdates.push({
-            id: item.id,
-            deleted: true,
-          });
-        });
+        if (isLicenseOnlyChange) {
+          // LICENSE-ONLY CHANGE: Update quantity on existing license line item
+          console.log(`License-only change detected: ${currentAdditionalLicenses} → ${additionalLicenses} additional licenses`);
+          
+          // Find the license line item
+          const basePriceId = billingCycle === "monthly"
+            ? STRIPE_PRICE_IDS.organization.base.monthly
+            : STRIPE_PRICE_IDS.organization.base.yearly;
+          const licensePriceId = billingCycle === "monthly"
+            ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
+            : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
 
-        // Add new items based on plan type
-        if (planType === "individual") {
-          const priceId =
-            billingCycle === "monthly"
-              ? STRIPE_PRICE_IDS.individual.monthly
-              : STRIPE_PRICE_IDS.individual.yearly;
-
-          itemUpdates.push({
-            price: priceId,
-            quantity: 1,
-          });
-        } else if (planType === "organization") {
-          const basePriceId =
-            billingCycle === "monthly"
-              ? STRIPE_PRICE_IDS.organization.base.monthly
-              : STRIPE_PRICE_IDS.organization.base.yearly;
-
-          itemUpdates.push({
-            price: basePriceId,
-            quantity: 1,
+          stripeSubscription.items.data.forEach((item: any) => {
+            if (item.price.id === licensePriceId) {
+              // Update the license item quantity
+              itemUpdates.push({
+                id: item.id,
+                quantity: additionalLicenses,
+              });
+            }
+            // Keep base subscription item unchanged (don't add to updates)
           });
 
-          if (additionalLicenses > 0) {
-            const licensePriceId =
-              billingCycle === "monthly"
-                ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
-                : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
-
+          // If no existing license item but we're adding licenses, add a new one
+          const hasLicenseItem = stripeSubscription.items.data.some((item: any) => item.price.id === licensePriceId);
+          if (!hasLicenseItem && additionalLicenses > 0) {
             itemUpdates.push({
               price: licensePriceId,
               quantity: additionalLicenses,
             });
           }
+
+          // If reducing to 0 licenses, delete the license item
+          if (additionalLicenses === 0 && hasLicenseItem) {
+            const licenseItem = stripeSubscription.items.data.find((item: any) => item.price.id === licensePriceId);
+            if (licenseItem) {
+              itemUpdates.push({
+                id: licenseItem.id,
+                deleted: true,
+              });
+            }
+          }
+        } else {
+          // PLAN TYPE OR CYCLE CHANGE: Delete all old items and add new ones
+          // Mark all existing items for deletion
+          stripeSubscription.items.data.forEach((item: any) => {
+            itemUpdates.push({
+              id: item.id,
+              deleted: true,
+            });
+          });
+
+          // Add new items based on plan type
+          if (planType === "individual") {
+            const priceId =
+              billingCycle === "monthly"
+                ? STRIPE_PRICE_IDS.individual.monthly
+                : STRIPE_PRICE_IDS.individual.yearly;
+
+            itemUpdates.push({
+              price: priceId,
+              quantity: 1,
+            });
+          } else if (planType === "organization") {
+            const basePriceId =
+              billingCycle === "monthly"
+                ? STRIPE_PRICE_IDS.organization.base.monthly
+                : STRIPE_PRICE_IDS.organization.base.yearly;
+
+            itemUpdates.push({
+              price: basePriceId,
+              quantity: 1,
+            });
+
+            if (additionalLicenses > 0) {
+              const licensePriceId =
+                billingCycle === "monthly"
+                  ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
+                  : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
+
+              itemUpdates.push({
+                price: licensePriceId,
+                quantity: additionalLicenses,
+              });
+            }
+          }
         }
 
         // Determine proration_behavior and billing_cycle_anchor based on scenario
-        let prorationBehavior: "none" | "always_invoice" = "always_invoice";
+        let prorationBehavior: "none" | "always_invoice" | "create_prorations" = "always_invoice";
         let billingCycleAnchor: "now" | "unchanged" | undefined = undefined;
 
+        // License-only changes: Always prorate, always keep billing anchor
+        if (isLicenseOnlyChange) {
+          prorationBehavior = "always_invoice";  // CHANGE: Force immediate invoice for prorated charges
+          billingCycleAnchor = "unchanged";
+          console.log("License-only change: Prorating seat difference, keeping billing anchor");
+        }
         // Monthly → Yearly: No proration, reset anchor
-        if (currentCycle === "monthly" && newCycle === "yearly") {
+        else if (currentCycle === "monthly" && newCycle === "yearly") {
           prorationBehavior = "none";
           billingCycleAnchor = "now";
           console.log("Monthly → Yearly: Charging full year, resetting billing anchor");
         }
-        // Monthly → Monthly (upgrade): No proration, reset anchor
+        // Monthly → Monthly (plan type change): No proration, reset anchor
         else if (currentCycle === "monthly" && newCycle === "monthly") {
           prorationBehavior = "none";
           billingCycleAnchor = "now";
           console.log("Monthly → Monthly upgrade: Charging full month, resetting billing anchor");
         }
-        // Yearly → Yearly (upgrade): Prorate, keep anchor
+        // Yearly → Yearly (plan type change): Prorate, keep anchor
         else if (currentCycle === "yearly" && newCycle === "yearly") {
           prorationBehavior = "always_invoice";
           billingCycleAnchor = "unchanged";
@@ -378,6 +438,36 @@ export async function POST(request: NextRequest) {
 
         console.log("Successfully updated Stripe subscription:", updatedSubscription.id);
         console.log("New plan:", planType, "New cycle:", billingCycle);
+
+        // For license-only changes with immediate billing, finalize any pending invoices
+        if (isLicenseOnlyChange && prorationBehavior === "always_invoice") {
+          try {
+            // Retrieve the latest invoice to ensure it's paid
+            const invoices = await stripe.invoices.list({
+              subscription: updatedSubscription.id,
+              limit: 1,
+            });
+            
+            if (invoices.data.length > 0) {
+              const latestInvoice = invoices.data[0];
+              if (latestInvoice.status === 'draft') {
+                // Finalize and pay the draft invoice
+                await stripe.invoices.finalizeInvoice(latestInvoice.id);
+                await stripe.invoices.pay(latestInvoice.id);
+                console.log("Prorated invoice finalized and paid:", latestInvoice.id);
+              } else if (latestInvoice.status === 'open') {
+                // If open, just pay it
+                await stripe.invoices.pay(latestInvoice.id);
+                console.log("Prorated invoice paid:", latestInvoice.id);
+              } else {
+                console.log("Latest invoice status:", latestInvoice.status, "- No action needed");
+              }
+            }
+          } catch (invoiceError: any) {
+            console.error("Error finalizing prorated invoice:", invoiceError);
+            // Don't fail the whole operation - subscription is already updated
+          }
+        }
 
         // Calculate pricing for database update using PLAN_PRICING constant
         const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
