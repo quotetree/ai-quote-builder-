@@ -118,8 +118,10 @@ export async function POST(request: NextRequest) {
       if (newLicenses > currentLicenses) {
         // Adding licenses - prorate for remaining period
         const licenseDiff = newLicenses - currentLicenses;
-        const pricePerLicensePerMonth = PLAN_PRICING.organization[currentCycle].perAdditionalLicense;
-        const pricePerLicensePerCycle = currentCycle === "monthly" 
+        // TypeScript: currentCycle is guaranteed non-null here due to isLicenseOnlyChange check
+        const cycle = currentCycle as BillingCycle;
+        const pricePerLicensePerMonth = PLAN_PRICING.organization[cycle].perAdditionalLicense;
+        const pricePerLicensePerCycle = cycle === "monthly" 
           ? pricePerLicensePerMonth 
           : pricePerLicensePerMonth * 12;
         
