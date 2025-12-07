@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
 import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
+import { sendWelcomeEmail } from "@/lib/email/welcomeEmail";
 
 export async function POST(request: NextRequest) {
   // Runtime check for Stripe key
@@ -181,6 +182,16 @@ async function handleCheckoutCompleted(
           }
         } catch (emailError) {
           console.error('Error sending password setup email:', emailError);
+        }
+
+        // Send welcome email via Resend (in addition to password setup)
+        try {
+          const firstName = session.customer_details?.name?.split(' ')[0];
+          await sendWelcomeEmail(customerEmail, firstName);
+          console.log('Welcome email sent via Resend to:', customerEmail);
+        } catch (emailError) {
+          console.error('Failed to send welcome email:', emailError);
+          // Don't fail the whole checkout if email fails
         }
       }
       
