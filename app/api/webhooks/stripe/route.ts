@@ -171,7 +171,7 @@ async function handleCheckoutCompleted(
           const { error: resetError } = await supabase.auth.resetPasswordForEmail(
             customerEmail,
             {
-              redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/reset-password`,
+              redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/reset-password`,
             }
           );
           
