@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -11,8 +11,18 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [linkExpired, setLinkExpired] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+
+  useEffect(() => {
+    // Check if we got an expired error from the redirect
+    if (searchParams.get('error') === 'expired') {
+      setLinkExpired(true);
+      setError("Your password reset link has expired. Please request a new one below.");
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,16 +82,53 @@ export default function ResetPasswordPage() {
             <span className="text-2xl font-bold text-gray-900">QuoteTree</span>
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            {success ? "Password Updated!" : "Set Your Password"}
+            {success ? "Password Updated!" : linkExpired ? "Link Expired" : "Set Your Password"}
           </h1>
           <p className="text-gray-600">
             {success
               ? "Redirecting you to your dashboard..."
+              : linkExpired
+              ? "Your password reset link has expired"
               : "Create a secure password for your account"}
           </p>
         </div>
 
-        {success ? (
+        {linkExpired ? (
+          <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-200">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-orange-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+              <p className="text-gray-600 mb-6">
+                Password reset links expire for security reasons. Please request a new one.
+              </p>
+              <Link
+                href="/auth/forgot-password"
+                className="block w-full py-3 px-4 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-center"
+              >
+                Request New Reset Link
+              </Link>
+              <Link
+                href="/auth/signin"
+                className="block w-full mt-3 py-3 px-4 bg-white text-gray-700 border-2 border-gray-300 rounded-lg font-semibold hover:bg-gray-50 transition-colors text-center"
+              >
+                Back to Login
+              </Link>
+            </div>
+          </div>
+        ) : success ? (
           <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-200">
             <div className="text-center">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">

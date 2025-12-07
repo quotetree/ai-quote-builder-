@@ -215,17 +215,23 @@ export default function LandingPageClient() {
     console.log('=== Password Recovery Detection ===');
     console.log('Full URL:', fullUrl);
     console.log('Hash:', hash);
-    console.log('Contains access_token?', hash.includes('access_token='));
-    console.log('Contains type=recovery?', hash.includes('type=recovery'));
     
-    // Check if hash contains both access_token and type=recovery
+    // Check for successful recovery token
     if (hash && hash.includes('access_token=') && hash.includes('type=recovery')) {
       console.log('✅ Recovery token detected! Redirecting to reset-password page');
-      // Redirect to reset-password page, preserving the hash
       router.replace('/auth/reset-password' + hash);
-    } else {
-      console.log('❌ No recovery token detected, staying on homepage');
+      return;
     }
+    
+    // Check for error cases (expired token, invalid link, etc.)
+    if (hash && hash.includes('error=') && (hash.includes('otp_expired') || hash.includes('access_denied'))) {
+      console.log('❌ Password reset link expired or invalid');
+      // Redirect to a page that explains the error and offers to resend
+      router.replace('/auth/reset-password?error=expired');
+      return;
+    }
+    
+    console.log('ℹ️ No recovery token detected, staying on homepage');
   }, []); // Run once on mount
 
   const billingCycle = isYearly ? "yearly" : "monthly";
