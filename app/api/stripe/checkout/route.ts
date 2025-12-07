@@ -656,19 +656,6 @@ function determineIfUpgrade(
 ): boolean {
   if (!currentCycle) return true; // Free trial to paid is always upgrade
 
-  // RULE: Monthly → Yearly is ALWAYS an upgrade (immediate change with charge)
-  // This is because yearly plans represent a commitment and should take effect immediately
-  if (currentCycle === "monthly" && newCycle === "yearly") {
-    return true;
-  }
-
-  // RULE: Yearly → Monthly is ALWAYS a downgrade (scheduled for period end)
-  // Customer is switching from committed yearly to flexible monthly
-  if (currentCycle === "yearly" && newCycle === "monthly") {
-    return false;
-  }
-
-  // For same billing cycle (monthly→monthly or yearly→yearly), compare prices
   // Calculate MONTHLY price for current plan (all prices in PLAN_PRICING are monthly)
   let currentMonthlyPrice = 0;
   if (currentPlan === "individual") {
@@ -689,7 +676,25 @@ function determineIfUpgrade(
     newMonthlyPrice = baseCost + licenseCost;
   }
 
-  // Compare monthly prices - if new price is higher, it's an upgrade
-  return newMonthlyPrice > currentMonthlyPrice;
+  // PRIMARY RULE: Compare monthly prices - if new price is higher, it's an upgrade
+  // This handles cross-plan changes correctly (e.g., Individual Yearly → Organization Monthly)
+  if (newMonthlyPrice > currentMonthlyPrice) {
+    return true; // Upgrade: new plan costs more
+  } else if (newMonthlyPrice < currentMonthlyPrice) {
+    return false; // Downgrade: new plan costs less
+  }
+
+  // SECONDARY RULE: Same price, different cycles
+  // Monthly → Yearly at same price is an upgrade (commitment)
+  // Yearly → Monthly at same price is a downgrade (flexibility)
+  if (currentCycle === "monthly" && newCycle === "yearly") {
+    return true;
+  }
+  if (currentCycle === "yearly" && newCycle === "monthly") {
+    return false;
+  }
+
+  // Same price, same cycle = no change (shouldn't happen, but treat as upgrade to be safe)
+  return true;
 }
 
