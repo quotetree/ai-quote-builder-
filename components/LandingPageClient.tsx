@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Play, CheckCircle, ChevronDown, X } from "lucide-react";
 import Image from "next/image";
 
@@ -201,6 +202,22 @@ export default function LandingPageClient() {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  const router = useRouter();
+
+  // Hash detection for password recovery redirect
+  useEffect(() => {
+    // Only run in browser
+    if (typeof window === 'undefined') return;
+
+    const hash = window.location.hash;
+    
+    // Check if hash contains both access_token and type=recovery
+    if (hash && hash.includes('access_token=') && hash.includes('type=recovery')) {
+      console.log('Recovery token detected in URL hash, redirecting to reset-password page');
+      // Redirect to reset-password page, preserving the hash
+      router.replace('/auth/reset-password' + hash);
+    }
+  }, []); // Run once on mount
 
   const billingCycle = isYearly ? "yearly" : "monthly";
   const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
