@@ -2,9 +2,16 @@ import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams, origin, hash } = new URL(request.url);
   const code = searchParams.get("code");
+  const type = searchParams.get("type");
   const next = searchParams.get("next") ?? "/dashboard";
+
+  // Handle password recovery flow specifically
+  if (type === "recovery") {
+    // Password recovery should go to reset-password page
+    return NextResponse.redirect(`${origin}/auth/reset-password${hash}`);
+  }
 
   if (code) {
     const supabase = await createClient();
