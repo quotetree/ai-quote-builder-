@@ -12,6 +12,8 @@ function ResetPasswordForm() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [linkExpired, setLinkExpired] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [hasSession, setHasSession] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -21,8 +23,56 @@ function ResetPasswordForm() {
     if (searchParams.get('error') === 'expired') {
       setLinkExpired(true);
       setError("Your password reset link has expired. Please request a new one below.");
+      setSessionLoading(false);
+      return;
     }
-  }, [searchParams]);
+
+    // Check for hash token and wait for Supabase to establish session
+    const checkSession = async () => {
+      try {
+        // Give Supabase time to process the hash token
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          setError("Failed to establish authentication session. Please try the link again.");
+          setSessionLoading(false);
+          return;
+        }
+
+        if (session) {
+          console.log('Session established successfully');
+          setHasSession(true);
+          setSessionLoading(false);
+        } else {
+          // No session and no hash token means user navigated here directly
+          const hash = window.location.hash;
+          if (!hash || !hash.includes('access_token')) {
+            setError("No password reset session found. Please use the link from your email.");
+            setSessionLoading(false);
+          } else {
+            // Has token but session not ready yet, wait a bit more
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const { data: { session: retrySession } } = await supabase.auth.getSession();
+            if (retrySession) {
+              setHasSession(true);
+            } else {
+              setError("Authentication session expired or invalid. Please request a new password reset link.");
+            }
+            setSessionLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error('Error checking session:', err);
+        setError("An error occurred. Please try again.");
+        setSessionLoading(false);
+      }
+    };
+
+    checkSession();
+  }, [searchParams, supabase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,6 +85,13 @@ function ResetPasswordForm() {
 
     if (password.length < 6) {
       setError("Password must be at least 6 characters");
+      return;
+    }
+
+    // Double-check session before attempting update
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setError("Auth session missing! Please use the link from your email again.");
       return;
     }
 
@@ -93,7 +150,28 @@ function ResetPasswordForm() {
           </p>
         </div>
 
-        {linkExpired ? (
+        {sessionLoading ? (
+          <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-200">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-blue-600 animate-spin"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+              </div>
+              <p className="text-gray-600">Verifying your password reset link...</p>
+            </div>
+          </div>
+        ) : linkExpired || (error && !hasSession) ? (
           <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-200">
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -112,7 +190,7 @@ function ResetPasswordForm() {
                 </svg>
               </div>
               <p className="text-gray-600 mb-6">
-                Password reset links expire for security reasons. Please request a new one.
+                {error || "Password reset links expire for security reasons. Please request a new one."}
               </p>
               <Link
                 href="/auth/forgot-password"
