@@ -11,67 +11,83 @@ function ResetPasswordForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
-  const [linkExpired, setLinkExpired] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
 
   useEffect(() => {
-    // Check if we got an expired error from the redirect
-    if (searchParams.get('error') === 'expired') {
-      setLinkExpired(true);
-      setError("Your password reset link has expired. Please request a new one below.");
-      setSessionLoading(false);
-      return;
-    }
-
-    // Check for hash token and wait for Supabase to establish session
-    const checkSession = async () => {
-      try {
-        // Give Supabase time to process the hash token
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) {
-          console.error('Session error:', sessionError);
-          setError("Failed to establish authentication session. Please try the link again.");
-          setSessionLoading(false);
-          return;
-        }
-
-        if (session) {
-          console.log('Session established successfully');
-          setHasSession(true);
-          setSessionLoading(false);
-        } else {
-          // No session and no hash token means user navigated here directly
-          const hash = window.location.hash;
-          if (!hash || !hash.includes('access_token')) {
-            setError("No password reset session found. Please use the link from your email.");
-            setSessionLoading(false);
-          } else {
-            // Has token but session not ready yet, wait a bit more
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            const { data: { session: retrySession } } = await supabase.auth.getSession();
-            if (retrySession) {
-              setHasSession(true);
-            } else {
-              setError("Authentication session expired or invalid. Please request a new password reset link.");
-            }
-            setSessionLoading(false);
-          }
-        }
-      } catch (err) {
-        console.error('Error checking session:', err);
-        setError("An error occurred. Please try again.");
+    const establishSession = async () => {
+      // Check if we got an expired error from the redirect
+      if (searchParams.get('error') === 'expired') {
+        setSessionError("Your password reset link has expired. Please request a new one below.");
         setSessionLoading(false);
+        return;
       }
-    };
 
-    checkSession();
+      // Parse URL hash for tokens
+      const hash = window.location.hash;
+      const params = new URLSearchParams(hash.substring(1)); // Remove '#'
+      
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      const type = params.get('type');
+      
+      console.log('=== Password Reset Session Setup ===');
+      console.log('Hash params:', { 
+        accessToken: accessToken ? `${accessToken.substring(0, 20)}...` : null, 
+        refreshToken: !!refreshToken, 
+        type 
+      });
+      
+      // Check if this is a recovery flow with tokens
+      if (type === 'recovery' && accessToken && refreshToken) {
+        console.log('Setting session with tokens from URL hash...');
+        
+        try {
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          
+          console.log('setSession result:', { 
+            hasSession: !!data.session, 
+            hasUser: !!data.user,
+            error: error ? error.message : null 
+          });
+          
+          if (error) {
+            console.error('Failed to set session:', error);
+            setSessionError(error.message || 'Failed to establish session');
+            setSessionReady(false);
+          } else if (data.session) {
+            console.log('✅ Session established successfully');
+            setSessionReady(true);
+          } else {
+            console.error('No session returned from setSession');
+            setSessionError('Failed to establish authentication session');
+            setSessionReady(false);
+          }
+        } catch (err: any) {
+          console.error('Exception during setSession:', err);
+          setSessionError(err.message || 'An error occurred');
+          setSessionReady(false);
+        }
+      } else if (!accessToken || !refreshToken) {
+        // No tokens = user navigated directly or link is malformed
+        console.log('No tokens found in URL hash');
+        setSessionError('No password reset session found. Please use the link from your email.');
+      } else if (type !== 'recovery') {
+        console.log('Type is not recovery:', type);
+        setSessionError('Invalid password reset link');
+      }
+      
+      setSessionLoading(false);
+    };
+    
+    establishSession();
   }, [searchParams, supabase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -88,29 +104,32 @@ function ResetPasswordForm() {
       return;
     }
 
-    // Double-check session before attempting update
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setError("Auth session missing! Please use the link from your email again.");
+    // Only allow submit if session is ready
+    if (!sessionReady) {
+      setError("Auth session not ready. Please wait or use the link from your email again.");
       return;
     }
 
     setLoading(true);
 
     try {
+      console.log('Attempting to update password...');
       const { error: updateError } = await supabase.auth.updateUser({
         password: password,
       });
 
       if (updateError) {
+        console.error('Password update error:', updateError);
         setError(updateError.message);
       } else {
+        console.log('✅ Password updated successfully');
         setSuccess(true);
         setTimeout(() => {
           router.push("/dashboard");
         }, 2000);
       }
     } catch (err: any) {
+      console.error('Exception during password update:', err);
       setError(err.message || "An error occurred");
     } finally {
       setLoading(false);
@@ -139,13 +158,13 @@ function ResetPasswordForm() {
             <span className="text-2xl font-bold text-gray-900">QuoteTree</span>
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            {success ? "Password Updated!" : linkExpired ? "Link Expired" : "Set Your Password"}
+            {success ? "Password Updated!" : sessionError ? "Link Expired" : "Set Your Password"}
           </h1>
           <p className="text-gray-600">
             {success
               ? "Redirecting you to your dashboard..."
-              : linkExpired
-              ? "Your password reset link has expired"
+              : sessionError
+              ? "Your password reset link has expired or is invalid"
               : "Create a secure password for your account"}
           </p>
         </div>
@@ -168,10 +187,10 @@ function ResetPasswordForm() {
                   />
                 </svg>
               </div>
-              <p className="text-gray-600">Verifying your password reset link...</p>
+              <p className="text-gray-600">Validating your reset link...</p>
             </div>
           </div>
-        ) : linkExpired || (error && !hasSession) ? (
+        ) : sessionError ? (
           <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-200">
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -190,7 +209,7 @@ function ResetPasswordForm() {
                 </svg>
               </div>
               <p className="text-gray-600 mb-6">
-                {error || "Password reset links expire for security reasons. Please request a new one."}
+                {sessionError || "Password reset links expire for security reasons. Please request a new one."}
               </p>
               <Link
                 href="/auth/forgot-password"
