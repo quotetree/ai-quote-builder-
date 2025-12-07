@@ -210,12 +210,21 @@ export default function LandingPageClient() {
     if (typeof window === 'undefined') return;
 
     const hash = window.location.hash;
+    const fullUrl = window.location.href;
+    
+    console.log('=== Password Recovery Detection ===');
+    console.log('Full URL:', fullUrl);
+    console.log('Hash:', hash);
+    console.log('Contains access_token?', hash.includes('access_token='));
+    console.log('Contains type=recovery?', hash.includes('type=recovery'));
     
     // Check if hash contains both access_token and type=recovery
     if (hash && hash.includes('access_token=') && hash.includes('type=recovery')) {
-      console.log('Recovery token detected in URL hash, redirecting to reset-password page');
+      console.log('✅ Recovery token detected! Redirecting to reset-password page');
       // Redirect to reset-password page, preserving the hash
       router.replace('/auth/reset-password' + hash);
+    } else {
+      console.log('❌ No recovery token detected, staying on homepage');
     }
   }, []); // Run once on mount
 
