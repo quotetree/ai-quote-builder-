@@ -176,22 +176,43 @@ async function handleCheckoutCompleted(
           );
           
           if (resetError) {
-            console.error('Failed to send password setup email:', resetError);
+            console.error('❌ CRITICAL: Password setup email failed:', {
+              error: resetError,
+              errorMessage: resetError.message,
+              email: customerEmail,
+              appUrl: process.env.NEXT_PUBLIC_APP_URL,
+              redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/reset-password`,
+              timestamp: new Date().toISOString()
+            });
+            // Don't throw - let checkout complete, but flag the issue
           } else {
-            console.log('Password setup email sent to:', customerEmail);
+            console.log('✅ Password setup email sent successfully to:', customerEmail);
           }
-        } catch (emailError) {
-          console.error('Error sending password setup email:', emailError);
+        } catch (emailError: any) {
+          console.error('❌ CRITICAL: Password setup email exception:', {
+            error: emailError,
+            errorMessage: emailError?.message,
+            email: customerEmail,
+            appUrl: process.env.NEXT_PUBLIC_APP_URL,
+            timestamp: new Date().toISOString()
+          });
+          // Don't throw - let checkout complete, but flag the issue
         }
 
         // Send welcome email via Resend (in addition to password setup)
         try {
           const firstName = session.customer_details?.name?.split(' ')[0];
           await sendWelcomeEmail(customerEmail, firstName);
-          console.log('Welcome email sent via Resend to:', customerEmail);
-        } catch (emailError) {
-          console.error('Failed to send welcome email:', emailError);
-          // Don't fail the whole checkout if email fails
+          console.log('✅ Welcome email sent via Resend to:', customerEmail);
+        } catch (emailError: any) {
+          console.error('⚠️ Welcome email failed (non-critical):', {
+            error: emailError,
+            errorMessage: emailError?.message,
+            email: customerEmail,
+            resendApiKeySet: !!process.env.RESEND_API_KEY,
+            timestamp: new Date().toISOString()
+          });
+          // Don't fail the whole checkout if welcome email fails
         }
       }
       
