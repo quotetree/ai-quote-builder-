@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get quote with items
+    // Get quote with items (RLS will enforce org membership)
     const { data: quote, error: quoteError } = await supabase
       .from("quotes")
       .select(`
@@ -132,18 +132,25 @@ export async function POST(req: NextRequest) {
         project:projects(*)
       `)
       .eq("id", quoteId)
-      .eq("user_id", user.id)
       .single();
 
     if (quoteError || !quote) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
-    // Get user profile for company info
+    // Get organization to find owner for company branding
+    const { data: organization } = await supabase
+      .from("organizations")
+      .select("owner_id")
+      .eq("id", quote.organization_id)
+      .single();
+
+    // Get owner's profile for company info (logo, address, etc.)
+    const ownerId = organization?.owner_id || user.id;
     const { data: profile } = await supabase
       .from("profiles")
       .select("*")
-      .eq("id", user.id)
+      .eq("id", ownerId)
       .single();
 
     const logoAsset = profile?.company_logo_url

@@ -5,6 +5,7 @@ import Image from "next/image";
 import { X, Upload, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createClient } from "@/lib/supabase/client";
+import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
 interface PersonalizationModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ export default function PersonalizationModal({
   onUpdated,
 }: PersonalizationModalProps) {
   const supabase = useMemo(() => createClient(), []);
+  const { canViewPersonalization } = useOrganizationRole();
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const [companyName, setCompanyName] = useState("");
@@ -205,6 +207,42 @@ export default function PersonalizationModal({
 
   if (!isOpen) {
     return null;
+  }
+
+  // Check permission
+  if (!canViewPersonalization()) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Access Denied</h2>
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-6 py-8 text-center">
+            <p className="text-gray-600">
+              You don&apos;t have permission to access personalization settings.
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              Contact your organization owner or super admin for access.
+            </p>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -14,6 +14,7 @@ import {
   PLAN_PRICING
 } from "@/types/database";
 import { addLicenses } from "@/lib/stripe/client-utils";
+import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
 interface MembersModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ interface MembersModalProps {
 
 export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
   const supabase = createClient();
+  const { canViewMembers } = useOrganizationRole();
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [orgContext, setOrgContext] = useState<UserOrganizationContext | null>(null);
@@ -232,86 +234,53 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
     setInviting(true);
     let successCount = 0;
     let errorCount = 0;
+    const errors: string[] = [];
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
+      // Call the new API route for each email
       for (const email of finalEmailList) {
         try {
-          // Check if user already exists
-          const { data: existingUser } = await supabase
-            .from("profiles")
-            .select("id")
-            .eq("email", email)
-            .single();
+          const response = await fetch(`/api/organizations/${orgContext.organization_id}/invites`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              email,
+              role: inviteRole,
+            }),
+          });
 
-          if (existingUser) {
-            // Check if already a member
-            const { data: existingMember } = await supabase
-              .from("organization_memberships")
-              .select("id")
-              .eq("organization_id", orgContext.organization_id)
-              .eq("user_id", existingUser.id)
-              .single();
+          const data = await response.json();
 
-            if (existingMember) {
-              toast.error(`${email} is already a member`);
-              errorCount++;
-              continue;
-            }
-
-            // Add directly as member
-            const { error: memberError } = await supabase
-              .from("organization_memberships")
-              .insert({
-                organization_id: orgContext.organization_id,
-                user_id: existingUser.id,
-                role: inviteRole,
-                invited_by: user.id,
-                invited_at: new Date().toISOString(),
-                joined_at: new Date().toISOString(),
-              });
-
-            if (memberError) throw memberError;
-            successCount++;
+          if (!response.ok) {
+            // Handle specific error messages
+            errors.push(`${email}: ${data.error || "Failed to send invite"}`);
+            errorCount++;
           } else {
-            // Send email invitation
-            const token = crypto.randomUUID();
-            const expiresAt = new Date();
-            expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiration
-
-            const { error: inviteError } = await supabase
-              .from("organization_invitations")
-              .insert({
-                organization_id: orgContext.organization_id,
-                email: email,
-                role: inviteRole,
-                invited_by: user.id,
-                invitation_token: token,
-                status: "pending",
-                expires_at: expiresAt.toISOString(),
-              });
-
-            if (inviteError) throw inviteError;
             successCount++;
           }
         } catch (error: any) {
           console.error(`Failed to invite ${email}:`, error);
+          errors.push(`${email}: Network error`);
           errorCount++;
         }
       }
 
+      // Show success/error toasts
       if (successCount > 0) {
         toast.success(
-          `Successfully invited ${successCount} member${successCount !== 1 ? "s" : ""}!`,
-          { duration: 3000 }
+          `Successfully invited ${successCount} member${successCount !== 1 ? "s" : ""}! ${successCount === 1 ? "They" : "They"} will receive an email invitation.`,
+          { duration: 4000 }
         );
       }
+      
       if (errorCount > 0) {
-        toast.error(`Failed to invite ${errorCount} member${errorCount !== 1 ? "s" : ""}`);
+        // Show detailed errors
+        errors.forEach(err => toast.error(err, { duration: 5000 }));
       }
 
+      // Reset form and reload data
       setEmailPills([]);
       setCurrentEmailInput("");
       setInviteRole("admin");
@@ -520,6 +489,42 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
   if (!isOpen) return null;
 
+  // Check permission
+  if (!canViewMembers()) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Access Denied</h2>
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-6 py-8 text-center">
+            <p className="text-gray-600">
+              You don&apos;t have permission to access members management.
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              Contact your organization owner or super admin for access.
+            </p>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Main Members Modal */}
@@ -604,7 +609,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                 </div>
 
                 {/* Members Table */}
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="border border-gray-200 rounded-lg overflow-visible">
                   {/* Table Header */}
                   <div className="bg-gray-50 border-b border-gray-200 px-6 py-3">
                     <div className="grid grid-cols-12 gap-4">
@@ -685,7 +690,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                                     </button>
 
                                     {openMemberMenu === member.id && (
-                                      <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                                      <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                                         <button
                                           onClick={() => {
                                             handleRemoveMember(

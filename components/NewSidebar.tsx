@@ -9,9 +9,11 @@ import {
   BookOpen, 
   FolderPlus,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  Lock
 } from "lucide-react";
 import { useProjects } from "@/hooks/useProjects";
+import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 import { createClient } from "@/lib/supabase/client";
 import Image from "next/image";
 import PriceBookModal from "./PriceBookModal";
@@ -39,6 +41,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
     company_logo_url: string | null;
   } | null>(null);
   const { projects, loading, fetchProjects } = useProjects();
+  const { canViewBilling, canViewMembers, canViewPersonalization, canManageMembers, canManageBilling, canManagePersonalization } = useOrganizationRole();
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
@@ -333,32 +336,65 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
           <div className="py-2">
             <button
               onClick={() => {
-                setAccountMenuOpen(false);
-                setPersonalizationOpen(true);
+                if (canManagePersonalization()) {
+                  setAccountMenuOpen(false);
+                  setPersonalizationOpen(true);
+                }
               }}
-              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+              disabled={!canManagePersonalization()}
+              className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                canManagePersonalization()
+                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                  : "text-gray-400 cursor-not-allowed opacity-60"
+              }`}
+              title={!canManagePersonalization() ? "Owner or Super Admin access only" : ""}
             >
-              <span>Personalization</span>
+              <span className="flex items-center gap-2">
+                Personalization
+                {!canManagePersonalization() && <Lock size={14} className="text-gray-400" />}
+              </span>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
             <button
               onClick={() => {
-                setAccountMenuOpen(false);
-                setMembersOpen(true);
+                if (canManageMembers()) {
+                  setAccountMenuOpen(false);
+                  setMembersOpen(true);
+                }
               }}
-              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+              disabled={!canManageMembers()}
+              className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                canManageMembers()
+                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                  : "text-gray-400 cursor-not-allowed opacity-60"
+              }`}
+              title={!canManageMembers() ? "Owner or Super Admin access only" : ""}
             >
-              <span>Members</span>
+              <span className="flex items-center gap-2">
+                Members
+                {!canManageMembers() && <Lock size={14} className="text-gray-400" />}
+              </span>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
             <button
               onClick={() => {
-                setAccountMenuOpen(false);
-                setBillingOpen(true);
+                if (canManageBilling()) {
+                  setAccountMenuOpen(false);
+                  setBillingOpen(true);
+                }
               }}
-              className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+              disabled={!canManageBilling()}
+              className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                canManageBilling()
+                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                  : "text-gray-400 cursor-not-allowed opacity-60"
+              }`}
+              title={!canManageBilling() ? "Owner access only" : ""}
             >
-              <span>Billing</span>
+              <span className="flex items-center gap-2">
+                Billing
+                {!canManageBilling() && <Lock size={14} className="text-gray-400" />}
+              </span>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
           </div>

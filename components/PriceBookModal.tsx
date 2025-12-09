@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, Download } from "lucide-react";
+import { X, Search, Plus, Upload, Edit, Trash2, ChevronDown, Download, Lock } from "lucide-react";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductFamilies } from "@/hooks/useProductFamilies";
+import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 import { Product, ProductFamily } from "@/types/database";
 import { trackProductCreated, trackCsvUpload } from "@/lib/analytics";
 import toast from "react-hot-toast";
@@ -37,6 +38,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     updateProductFamily,
     deleteProductFamily,
   } = useProductFamilies();
+  const { canManagePriceBook } = useOrganizationRole();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -538,29 +540,39 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         {/* Action Bar */}
         {viewMode === "list" && (
           <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-gray-50">
-            <button
-              onClick={() => setViewMode("new-product")}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2 font-medium"
-            >
-              <Plus size={18} />
-              New Product
-            </button>
-            <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
-              <Upload size={18} />
-              Upload CSV
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleCsvFileSelect}
-                className="hidden"
-              />
-            </label>
-            <button
-              onClick={() => setShowFamilyManager(true)}
-              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
-            >
-              Manage Families
-            </button>
+            {!canManagePriceBook() && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                <Lock size={16} className="text-blue-600" />
+                <span className="text-sm text-blue-700 font-medium">Read-Only Access</span>
+              </div>
+            )}
+            {canManagePriceBook() && (
+              <>
+                <button
+                  onClick={() => setViewMode("new-product")}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2 font-medium"
+                >
+                  <Plus size={18} />
+                  New Product
+                </button>
+                <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
+                  <Upload size={18} />
+                  Upload CSV
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleCsvFileSelect}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  onClick={() => setShowFamilyManager(true)}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+                >
+                  Manage Families
+                </button>
+              </>
+            )}
             {selectedProductIds.length > 0 && (
               <div className="flex items-center gap-2">
                 <button
@@ -570,16 +582,18 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
                   <Download size={18} />
                   Export
                 </button>
-                <button
-                  onClick={handleDeleteSelected}
-                  disabled={bulkDeleteLoading}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  <Trash2 size={18} />
-                  {bulkDeleteLoading
-                    ? "Deleting..."
-                    : `Delete Selected (${selectedProductIds.length})`}
-                </button>
+                {canManagePriceBook() && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={bulkDeleteLoading}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-flex items-center gap-2 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={18} />
+                    {bulkDeleteLoading
+                      ? "Deleting..."
+                      : `Delete Selected (${selectedProductIds.length})`}
+                  </button>
+                )}
               </div>
             )}
             <div className="flex-1" />
@@ -735,6 +749,7 @@ function ProductsTable({
   onEdit,
   onDelete,
   productFamilies,
+  canManagePriceBook,
   selectedProductIds,
   onToggleProductSelection,
   onToggleSelectAll,
@@ -747,6 +762,7 @@ function ProductsTable({
   onEdit: (product: Product) => void;
   onDelete: (productId: string) => void;
   productFamilies: ProductFamily[];
+  canManagePriceBook: boolean;
   selectedProductIds: string[];
   onToggleProductSelection: (productId: string) => void;
   onToggleSelectAll: () => void;
@@ -882,26 +898,35 @@ function ProductsTable({
                       onClick={() => setExpandedRow(null)}
                     />
                     <div className="absolute right-0 bottom-full -mb-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
-                      <button
-                        onClick={() => {
-                          onEdit(product);
-                          setExpandedRow(null);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                      >
-                        <Edit size={16} />
-                        Edit Product
-                      </button>
-                      <button
-                        onClick={() => {
-                          onDelete(product.id);
-                          setExpandedRow(null);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                      >
-                        <Trash2 size={16} />
-                        Delete Product
-                      </button>
+                      {canManagePriceBook ? (
+                        <>
+                          <button
+                            onClick={() => {
+                              onEdit(product);
+                              setExpandedRow(null);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                          >
+                            <Edit size={16} />
+                            Edit Product
+                          </button>
+                          <button
+                            onClick={() => {
+                              onDelete(product.id);
+                              setExpandedRow(null);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                          >
+                            <Trash2 size={16} />
+                            Delete Product
+                          </button>
+                        </>
+                      ) : (
+                        <div className="px-4 py-3 text-sm text-gray-500 flex items-center gap-2">
+                          <Lock size={14} />
+                          <span>Read-only access</span>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
