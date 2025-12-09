@@ -614,7 +614,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
               products={filteredProducts}
               loading={loading}
               productFamilies={productFamilies}
-              canManagePriceBook={canManagePriceBook}
+              canManagePriceBook={canManagePriceBook()}
               onView={(product) => {
                 setViewingProduct(product);
                 setViewMode("product-detail");
