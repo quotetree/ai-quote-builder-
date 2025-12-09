@@ -37,12 +37,13 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Skip authentication check for webhook routes and auth routes
+  // Skip authentication check for webhook routes, auth routes, and checkout success
   if (
     !user &&
     !request.nextUrl.pathname.startsWith("/auth") &&
     !request.nextUrl.pathname.startsWith("/api/webhooks") &&
     !request.nextUrl.pathname.startsWith("/api/stripe/webhook") &&
+    !request.nextUrl.pathname.startsWith("/checkout/success") &&
     request.nextUrl.pathname !== "/"
   ) {
     // no user, potentially respond by redirecting the user to the login page
