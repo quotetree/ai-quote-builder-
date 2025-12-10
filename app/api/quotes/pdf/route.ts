@@ -165,16 +165,26 @@ export async function POST(req: NextRequest) {
     let leftColumnBottom = headerStartY;
 
     if (logoAsset) {
-      // Set maximum height for logo (25mm) and calculate width proportionally
-      const maxLogoHeight = 25;
-      const imgProps = doc.getImageProperties(logoAsset.dataUrl);
-      const aspectRatio = imgProps.width / imgProps.height;
-      const logoHeight = maxLogoHeight;
-      const logoWidth = logoHeight * aspectRatio;
-      
-      // Add logo at x=20 (left margin), aligned with address below
-      doc.addImage(logoAsset.dataUrl, logoAsset.format, 20, headerStartY, logoWidth, logoHeight);
-      leftColumnBottom = headerStartY + logoHeight + 4;
+      try {
+        // Set maximum height for logo (25mm) and calculate width proportionally
+        const maxLogoHeight = 25;
+        const imgProps = doc.getImageProperties(logoAsset.dataUrl);
+        const aspectRatio = imgProps.width / imgProps.height;
+        const logoHeight = maxLogoHeight;
+        const logoWidth = logoHeight * aspectRatio;
+        
+        // Add logo at x=20 (left margin), aligned with address below
+        doc.addImage(logoAsset.dataUrl, logoAsset.format, 20, headerStartY, logoWidth, logoHeight);
+        leftColumnBottom = headerStartY + logoHeight + 4;
+      } catch (logoError) {
+        // If logo fails to load, fall back to text company name
+        console.warn("Failed to add logo to PDF, using company name instead:", logoError);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.setTextColor(0, 63, 171);
+        doc.text(profile?.company_name || "Company Name", 20, headerStartY + 12);
+        leftColumnBottom = headerStartY + 20;
+      }
     } else {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(20);
