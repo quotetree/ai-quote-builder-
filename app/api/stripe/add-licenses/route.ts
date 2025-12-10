@@ -97,6 +97,13 @@ export async function POST(request: NextRequest) {
       (item) => item.price.id === licensePriceId
     );
 
+    // Log current state for debugging
+    console.log('Current license state:', {
+      dbAdditionalLicenses: subscription.additional_licenses,
+      stripeAdditionalLicenses: licenseItem?.quantity || 0,
+      requestedToAdd: additionalLicensesToAdd,
+    });
+
     try {
       console.log('Before update - Subscription items:', {
         subscriptionId: stripeSubscription.id,
@@ -143,6 +150,18 @@ export async function POST(request: NextRequest) {
       );
 
       console.log('Subscription updated successfully');
+
+      // Verify the update by retrieving the subscription again
+      const verifySubscription = await stripe.subscriptions.retrieve(stripeSubscription.id);
+      const verifyLicenseItem = verifySubscription.items.data.find(
+        (item) => item.price.id === licensePriceId
+      );
+      console.log('After update - verified license count:', {
+        additionalLicenses: verifyLicenseItem?.quantity || 0,
+        baseLicenses: 2,
+        totalLicenses: 2 + (verifyLicenseItem?.quantity || 0),
+        expectedMonthlyRate: 158 + (79 * (verifyLicenseItem?.quantity || 0)),
+      });
 
       // Get the latest invoice (which should have the proration)
       const invoices = await stripe.invoices.list({
