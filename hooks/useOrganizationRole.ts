@@ -46,24 +46,27 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
       }
 
       // Query organization_memberships to get the user's role
+      // Handle multiple org memberships by taking the first one
       const { data, error } = await supabase
         .from("organization_memberships")
         .select("role, organization_id")
         .eq("user_id", user.id)
-        .single();
+        .order("created_at", { ascending: false })
+        .limit(1);
 
       if (error) {
-        // If user is not part of any organization yet, that's ok
-        if (error.code === 'PGRST116') {
-          setRole(null);
-          setOrganizationId(null);
-        } else {
-          throw error;
-        }
+        throw error;
+      }
+
+      if (!data || data.length === 0) {
+        // User is not part of any organization yet
+        setRole(null);
+        setOrganizationId(null);
       } else {
-        console.log('[useOrganizationRole] role:', data.role, 'org:', data.organization_id);
-        setRole(data.role as MemberRole);
-        setOrganizationId(data.organization_id);
+        const membership = data[0];
+        console.log('[useOrganizationRole] role:', membership.role, 'org:', membership.organization_id);
+        setRole(membership.role as MemberRole);
+        setOrganizationId(membership.organization_id);
       }
     } catch (err: any) {
       setError(err.message);
