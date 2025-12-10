@@ -174,9 +174,31 @@ export async function POST(request: NextRequest) {
         billingMessage = `${licenseDiff} license${licenseDiff > 1 ? 's' : ''} will be removed on ${formatDate(changeDate)}.`;
       }
     }
-    // Branch 1: Compare prices first (handles cross-plan changes correctly)
+    // CRITICAL: Check cycle changes FIRST before price comparisons
+    // Monthly → Yearly always requires immediate payment (pay full year upfront)
+    else if (currentCycle === "monthly" && newCycle === "yearly") {
+      // Switching to yearly = immediate charge for full year
+      prorationAmount = newTotalCharge;
+      requiresCheckout = true;
+      isUpgrade = true;
+      scheduledForPeriodEnd = false;
+      resetsBillingAnchor = true;
+      const nextRenewal = new Date();
+      nextRenewal.setFullYear(nextRenewal.getFullYear() + 1);
+      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
+    }
+    // Yearly → Monthly is always a downgrade (less commitment), schedule for period end
+    else if (currentCycle === "yearly" && newCycle === "monthly") {
+      prorationAmount = 0;
+      requiresCheckout = false;
+      isUpgrade = false;
+      scheduledForPeriodEnd = true;
+      const changeDate = currentSubscription.current_period_end || "your next renewal date";
+      billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
+    }
+    // Branch 1: Compare prices (handles same-cycle plan changes)
     else if (newPricePerPeriod > currentPricePerPeriod) {
-      // Price increase = UPGRADE (regardless of cycle change)
+      // Price increase = UPGRADE (regardless of other factors)
       // Example: Individual Yearly ($79/mo) → Organization Monthly ($158/mo)
       
       if (currentCycle === "monthly" && newCycle === "monthly") {
@@ -243,27 +265,6 @@ export async function POST(request: NextRequest) {
     }
     // Branch 2: Price decrease = DOWNGRADE (scheduled for period end)
     else if (newPricePerPeriod < currentPricePerPeriod) {
-      prorationAmount = 0;
-      requiresCheckout = false;
-      isUpgrade = false;
-      scheduledForPeriodEnd = true;
-      const changeDate = currentSubscription.current_period_end || "your next renewal date";
-      billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
-    }
-    // Branch 3: Same price, cycle change (monthly ↔ yearly at same price point)
-    else if (currentCycle === "monthly" && newCycle === "yearly") {
-      // Same price but yearly = upgrade (commitment)
-      prorationAmount = newTotalCharge;
-      requiresCheckout = true;
-      isUpgrade = true;
-      scheduledForPeriodEnd = false;
-      resetsBillingAnchor = true;
-      const nextRenewal = new Date();
-      nextRenewal.setFullYear(nextRenewal.getFullYear() + 1);
-      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
-    }
-    else if (currentCycle === "yearly" && newCycle === "monthly") {
-      // Same price but monthly = downgrade (less commitment)
       prorationAmount = 0;
       requiresCheckout = false;
       isUpgrade = false;
