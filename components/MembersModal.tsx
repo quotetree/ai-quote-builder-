@@ -150,7 +150,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
     };
   }, [openMemberMenu]);
 
-  const canManageMembers = orgContext?.role === "owner" || orgContext?.role === "super_admin";
+  const canManageMembers = orgContext?.role === "owner";
 
   // Validate email format
   const isValidEmail = (email: string) => {
@@ -393,7 +393,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
   const handleChangeRole = async (memberId: string, currentRole: MemberRole, newRole: MemberRole) => {
     if (!orgContext || !canManageMembers) {
-      toast.error("Only owners and super admins can change member roles");
+      toast.error("Only the owner can change member roles");
       return;
     }
 

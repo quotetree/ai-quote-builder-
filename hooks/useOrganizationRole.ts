@@ -92,13 +92,13 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
   };
 
   const canViewMembers = (): boolean => {
-    // Owners and super_admins can view members
-    return isOwner || isSuperAdmin;
+    // Only owners can view members
+    return isOwner;
   };
 
   const canViewPersonalization = (): boolean => {
-    // Owners and super_admins can view personalization
-    return isOwner || isSuperAdmin;
+    // Only owners can view personalization
+    return isOwner;
   };
 
   const canManagePriceBook = (): boolean => {
@@ -108,8 +108,8 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
   };
 
   const canManageMembers = (): boolean => {
-    // Only owners and super_admins can manage members
-    return isOwner || isSuperAdmin;
+    // Only owners can manage members
+    return isOwner;
   };
 
   const canManageBilling = (): boolean => {
@@ -118,8 +118,8 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
   };
 
   const canManagePersonalization = (): boolean => {
-    // Only owners and super_admins can manage personalization
-    return isOwner || isSuperAdmin;
+    // Only owners can manage personalization
+    return isOwner;
   };
 
   const hasReadOnlyPriceBook = (): boolean => {

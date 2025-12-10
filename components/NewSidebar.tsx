@@ -347,7 +347,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                   ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
                   : "text-gray-400 cursor-not-allowed opacity-60"
               }`}
-              title={!canManagePersonalization() ? "Owner or Super Admin access only" : ""}
+              title={!canManagePersonalization() ? "Owner access only" : ""}
             >
               <span className="flex items-center gap-2">
                 Personalization
@@ -368,7 +368,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                   ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
                   : "text-gray-400 cursor-not-allowed opacity-60"
               }`}
-              title={!canManageMembers() ? "Owner or Super Admin access only" : ""}
+              title={!canManageMembers() ? "Owner access only" : ""}
             >
               <span className="flex items-center gap-2">
                 Members
