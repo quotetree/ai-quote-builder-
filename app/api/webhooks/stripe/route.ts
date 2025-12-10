@@ -387,17 +387,37 @@ async function handleSubscriptionUpdate(
     billingCycle = items[0].price.recurring?.interval === "year" ? "yearly" : "monthly";
   }
 
-  // Check if it's an organization plan by looking for multiple items or specific prices
-  if (items.length > 1) {
+  // Define price IDs for identification
+  const basePriceIds = [
+    STRIPE_PRICE_IDS.organization.base.monthly,
+    STRIPE_PRICE_IDS.organization.base.yearly,
+  ];
+  const licensePriceIds = [
+    STRIPE_PRICE_IDS.organization.additionalLicense.monthly,
+    STRIPE_PRICE_IDS.organization.additionalLicense.yearly,
+  ];
+
+  // Find items by price ID, not array position
+  const baseItem = items.find((item: any) => basePriceIds.includes(item.price?.id));
+  const licenseItem = items.find((item: any) => licensePriceIds.includes(item.price?.id));
+
+  // Determine plan type and additional licenses
+  if (baseItem && licenseItem) {
     planType = "organization";
-    // Second item is usually the additional licenses
-    additionalLicenses = items[1]?.quantity || 0;
+    additionalLicenses = licenseItem.quantity || 0;
+  } else if (baseItem && !licenseItem) {
+    // Org base only, no additional licenses yet
+    planType = "organization";
+    additionalLicenses = 0;
   } else if (items.length === 1) {
-    // Check if the single item is an org base price
+    // Fallback: check if the single item is an individual plan price
     const priceId = items[0].price?.id;
-    if (priceId === STRIPE_PRICE_IDS.organization.base.monthly || 
-        priceId === STRIPE_PRICE_IDS.organization.base.yearly) {
-      planType = "organization";
+    const individualPriceIds = [
+      STRIPE_PRICE_IDS.individual.monthly,
+      STRIPE_PRICE_IDS.individual.yearly,
+    ];
+    if (individualPriceIds.includes(priceId)) {
+      planType = "individual";
     }
   }
 

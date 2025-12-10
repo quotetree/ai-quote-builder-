@@ -95,6 +95,13 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       setSelectedPlan(subData.plan_type);
       setSelectedCycle(subData.billing_cycle || "yearly");
       setAdditionalLicenses(subData.additional_licenses);
+      
+      // Debug: Log subscription license data
+      console.log('Subscription license data:', {
+        base_licenses: subData.base_licenses,
+        additional_licenses: subData.additional_licenses,
+        total_licenses: subData.total_licenses
+      });
 
       // Fetch billing data if user has a Stripe customer (includes trial users with payment methods)
       // Get stripe_customer_id from profile

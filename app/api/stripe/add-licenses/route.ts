@@ -97,23 +97,53 @@ export async function POST(request: NextRequest) {
       (item) => item.price.id === licensePriceId
     );
 
-    if (licenseItem) {
-      // Update existing license item quantity
-      const newQuantity =
-        (licenseItem.quantity || 0) + additionalLicensesToAdd;
+    try {
+      console.log('Before update - Subscription items:', {
+        subscriptionId: stripeSubscription.id,
+        items: stripeSubscription.items.data.map(item => ({
+          id: item.id,
+          priceId: item.price.id,
+          quantity: item.quantity
+        }))
+      });
 
-      await stripe.subscriptionItems.update(licenseItem.id, {
-        quantity: newQuantity,
-        proration_behavior: "create_prorations", // Charge prorated amount immediately
-      });
-    } else {
-      // Add new license item to subscription
-      await stripe.subscriptionItems.create({
-        subscription: stripeSubscription.id,
-        price: licensePriceId,
-        quantity: additionalLicensesToAdd,
-        proration_behavior: "create_prorations",
-      });
+      if (licenseItem) {
+        // Update existing license item quantity
+        const newQuantity =
+          (licenseItem.quantity || 0) + additionalLicensesToAdd;
+
+        await stripe.subscriptionItems.update(licenseItem.id, {
+          quantity: newQuantity,
+          proration_behavior: "create_prorations", // Charge prorated amount immediately
+        });
+        
+        console.log('After update - License item:', {
+          itemId: licenseItem.id,
+          priceId: licensePriceId,
+          oldQuantity: licenseItem.quantity,
+          newQuantity: newQuantity
+        });
+      } else {
+        // Add new license item to subscription
+        const newItem = await stripe.subscriptionItems.create({
+          subscription: stripeSubscription.id,
+          price: licensePriceId,
+          quantity: additionalLicensesToAdd,
+          proration_behavior: "create_prorations",
+        });
+        
+        console.log('Created new license item:', {
+          itemId: newItem.id,
+          priceId: licensePriceId,
+          quantity: additionalLicensesToAdd
+        });
+      }
+    } catch (stripeError: any) {
+      console.error("Failed to update Stripe subscription:", stripeError);
+      return NextResponse.json(
+        { error: stripeError.message || "Failed to update subscription in Stripe" },
+        { status: 500 }
+      );
     }
 
     // The webhook will handle updating the database
