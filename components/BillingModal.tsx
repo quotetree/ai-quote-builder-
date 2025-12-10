@@ -352,9 +352,9 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   if (!isOpen) return null;
 
   const isOwner = orgContext?.role === "owner";
-  // Check BOTH status and trial_end_date to catch all trial users
-  const isTrialing = subscription?.status === "trialing" || 
-    (subscription?.trial_end_date && new Date(subscription.trial_end_date) > new Date());
+  // Only show trial banner when status is explicitly "trialing"
+  // Status is the authoritative source of truth and changes to "active" after payment
+  const isTrialing = subscription?.status === "trialing";
   const daysRemaining = getDaysRemaining();
 
   return (
