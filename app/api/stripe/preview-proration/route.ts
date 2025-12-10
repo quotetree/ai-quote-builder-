@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
       }
     }
     // Branch 1: Compare prices first (handles cross-plan changes correctly)
-    if (newPricePerPeriod > currentPricePerPeriod) {
+    else if (newPricePerPeriod > currentPricePerPeriod) {
       // Price increase = UPGRADE (regardless of cycle change)
       // Example: Individual Yearly ($79/mo) → Organization Monthly ($158/mo)
       
