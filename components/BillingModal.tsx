@@ -352,9 +352,14 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   if (!isOpen) return null;
 
   const isOwner = orgContext?.role === "owner";
-  // Only show trial banner when status is explicitly "trialing"
-  // Status is the authoritative source of truth and changes to "active" after payment
-  const isTrialing = subscription?.status === "trialing";
+  // Show trial banner when:
+  // 1. Status is "trialing", OR
+  // 2. Trial end date is in future AND no paid invoices exist (only $0 invoices)
+  const hasPaidInvoices = invoices.some(inv => inv.amount_paid > 0);
+  const isTrialing = subscription?.status === "trialing" || 
+    (subscription?.trial_end_date && 
+     new Date(subscription.trial_end_date) > new Date() && 
+     !hasPaidInvoices);
   const daysRemaining = getDaysRemaining();
 
   return (
