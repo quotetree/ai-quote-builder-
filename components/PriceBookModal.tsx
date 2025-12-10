@@ -354,6 +354,19 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         return normalized;
       };
 
+      // Helper function to safely extract cell values from CSV rows
+      // Returns null for unmapped columns or empty cells, trimmed value otherwise
+      const getCellValue = (row: any, mappingKey: string): string | null => {
+        const headerName = columnMapping[mappingKey];
+        if (!headerName) return null;
+        
+        const value = row[headerName];
+        if (value === null || value === undefined) return null;
+        
+        const trimmed = String(value).trim();
+        return trimmed === '' ? null : trimmed;
+      };
+
       // Track newly created families during this import to prevent duplicates
       const newlyCreatedFamilies: Array<{ id: string; name: string }> = [];
 
@@ -452,15 +465,15 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
           const familyId = normalizedFamilyKey ? familyIdMap.get(normalizedFamilyKey) || null : null;
           
           return {
-          product_number: columnMapping.product_number ? row[columnMapping.product_number] : null,
-          product_name: row[columnMapping.product_name],
-            product_brand: columnMapping.product_brand ? row[columnMapping.product_brand] : null,
+            product_number: getCellValue(row, 'product_number'),
+            product_name: getCellValue(row, 'product_name') || '',
+            product_brand: getCellValue(row, 'product_brand'),
             product_family_id: familyId || null,
-          description: columnMapping.description ? row[columnMapping.description] : null,
+            description: getCellValue(row, 'description'),
             list_price: listPrice,
             sales_price: salesPrice,
             cost_price: 0, // Default to 0 for CSV imports
-          product_type: columnMapping.product_type ? row[columnMapping.product_type] : null,
+            product_type: getCellValue(row, 'product_type'),
             unit: "ea", // Default to "ea" for CSV imports
           };
         });
