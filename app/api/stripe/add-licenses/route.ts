@@ -166,25 +166,26 @@ export async function POST(request: NextRequest) {
       // CRITICAL: Immediately update database with new license counts
       // Don't wait for webhook - update now so UI reflects change immediately
       const newAdditionalLicenses = verifyLicenseItem?.quantity || 0;
-      const newTotalLicenses = 2 + newAdditionalLicenses; // 2 base licenses + additional
 
       console.log('Updating database with new license counts...');
       const { error: updateError } = await supabase
         .from('subscriptions')
         .update({
           additional_licenses: newAdditionalLicenses,
-          total_licenses: newTotalLicenses,
+          // Note: total_licenses is a generated column (base_licenses + additional_licenses)
+          // so we don't update it directly - it's computed automatically
           updated_at: new Date().toISOString(),
         })
         .eq('organization_id', orgContext.organization_id);
 
       if (updateError) {
-        console.error('Failed to update database:', updateError);
+        console.error('❌ Failed to update database:', updateError);
         // Don't fail the request - webhook will update as backup
       } else {
+        const expectedTotalLicenses = 2 + newAdditionalLicenses;
         console.log('✅ Database updated successfully:', {
           additional_licenses: newAdditionalLicenses,
-          total_licenses: newTotalLicenses,
+          total_licenses: `${expectedTotalLicenses} (computed automatically)`,
         });
       }
 
