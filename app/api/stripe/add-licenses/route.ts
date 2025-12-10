@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
       console.log('Retrieving upcoming invoice with proration...');
       
       try {
-        const upcomingInvoice = await stripe.invoices.retrieveUpcoming({
+        const upcomingInvoice = await stripe.invoices.upcoming({
           subscription: stripeSubscription.id,
         });
 
