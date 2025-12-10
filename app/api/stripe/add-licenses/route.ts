@@ -163,39 +163,30 @@ export async function POST(request: NextRequest) {
         expectedMonthlyRate: 158 + (79 * (verifyLicenseItem?.quantity || 0)),
       });
 
-      // CRITICAL FIX: Get the upcoming invoice which contains the proration
-      // Don't use invoices.list() - it returns old paid invoices
-      console.log('Retrieving upcoming invoice with proration...');
+      // CRITICAL FIX: When updating subscription with proration_behavior: "create_prorations",
+      // Stripe automatically creates proration invoice items but doesn't charge immediately.
+      // We need to manually create and pay the invoice.
+      
+      console.log('Creating invoice for proration...');
       
       try {
-        const upcomingInvoice = await stripe.invoices.upcoming({
+        // Create an invoice to capture the proration items
+        const invoice = await stripe.invoices.create({
+          customer: stripeSubscription.customer as string,
           subscription: stripeSubscription.id,
+          auto_advance: false, // Don't auto-finalize so we can inspect it
         });
 
-        console.log('Upcoming invoice:', {
-          id: upcomingInvoice.id || 'not-created-yet',
-          status: upcomingInvoice.status || 'upcoming',
-          amount_due: upcomingInvoice.amount_due,
-          total: upcomingInvoice.total,
+        console.log('Invoice created:', {
+          id: invoice.id,
+          status: invoice.status,
+          amount_due: invoice.amount_due,
         });
 
-        // If there are proration line items with positive amount, create and pay invoice
-        const hasProration = upcomingInvoice.lines.data.some(
-          (line: any) => line.proration && line.amount > 0
-        );
-
-        if (hasProration && upcomingInvoice.amount_due > 0) {
-          console.log('Proration detected, creating and paying invoice immediately...');
+        // Only finalize and pay if there's an amount due
+        if (invoice.amount_due > 0) {
+          console.log('Invoice has amount due, finalizing and paying...');
           
-          // Create an invoice from the upcoming invoice
-          const invoice = await stripe.invoices.create({
-            customer: stripeSubscription.customer as string,
-            subscription: stripeSubscription.id,
-            auto_advance: true, // Automatically finalize
-          });
-
-          console.log('Invoice created:', invoice.id);
-
           // Finalize the invoice
           const finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id);
           console.log('Invoice finalized, status:', finalizedInvoice.status);
@@ -203,10 +194,13 @@ export async function POST(request: NextRequest) {
           // Pay the invoice immediately
           if (finalizedInvoice.status === 'open') {
             const paidInvoice = await stripe.invoices.pay(invoice.id);
-            console.log('Invoice paid successfully! Amount:', paidInvoice.amount_paid / 100);
+            console.log('✅ Invoice paid successfully! Amount:', paidInvoice.amount_paid / 100);
+          } else if (finalizedInvoice.status === 'paid') {
+            console.log('✅ Invoice already paid automatically');
           }
         } else {
-          console.log('No proration needed or amount is 0');
+          console.log('No amount due on invoice, voiding it');
+          await stripe.invoices.voidInvoice(invoice.id);
         }
       } catch (invoiceError: any) {
         console.error('Invoice handling error:', invoiceError.message);
