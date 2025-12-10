@@ -107,37 +107,43 @@ export async function POST(request: NextRequest) {
         }))
       });
 
-      if (licenseItem) {
-        // Update existing license item quantity
-        const newQuantity =
-          (licenseItem.quantity || 0) + additionalLicensesToAdd;
+      // Build items array for subscription update
+      const items = stripeSubscription.items.data.map((item: any) => {
+        if (item.price.id === licensePriceId) {
+          // Update license item quantity
+          const newQuantity = (item.quantity || 0) + additionalLicensesToAdd;
+          console.log(`Updating license item from ${item.quantity} to ${newQuantity}`);
+          return {
+            id: item.id,
+            quantity: newQuantity,
+          };
+        }
+        // Keep other items unchanged
+        return { id: item.id };
+      });
 
-        await stripe.subscriptionItems.update(licenseItem.id, {
-          quantity: newQuantity,
-          proration_behavior: "create_prorations", // Charge prorated amount immediately
-        });
-        
-        console.log('After update - License item:', {
-          itemId: licenseItem.id,
-          priceId: licensePriceId,
-          oldQuantity: licenseItem.quantity,
-          newQuantity: newQuantity
-        });
-      } else {
-        // Add new license item to subscription
-        const newItem = await stripe.subscriptionItems.create({
-          subscription: stripeSubscription.id,
+      // If no license item exists yet, add it
+      if (!licenseItem) {
+        console.log(`Adding new license item with quantity ${additionalLicensesToAdd}`);
+        items.push({
           price: licensePriceId,
           quantity: additionalLicensesToAdd,
-          proration_behavior: "create_prorations",
-        });
-        
-        console.log('Created new license item:', {
-          itemId: newItem.id,
-          priceId: licensePriceId,
-          quantity: additionalLicensesToAdd
         });
       }
+
+      console.log('Updating subscription with items:', items);
+
+      // Update subscription (not just the item) for reliable immediate invoicing
+      await stripe.subscriptions.update(
+        stripeSubscription.id,
+        {
+          items,
+          proration_behavior: "always_invoice", // Create immediate invoice with proration
+          payment_behavior: "error_if_incomplete", // Charge payment method immediately
+        }
+      );
+
+      console.log('Subscription updated successfully - prorated invoice created');
     } catch (stripeError: any) {
       console.error("Failed to update Stripe subscription:", stripeError);
       return NextResponse.json(

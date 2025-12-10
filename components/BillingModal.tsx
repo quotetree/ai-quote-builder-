@@ -218,7 +218,38 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       return;
     }
 
-    // For all subscriptions (including trials), show proration preview first
+    // CRITICAL: Detect if this is ONLY a license change (no plan or cycle change)
+    const isLicenseOnlyChange = subscription &&
+      subscription.plan_type === plan &&
+      subscription.billing_cycle === cycle &&
+      subscription.additional_licenses !== additionalLicenses &&
+      plan === "organization";
+
+    if (isLicenseOnlyChange) {
+      // Use add-licenses API which preserves billing date and prorates correctly
+      const licenseDiff = additionalLicenses - (subscription?.additional_licenses || 0);
+      
+      if (licenseDiff > 0) {
+        // Adding licenses
+        try {
+          toast.loading("Adding licenses...");
+          const result = await addLicenses(licenseDiff);
+          toast.dismiss();
+          toast.success(result.message || `Successfully added ${licenseDiff} license${licenseDiff !== 1 ? "s" : ""}!`);
+          await loadSubscriptionData();
+        } catch (error: any) {
+          toast.dismiss();
+          toast.error(error.message || "Failed to add licenses");
+        }
+      } else if (licenseDiff < 0) {
+        // Removing licenses - need to implement this separately
+        toast.error("Removing licenses is not yet supported. Please contact support.");
+      }
+      
+      return; // Don't continue to plan change flow
+    }
+
+    // For actual plan/cycle changes, continue with existing logic
     try {
       setLoadingProration(true);
       const preview = await fetchProrationPreview(plan, cycle, additionalLicenses);
