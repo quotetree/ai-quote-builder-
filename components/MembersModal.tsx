@@ -382,10 +382,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       setAdditionalLicensesToAdd(1);
       setShowAddLicenseModal(false);
       
-      // Reload data after a brief delay to allow webhook to process
-      setTimeout(() => {
-        loadData();
-      }, 2000);
+      // Reload data immediately - DB is updated synchronously now
+      loadData();
     } catch (error: any) {
       console.error("Failed to add licenses:", error);
       toast.dismiss();

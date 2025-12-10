@@ -163,6 +163,31 @@ export async function POST(request: NextRequest) {
         expectedMonthlyRate: 158 + (79 * (verifyLicenseItem?.quantity || 0)),
       });
 
+      // CRITICAL: Immediately update database with new license counts
+      // Don't wait for webhook - update now so UI reflects change immediately
+      const newAdditionalLicenses = verifyLicenseItem?.quantity || 0;
+      const newTotalLicenses = 2 + newAdditionalLicenses; // 2 base licenses + additional
+
+      console.log('Updating database with new license counts...');
+      const { error: updateError } = await supabase
+        .from('subscriptions')
+        .update({
+          additional_licenses: newAdditionalLicenses,
+          total_licenses: newTotalLicenses,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('organization_id', orgContext.organization_id);
+
+      if (updateError) {
+        console.error('Failed to update database:', updateError);
+        // Don't fail the request - webhook will update as backup
+      } else {
+        console.log('✅ Database updated successfully:', {
+          additional_licenses: newAdditionalLicenses,
+          total_licenses: newTotalLicenses,
+        });
+      }
+
       // CRITICAL FIX: When updating subscription with proration_behavior: "create_prorations",
       // Stripe automatically creates proration invoice items but doesn't charge immediately.
       // We need to manually create and pay the invoice.
