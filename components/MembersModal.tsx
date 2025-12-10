@@ -893,7 +893,11 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                   !orgContext ||
                   orgContext.available_licenses === 0
                 }
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gray-200 hover:bg-gray-300 disabled:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 text-gray-700 font-medium rounded-lg transition-colors"
+                className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  emailPills.length > 0 || currentEmailInput.trim().length > 0
+                    ? "bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-200"
+                    : "bg-gray-200 hover:bg-gray-300 text-gray-700 disabled:bg-gray-200"
+                }`}
               >
                 <Plus size={18} />
                 {inviting ? "Inviting..." : "Invite Team Member"}
