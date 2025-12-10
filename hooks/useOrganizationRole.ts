@@ -17,6 +17,7 @@ interface PermissionHelpers {
   canManageMembers: () => boolean;
   canManageBilling: () => boolean;
   canManagePersonalization: () => boolean;
+  hasReadOnlyPriceBook: () => boolean;
   isOwner: () => boolean;
   isSuperAdmin: () => boolean;
   isAdmin: () => boolean;
@@ -60,6 +61,7 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
           throw error;
         }
       } else {
+        console.log('[useOrganizationRole] role:', data.role, 'org:', data.organization_id);
         setRole(data.role as MemberRole);
         setOrganizationId(data.organization_id);
       }
@@ -72,53 +74,66 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
     }
   }
 
+  // Define explicit role flags
+  const isOwner = role === 'owner';
+  const isSuperAdmin = role === 'super_admin';
+  const isAdmin = role === 'admin';
+
+  // Log flags for debugging
+  console.log('[useOrganizationRole] flags:', { isOwner, isSuperAdmin, isAdmin });
+
   // Permission helper functions
   const canViewBilling = (): boolean => {
     // Only owners can view billing
-    return role === 'owner';
+    return isOwner;
   };
 
   const canViewMembers = (): boolean => {
     // Owners and super_admins can view members
-    return role === 'owner' || role === 'super_admin';
+    return isOwner || isSuperAdmin;
   };
 
   const canViewPersonalization = (): boolean => {
     // Owners and super_admins can view personalization
-    return role === 'owner' || role === 'super_admin';
+    return isOwner || isSuperAdmin;
   };
 
   const canManagePriceBook = (): boolean => {
     // Only owners and super_admins can create/edit/delete products
     // Admins have read-only access
-    return role === 'owner' || role === 'super_admin';
+    return isOwner || isSuperAdmin;
   };
 
   const canManageMembers = (): boolean => {
     // Only owners and super_admins can manage members
-    return role === 'owner' || role === 'super_admin';
+    return isOwner || isSuperAdmin;
   };
 
   const canManageBilling = (): boolean => {
     // Only owners can manage billing
-    return role === 'owner';
+    return isOwner;
   };
 
   const canManagePersonalization = (): boolean => {
     // Only owners and super_admins can manage personalization
-    return role === 'owner' || role === 'super_admin';
+    return isOwner || isSuperAdmin;
   };
 
-  const isOwner = (): boolean => {
-    return role === 'owner';
+  const hasReadOnlyPriceBook = (): boolean => {
+    // Admins have read-only access to price book
+    return isAdmin && !(isOwner || isSuperAdmin);
   };
 
-  const isSuperAdmin = (): boolean => {
-    return role === 'super_admin';
+  const isOwnerRole = (): boolean => {
+    return isOwner;
   };
 
-  const isAdmin = (): boolean => {
-    return role === 'admin';
+  const isSuperAdminRole = (): boolean => {
+    return isSuperAdmin;
+  };
+
+  const isAdminRole = (): boolean => {
+    return isAdmin;
   };
 
   return {
@@ -133,9 +148,10 @@ export function useOrganizationRole(): OrganizationRoleData & PermissionHelpers 
     canManageMembers,
     canManageBilling,
     canManagePersonalization,
-    isOwner,
-    isSuperAdmin,
-    isAdmin,
+    hasReadOnlyPriceBook,
+    isOwner: isOwnerRole,
+    isSuperAdmin: isSuperAdminRole,
+    isAdmin: isAdminRole,
   };
 }
 

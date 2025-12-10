@@ -38,7 +38,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     updateProductFamily,
     deleteProductFamily,
   } = useProductFamilies();
-  const { canManagePriceBook } = useOrganizationRole();
+  const { canManagePriceBook, hasReadOnlyPriceBook } = useOrganizationRole();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -540,7 +540,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
         {/* Action Bar */}
         {viewMode === "list" && (
           <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-gray-50">
-            {!canManagePriceBook() && (
+            {hasReadOnlyPriceBook() && (
               <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg">
                 <Lock size={16} className="text-blue-600" />
                 <span className="text-sm text-blue-700 font-medium">Read-Only Access</span>
