@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Build items array for subscription update
-      const items = stripeSubscription.items.data.map((item: any) => {
+      const items: Array<{ id?: string; price?: string; quantity?: number }> = stripeSubscription.items.data.map((item: any) => {
         if (item.price.id === licensePriceId) {
           // Update license item quantity
           const newQuantity = (item.quantity || 0) + additionalLicensesToAdd;
