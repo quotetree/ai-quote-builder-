@@ -352,7 +352,9 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   if (!isOpen) return null;
 
   const isOwner = orgContext?.role === "owner";
-  const isTrialing = subscription?.status === "trialing";
+  // Check BOTH status and trial_end_date to catch all trial users
+  const isTrialing = subscription?.status === "trialing" || 
+    (subscription?.trial_end_date && new Date(subscription.trial_end_date) > new Date());
   const daysRemaining = getDaysRemaining();
 
   return (
@@ -442,13 +444,20 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                             {getPlanDisplayName(subscription.plan_type)}
                           </h3>
                           {subscription.plan_type !== "free" && (
-                            <p className="text-3xl font-bold text-gray-900 mt-2">
-                              {formatCurrency(
-                                subscription.base_price_cents + 
-                                (subscription.additional_licenses * subscription.additional_license_price_cents)
+                            <>
+                              <p className="text-3xl font-bold text-gray-900 mt-2">
+                                {formatCurrency(
+                                  subscription.base_price_cents + 
+                                  (subscription.additional_licenses * subscription.additional_license_price_cents)
+                                )}
+                                <span className="text-lg font-normal text-gray-600"> per month</span>
+                              </p>
+                              {isTrialing && (
+                                <p className="text-sm text-gray-500 mt-1">
+                                  Billed after trial ends
+                                </p>
                               )}
-                              <span className="text-lg font-normal text-gray-600"> per month</span>
-                            </p>
+                            </>
                           )}
                         </div>
                         
