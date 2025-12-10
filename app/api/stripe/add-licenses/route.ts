@@ -133,17 +133,49 @@ export async function POST(request: NextRequest) {
 
       console.log('Updating subscription with items:', items);
 
-      // Update subscription (not just the item) for reliable immediate invoicing
-      await stripe.subscriptions.update(
+      // Update subscription with immediate proration
+      const updatedSubscription = await stripe.subscriptions.update(
         stripeSubscription.id,
         {
           items,
-          proration_behavior: "always_invoice", // Create immediate invoice with proration
-          payment_behavior: "error_if_incomplete", // Charge payment method immediately
+          proration_behavior: "create_prorations", // Create proration items immediately
         }
       );
 
-      console.log('Subscription updated successfully - prorated invoice created');
+      console.log('Subscription updated successfully');
+
+      // Get the latest invoice (which should have the proration)
+      const invoices = await stripe.invoices.list({
+        subscription: stripeSubscription.id,
+        limit: 1,
+      });
+
+      if (invoices.data.length > 0) {
+        const latestInvoice = invoices.data[0];
+        console.log('Latest invoice:', {
+          id: latestInvoice.id,
+          status: latestInvoice.status,
+          amount_due: latestInvoice.amount_due,
+        });
+
+        // If invoice is in draft state, finalize and pay it
+        if (latestInvoice.status === 'draft') {
+          console.log('Finalizing draft invoice...');
+          const finalizedInvoice = await stripe.invoices.finalizeInvoice(latestInvoice.id);
+          
+          // Attempt to pay the invoice immediately
+          if (finalizedInvoice.status === 'open') {
+            console.log('Paying invoice...');
+            await stripe.invoices.pay(finalizedInvoice.id);
+            console.log('Invoice paid successfully');
+          }
+        } else if (latestInvoice.status === 'open') {
+          // If invoice is already finalized but not paid, pay it
+          console.log('Paying open invoice...');
+          await stripe.invoices.pay(latestInvoice.id);
+          console.log('Invoice paid successfully');
+        }
+      }
     } catch (stripeError: any) {
       console.error("Failed to update Stripe subscription:", stripeError);
       return NextResponse.json(
