@@ -394,8 +394,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
   };
 
   const handleChangeRole = async (memberId: string, currentRole: MemberRole, newRole: MemberRole) => {
-    if (!orgContext || orgContext.role !== "owner") {
-      toast.error("Only the owner can change member roles");
+    if (!orgContext || !canManageMembers) {
+      toast.error("Only owners and super admins can change member roles");
       return;
     }
 
@@ -690,7 +690,47 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                                     </button>
 
                                     {openMemberMenu === member.id && (
-                                      <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                                      <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                                        {/* Role change options */}
+                                        {member.role === "admin" && (
+                                          <button
+                                            onClick={() => {
+                                              handleChangeRole(
+                                                member.id,
+                                                member.role,
+                                                "super_admin"
+                                              );
+                                              setOpenMemberMenu(null);
+                                            }}
+                                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2"
+                                          >
+                                            <Shield size={16} className="text-blue-600" />
+                                            Change to Super Admin
+                                          </button>
+                                        )}
+                                        {member.role === "super_admin" && (
+                                          <button
+                                            onClick={() => {
+                                              handleChangeRole(
+                                                member.id,
+                                                member.role,
+                                                "admin"
+                                              );
+                                              setOpenMemberMenu(null);
+                                            }}
+                                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2"
+                                          >
+                                            <User size={16} className="text-gray-600" />
+                                            Change to Admin
+                                          </button>
+                                        )}
+                                        
+                                        {/* Separator before remove option */}
+                                        {(member.role === "admin" || member.role === "super_admin") && (
+                                          <div className="my-1 border-t border-gray-200"></div>
+                                        )}
+                                        
+                                        {/* Remove option */}
                                         <button
                                           onClick={() => {
                                             handleRemoveMember(
