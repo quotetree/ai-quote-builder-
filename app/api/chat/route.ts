@@ -2125,12 +2125,12 @@ ${formattedResults}
         });
       }
       
-      // Remove the PRODUCT_DATA section from the message shown to user
-      cleanMessage = cleanMessage.replace(/\n*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\n*/g, '').trim();
+      // Remove the PRODUCT_DATA section from the message shown to user (flexible whitespace)
+      cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\s*/g, '').trim();
     }
     
     // Extract REQUEST_DATA block (user's original requests for validation)
-    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\n([\s\S]*?)\nREQUEST_DATA_END/);
+    const requestDataMatch = cleanMessage.match(/REQUEST_DATA_START\s*([\s\S]*?)\s*REQUEST_DATA_END/);
     if (requestDataMatch) {
       try {
         const json = requestDataMatch[1].trim();
@@ -2142,8 +2142,8 @@ ${formattedResults}
       } catch (error) {
         console.error('❌ Failed to parse REQUEST_DATA JSON:', error);
       }
-      // Remove the REQUEST_DATA block from the message
-      cleanMessage = cleanMessage.replace(/\n*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\n*/g, '').trim();
+      // Remove the REQUEST_DATA block from the message (more flexible regex)
+      cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\s*/g, '').trim();
     }
 
     // Validate: Check if AI's description matches the actual products suggested
