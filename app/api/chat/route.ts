@@ -1990,7 +1990,7 @@ ${conversationSummary ? '\n## Current Conversation Context:\n' + conversationSum
       tools,
       tool_choice: "auto",
       temperature: 0.8,
-      max_tokens: isComplexRequest ? 1000 : 700,
+      max_tokens: isComplexRequest ? 2500 : 1500, // Increased for large scopes
       presence_penalty: 0.6,
       frequency_penalty: 0.5,
     });
@@ -2065,7 +2065,7 @@ ${formattedResults}
         model: "gpt-4o",
         messages,
         temperature: 0.8,
-        max_tokens: isComplexRequest ? 1000 : 700,
+        max_tokens: isComplexRequest ? 2500 : 1500, // Increased for large scopes
         presence_penalty: 0.6,
         frequency_penalty: 0.5,
       });
@@ -2125,8 +2125,11 @@ ${formattedResults}
         });
       }
       
-      // Remove the PRODUCT_DATA section from the message shown to user (flexible whitespace)
+      // Remove the PRODUCT_DATA section from the message shown to user (aggressive removal)
+      // First try to match complete block
       cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\s*/g, '').trim();
+      // Then remove any remaining PRODUCT_DATA_START to handle truncated/malformed blocks
+      cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*/g, '').trim();
     }
     
     // Extract REQUEST_DATA block (user's original requests for validation)
