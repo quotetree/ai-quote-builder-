@@ -394,6 +394,7 @@ interface UnfulfilledRequest {
  * - "10 cameras"
  * - "- 5 cables"
  * - "1. 20 sensors"
+ * - "(1) AC42-HW" or "(4)AD34-HW"
  * - Numbered lists (1., 2., 3.)
  * - Bullet points (-, *, •)
  */
@@ -403,6 +404,12 @@ function detectLineItems(message: string): string[] {
   const lineItems: string[] = [];
   
   for (const line of lines) {
+    // Match parenthesized quantities: "(1)AC42-HW", "(4) AD34-HW"
+    if (/^\(\d+\)/.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+    
     // Match numbered lists: "1.", "2)", "1 -", etc.
     if (/^\d+[\.\)\-\:]/.test(line)) {
       lineItems.push(line);
