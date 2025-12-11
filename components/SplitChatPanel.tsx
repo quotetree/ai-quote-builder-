@@ -3033,7 +3033,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
               onKeyPress={handleKeyPress}
               placeholder="Message..."
               disabled={loading}
-              className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] placeholder-gray-500 disabled:opacity-50 overflow-hidden leading-tight"
+              className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] placeholder-gray-500 disabled:opacity-50 overflow-y-auto leading-tight"
               style={{ height: '20px', maxHeight: '160px' }}
             />
             <button 
