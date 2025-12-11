@@ -30,6 +30,7 @@ interface NewSidebarProps {
 export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const { isOpen, closeSidebar, openSidebar } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [priceBookOpen, setPriceBookOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [personalizationOpen, setPersonalizationOpen] = useState(false);
@@ -412,38 +413,50 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                 placeholder="Search projects..."
                 className="flex-1 bg-transparent border-none outline-none text-lg"
                 autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
               <button
-                onClick={() => setSearchOpen(false)}
+                onClick={() => {
+                  setSearchOpen(false);
+                  setSearchQuery("");
+                }}
                 className="p-2 hover:bg-gray-100 rounded-lg"
               >
                 <X size={20} />
               </button>
             </div>
             <div className="max-h-96 overflow-y-auto p-4">
-              {projects.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No projects found
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {projects.map((project) => (
-                    <button
-                      key={project.id}
-                      onClick={() => {
-                        router.push(`/projects/${project.id}`);
-                        setSearchOpen(false);
-                      }}
-                      className="w-full text-left p-3 rounded-lg hover:bg-gray-100 transition-colors"
-                    >
-                      <h4 className="font-medium">{project.project_name}</h4>
-                      <p className="text-sm text-gray-500">
-                        Created {new Date(project.created_at).toLocaleDateString()}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {(() => {
+                const filteredProjects = projects.filter((project) =>
+                  project.project_name.toLowerCase().includes(searchQuery.toLowerCase())
+                );
+                
+                return filteredProjects.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    {searchQuery ? "No matching projects found" : "No projects found"}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => {
+                          router.push(`/projects/${project.id}`);
+                          setSearchOpen(false);
+                          setSearchQuery("");
+                        }}
+                        className="w-full text-left p-3 rounded-lg hover:bg-gray-100 transition-colors"
+                      >
+                        <h4 className="font-medium">{project.project_name}</h4>
+                        <p className="text-sm text-gray-500">
+                          Created {new Date(project.created_at).toLocaleDateString()}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
