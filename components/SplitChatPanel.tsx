@@ -3248,7 +3248,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                         isCancellingQuantityRef.current = true;
                                       }}
                                       onClick={cancelEditingQuantity}
-                                      className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                                      className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                                     >
                                       Cancel
                                     </button>
@@ -3296,7 +3296,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                         isCancellingDiscountRef.current = true;
                                       }}
                                       onClick={cancelEditingDiscount}
-                                      className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                                      className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                                     >
                                       Cancel
                                     </button>
