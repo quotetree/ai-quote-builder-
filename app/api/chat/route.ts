@@ -743,54 +743,32 @@ const MAX_PER_ITEM = 4;
 const CLEAR_WINNER_DELTA = 30;
 
 /**
- * Decides whether to return a single "precise" match or multiple "ambiguous" matches.
+ * Returns only the top-scoring product (best match).
  * 
- * Decision logic:
- * 1. If only 1 match exists → return it (precise)
- * 2. If top match's score is CLEAR_WINNER_DELTA higher than second → return only top match (precise)
- * 3. Otherwise → return up to MAX_PER_ITEM matches (ambiguous, like a search engine)
+ * As part of the new top-4 ranking approach, this function always returns
+ * only the #1 best match, which will be auto-added to "Suggested Products".
  * 
  * @param exactMatches - Products that passed hard constraints, sorted by score descending
- * @returns Selected products to show user (1 for precise, N for ambiguous)
+ * @returns Array containing only the top product, or empty array if no matches
  */
 function selectExactMatchesForItem(exactMatches: any[]): any[] {
   if (exactMatches.length === 0) return [];
   
-  // Case 1: Only one match → precise, return it
-  if (exactMatches.length === 1) {
-    console.log(`      → Precise: single match found`);
-    return [exactMatches[0]];
-  }
-  
-  // Case 2: Multiple matches - check score gap between top 2
-  const [first, second] = exactMatches;
-  const scoreDelta = first.score - second.score;
-  
-  console.log(`      → Score gap between top 2: ${scoreDelta} (threshold: ${CLEAR_WINNER_DELTA})`);
-  
-  // If the top result is clearly better → treat as precise, single result
-  if (scoreDelta >= CLEAR_WINNER_DELTA) {
-    console.log(`      → Precise: clear winner (score gap ${scoreDelta} >= ${CLEAR_WINNER_DELTA})`);
-    return [first];
-  }
-  
-  // Otherwise, ambiguous → return up to MAX_PER_ITEM matches
-  const selected = exactMatches.slice(0, MAX_PER_ITEM);
-  console.log(`      → Ambiguous: returning ${selected.length} matches (max ${MAX_PER_ITEM})`);
-  return selected;
+  // Always return only the top match
+  console.log(`      → Best match: returning top product only`);
+  return [exactMatches[0]];
 }
 
 /**
  * Enhanced matching with hard constraint enforcement.
  * Accepts EnhancedRequestedItem[] and enforces duration constraints.
  * 
- * NEW (Option B): Returns multiple products per item when matches are ambiguous,
- * like a search engine. This applies from the FIRST message onwards.
+ * NEW APPROACH: Top-4 ranking system per requested item
+ * - Position #1 (best match): Auto-add to "Suggested Products" (right column)
+ * - Positions #2-#4 (alternatives): Show in "Products You Might Like" (left column, manual add)
  * 
- * THREE-TIER SCORING SYSTEM:
- * - Score ≥ 50: Auto-add to "Suggested Products"
- * - Score 1-49: Show as "possible matches" in chat (user can manually add)
- * - Score 0: Don't show (completely unrelated)
+ * This ensures high-scoring alternatives aren't discarded and all products
+ * are ranked purely by score, not by arbitrary confidence thresholds.
  */
 function matchEnhancedRequestsToPriceBook(
   requestedItems: EnhancedRequestedItem[], 
@@ -846,41 +824,19 @@ function matchEnhancedRequestsToPriceBook(
     
     console.log(`\n   ✅ Result: ${results.length} keyword matches → ${validResults.length} after hard constraints`);
     
-    // THREE-TIER SCORING SYSTEM:
-    // 1. Score >= 50: High confidence, auto-add to Suggested Products
-    // 2. Score 1-49: Low confidence, show as possible matches (user can manually add)
-    // 3. Score 0: No relevance, don't show
+    // NEW APPROACH: Take top 4 products regardless of confidence
+    // Position #1 → Suggested Products (auto-add)
+    // Positions #2-#4 → Products You Might Like (manual add)
+    const top4Matches = validResults.slice(0, 4);
     
-    // Step 1: Filter high-confidence results
-    const highConfidenceResults = validResults.filter(r => r.score >= MATCH_CONFIDENCE_THRESHOLD);
-    
-    // Step 2: Build a Set of high-confidence product IDs to prevent duplicates
-    const highConfidenceIds = new Set(
-      highConfidenceResults.map(r => r.product.id || r.product.product_name?.toLowerCase().trim())
-    );
-    
-    // Step 3: Filter low-confidence results, EXCLUDING any that are already in high-confidence
-    const lowConfidenceResultsRaw = validResults.filter(r => r.score > 0 && r.score < MATCH_CONFIDENCE_THRESHOLD);
-    const lowConfidenceResults = lowConfidenceResultsRaw.filter(r => {
-      const productId = r.product.id || r.product.product_name?.toLowerCase().trim();
-      return !highConfidenceIds.has(productId);
-    });
-    
-    console.log(`   📊 Score breakdown: ${highConfidenceResults.length} high-confidence (≥50), ${lowConfidenceResultsRaw.length} raw low-confidence, ${lowConfidenceResults.length} deduped low-confidence (1-49)`);
-    
-    // Process high-confidence matches (auto-add)
-    const selectedMatches = selectExactMatchesForItem(highConfidenceResults);
-
-    if (selectedMatches.length > 0) {
-      // Add ALL selected matches to suggestions (auto-add to quote)
-      console.log(`   ✅ Auto-adding ${selectedMatches.length} high-confidence product(s):`);
+    if (top4Matches.length > 0) {
+      // Position #1: Best match → Auto-add to Suggested Products
+      const bestMatch = top4Matches[0];
+      const product = bestMatch.product;
+      const matchScore = bestMatch.score;
       
-      selectedMatches.forEach((matchResult, idx) => {
-        const product = matchResult.product;
-        const matchScore = matchResult.score;
-        
-        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
-        
+      console.log(`   ✅ Best match (auto-add): "${product.product_name}" (score: ${matchScore})`);
+      
       const key = product.id || product.product_name?.toLowerCase().trim();
       const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
       const quantityValue = Number(requestedQuantity);
@@ -911,60 +867,58 @@ function matchEnhancedRequestsToPriceBook(
           price_unit: product.unit || null,
           product_brand: product.product_brand,
           product_type: product.product_type,
-            match_confidence: matchScore,
+          match_confidence: matchScore,
           matched_requests: [request.item || keywords],
         });
       }
-      });
-    }
-    
-    // Process low-confidence matches (show but don't auto-add)
-    if (lowConfidenceResults.length > 0) {
-      console.log(`   💡 Showing ${lowConfidenceResults.length} low-confidence match(es) as suggestions:`);
       
-      const selectedLowConfidence = lowConfidenceResults.slice(0, MAX_PER_ITEM);
+      // Positions #2-#4: Alternatives → Products You Might Like
+      const alternatives = top4Matches.slice(1, 4); // Get next 3
       
-      selectedLowConfidence.forEach((matchResult, idx) => {
-        const product = matchResult.product;
-        const matchScore = matchResult.score;
+      if (alternatives.length > 0) {
+        console.log(`   💡 Alternatives (manual add): ${alternatives.length} products`);
         
-        console.log(`      ${idx + 1}. "${product.product_name}" (score: ${matchScore})`);
-        
-        const key = product.id || product.product_name?.toLowerCase().trim();
-        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
-        const quantityValue = Number(requestedQuantity);
-        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
-        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
-        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
-        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
-        const computedLineTotal = hasBudget
-          ? Number(parsedBudget)
-          : unitPrice * quantity;
-        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+        alternatives.forEach((matchResult, idx) => {
+          const product = matchResult.product;
+          const matchScore = matchResult.score;
+          
+          console.log(`      ${idx + 2}. "${product.product_name}" (score: ${matchScore})`);
+          
+          const key = product.id || product.product_name?.toLowerCase().trim();
+          
+          // Calculate quantities and prices (same logic as above)
+          const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+          const quantityValue = Number(requestedQuantity);
+          const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+          const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+          const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+          const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+          const computedLineTotal = hasBudget
+            ? Number(parsedBudget)
+            : unitPrice * quantity;
+          const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
 
-        if (!lowConfidenceMap.has(key)) {
-          lowConfidenceMap.set(key, {
-            product_id: product.id,
-            product_name: product.product_name,
-            description: product.description,
-            quantity,
-            unit_price: Number(derivedUnitPrice.toFixed(2)),
-            line_total: Number(computedLineTotal.toFixed(2)),
-            quantity_unit: request.unit || product.unit || null,
-            price_unit: product.unit || null,
-            product_brand: product.product_brand,
-            product_type: product.product_type,
-            match_confidence: matchScore,
-            matched_requests: [request.item || keywords],
-            requested_item: request.item || keywords, // Track what user asked for
-          });
-        }
-      });
-    }
-    
-    // If no matches at all (not even low confidence), add to unfulfilled
-    if (selectedMatches.length === 0 && lowConfidenceResults.length === 0) {
-      // No exact match found - build detailed error message with close matches
+          if (!lowConfidenceMap.has(key)) {
+            lowConfidenceMap.set(key, {
+              product_id: product.id,
+              product_name: product.product_name,
+              description: product.description,
+              quantity,
+              unit_price: Number(derivedUnitPrice.toFixed(2)),
+              line_total: Number(computedLineTotal.toFixed(2)),
+              quantity_unit: request.unit || product.unit || null,
+              price_unit: product.unit || null,
+              product_brand: product.product_brand,
+              product_type: product.product_type,
+              match_confidence: matchScore,
+              matched_requests: [request.item || keywords],
+              requested_item: request.item || keywords,
+            });
+          }
+        });
+      }
+    } else {
+      // No matches found - build detailed error message with close matches
       let reason = '';
       const closeMatchProducts: any[] = [];
       
