@@ -73,6 +73,17 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
 
   useEffect(() => {
     if (!isOpen) {
+      // Reset all modal state when closing to show fresh list view on next open
+      setSearchQuery("");
+      setViewMode("list");
+      setEditingProduct(null);
+      setViewingProduct(null);
+      setCsvData([]);
+      setCsvHeaders([]);
+      setColumnMapping({});
+      setShowFamilyManager(false);
+      setShowUnmappedWarning(false);
+      setUnmappedColumnsCount(0);
       setSelectedProductIds([]);
     }
   }, [isOpen]);
