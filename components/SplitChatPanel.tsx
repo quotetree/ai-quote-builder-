@@ -95,6 +95,8 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const orphanCleanupIntervalRef = useRef<NodeJS.Timeout | null>(null); // Global cleanup interval
   const currentRunIdRef = useRef<string | null>(null); // Track current run ID for validation
   const currentPoolIdRef = useRef<string | null>(null); // Track current pool ID for product isolation
+  const isCancellingQuantityRef = useRef(false); // Track if user is clicking Cancel for quantity
+  const isCancellingDiscountRef = useRef(false); // Track if user is clicking Cancel for discount
   const supabase = createClient();
   const currentUser = useCurrentUser(); // Get current authenticated user
 
@@ -917,6 +919,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   function cancelEditingQuantity() {
     setEditingQuantityIndex(null);
     setTempQuantity("");
+    isCancellingQuantityRef.current = false;
+  }
+
+  // Handle blur on quantity input (auto-save)
+  function handleQuantityBlur(index: number) {
+    // If user clicked Cancel button, don't save
+    if (isCancellingQuantityRef.current) {
+      return;
+    }
+    saveEditedQuantity(index);
   }
 
   // Start editing discount
@@ -944,6 +956,16 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   function cancelEditingDiscount() {
     setEditingDiscountIndex(null);
     setTempDiscount("");
+    isCancellingDiscountRef.current = false;
+  }
+
+  // Handle blur on discount input (auto-save)
+  function handleDiscountBlur(index: number) {
+    // If user clicked Cancel button, don't save
+    if (isCancellingDiscountRef.current) {
+      return;
+    }
+    saveEditedDiscount(index);
   }
 
   // Edit discount for a preview product
@@ -3214,6 +3236,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                           cancelEditingQuantity();
                                         }
                                       }}
+                                      onBlur={() => handleQuantityBlur(index)}
                                       className="w-20 px-2 py-1 border border-green-500 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                                       autoFocus
                                       step="0.01"
@@ -3221,12 +3244,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                     />
                                     {item.quantity_unit && <span className="text-sm text-gray-600">{item.quantity_unit}</span>}
                                     <button
-                                      onClick={() => saveEditedQuantity(index)}
-                                      className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
+                                      onMouseDown={() => {
+                                        isCancellingQuantityRef.current = true;
+                                      }}
                                       onClick={cancelEditingQuantity}
                                       className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
                                     >
@@ -3263,6 +3283,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                           cancelEditingDiscount();
                                         }
                                       }}
+                                      onBlur={() => handleDiscountBlur(index)}
                                       className="w-16 px-2 py-1 border border-green-500 rounded text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
                                       autoFocus
                                       step="0.1"
@@ -3271,12 +3292,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
                                     />
                                     <span className="text-xs text-gray-600">%</span>
                                     <button
-                                      onClick={() => saveEditedDiscount(index)}
-                                      className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
+                                      onMouseDown={() => {
+                                        isCancellingDiscountRef.current = true;
+                                      }}
                                       onClick={cancelEditingDiscount}
                                       className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
                                     >
