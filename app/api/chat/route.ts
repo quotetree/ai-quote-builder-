@@ -630,7 +630,7 @@ Output:
         { role: "user", content: extractionPrompt }
       ],
       temperature: 0.3,
-      max_tokens: 1000,
+      max_tokens: 2500, // Increased from 1000 to handle chunked large scopes
     });
 
     const responseText = completion.choices[0].message.content?.trim() || '[]';
@@ -683,7 +683,7 @@ async function extractRequestedItemsWithChunking(
   // Large scope detected - chunk it
   console.log(`   🔄 Large scope detected (${lineItems.length} items), chunking...`);
   
-  const chunkSize = 10;
+  const chunkSize = 8; // Reduced from 10 to 8 for safer token limits
   const chunks = chunkLineItems(lineItems, chunkSize);
   
   console.log(`   📦 Split into ${chunks.length} chunks of ~${chunkSize} items`);
@@ -2142,8 +2142,11 @@ ${formattedResults}
       } catch (error) {
         console.error('❌ Failed to parse REQUEST_DATA JSON:', error);
       }
-      // Remove the REQUEST_DATA block from the message (more flexible regex)
+      // Remove the REQUEST_DATA block from the message (aggressive removal, even if malformed)
+      // First try to match complete block
       cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\s*/g, '').trim();
+      // Then remove any remaining REQUEST_DATA_START to handle truncated/malformed blocks
+      cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*/g, '').trim();
     }
 
     // Validate: Check if AI's description matches the actual products suggested
