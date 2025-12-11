@@ -395,8 +395,11 @@ interface UnfulfilledRequest {
  * - "- 5 cables"
  * - "1. 20 sensors"
  * - "(1) AC42-HW" or "(4)AD34-HW"
+ * - "Pull (1) ADI Genesis cable"
+ * - "Install Adams Rite switches – 4"
  * - Numbered lists (1., 2., 3.)
  * - Bullet points (-, *, •)
+ * - Action words (Pull, Install, Provide)
  */
 function detectLineItems(message: string): string[] {
   const lines = message.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -404,6 +407,11 @@ function detectLineItems(message: string): string[] {
   const lineItems: string[] = [];
   
   for (const line of lines) {
+    // Skip section headers (lines ending with colon)
+    if (/^[A-Z][^:]{0,50}:\s*$/.test(line)) {
+      continue;
+    }
+    
     // Match parenthesized quantities: "(1)AC42-HW", "(4) AD34-HW"
     if (/^\(\d+\)/.test(line)) {
       lineItems.push(line);
@@ -424,6 +432,18 @@ function detectLineItems(message: string): string[] {
     
     // Match quantity patterns: "10 cameras", "5x cables"
     if (/^\d+[\sx]?\s+\w+/.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+    
+    // Match action words with quantities: "Pull (1) cable", "Install 4 switches", "Provide $4000 Labor"
+    if (/^(Pull|Install|Provide|Terminate|Mount|Run)\s+/i.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+    
+    // Match lines with parenthesized quantities anywhere: "cable – 4 runs" or "switches (2)"
+    if (/\(\d+\)/.test(line) || /–\s*\d+/.test(line) || /-\s*\d+\s*(runs?|ea|each|pcs?)?/i.test(line)) {
       lineItems.push(line);
       continue;
     }
