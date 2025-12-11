@@ -389,6 +389,78 @@ interface UnfulfilledRequest {
 // ============================================================================
 
 /**
+ * Detects line items in a user's message.
+ * Looks for patterns like:
+ * - "10 cameras"
+ * - "- 5 cables"
+ * - "1. 20 sensors"
+ * - Numbered lists (1., 2., 3.)
+ * - Bullet points (-, *, •)
+ */
+function detectLineItems(message: string): string[] {
+  const lines = message.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  
+  const lineItems: string[] = [];
+  
+  for (const line of lines) {
+    // Match numbered lists: "1.", "2)", "1 -", etc.
+    if (/^\d+[\.\)\-\:]/.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+    
+    // Match bullet points: "- item", "* item", "• item"
+    if (/^[\-\*\•]/.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+    
+    // Match quantity patterns: "10 cameras", "5x cables"
+    if (/^\d+[\sx]?\s+\w+/.test(line)) {
+      lineItems.push(line);
+      continue;
+    }
+  }
+  
+  return lineItems;
+}
+
+/**
+ * Splits line items into chunks of specified size.
+ * Preserves context by including a brief header with each chunk.
+ */
+function chunkLineItems(items: string[], chunkSize: number = 10): string[][] {
+  const chunks: string[][] = [];
+  
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  
+  return chunks;
+}
+
+/**
+ * Reconstructs a message chunk with context.
+ * Adds metadata so LLM knows this is part of a larger request.
+ */
+function buildChunkMessage(
+  items: string[], 
+  chunkIndex: number, 
+  totalChunks: number,
+  originalContext: string
+): string {
+  const header = totalChunks > 1 
+    ? `[Part ${chunkIndex + 1} of ${totalChunks}]\n\n`
+    : '';
+  
+  const contextLine = originalContext 
+    ? `${originalContext}\n\n`
+    : '';
+  
+  return `${header}${contextLine}${items.join('\n')}`;
+}
+
+/**
  * Uses LLM to extract structured items from natural language.
  * Understands corrections, negations, and context.
  * 
@@ -554,6 +626,74 @@ Output:
       action: 'add'
     }];
   }
+}
+
+/**
+ * Wrapper around extractRequestedItems that handles large scopes.
+ * 
+ * - If message has <15 items: process normally
+ * - If message has 15+ items: chunk into batches of 10, process sequentially
+ * 
+ * This prevents LLM extraction failures on large scopes.
+ */
+async function extractRequestedItemsWithChunking(
+  message: string,
+  conversationState: ConversationState,
+  openai: OpenAI
+): Promise<EnhancedRequestedItem[]> {
+  
+  // Detect line items in message
+  const lineItems = detectLineItems(message);
+  
+  console.log(`📋 Detected ${lineItems.length} line items in message`);
+  
+  // Threshold: if <15 items, process normally
+  if (lineItems.length < 15) {
+    console.log(`   ✅ Below threshold (15), processing normally`);
+    return await extractRequestedItems(message, conversationState, openai);
+  }
+  
+  // Large scope detected - chunk it
+  console.log(`   🔄 Large scope detected (${lineItems.length} items), chunking...`);
+  
+  const chunkSize = 10;
+  const chunks = chunkLineItems(lineItems, chunkSize);
+  
+  console.log(`   📦 Split into ${chunks.length} chunks of ~${chunkSize} items`);
+  
+  // Extract context from original message (text before first line item)
+  const firstItemIndex = message.indexOf(lineItems[0]);
+  const context = firstItemIndex > 0 ? message.substring(0, firstItemIndex).trim() : '';
+  
+  // Process each chunk sequentially
+  const allExtractedItems: EnhancedRequestedItem[] = [];
+  
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkMessage = buildChunkMessage(chunk, i, chunks.length, context);
+    
+    console.log(`   🔍 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} items)...`);
+    
+    try {
+      const extractedItems = await extractRequestedItems(
+        chunkMessage,
+        conversationState,
+        openai
+      );
+      
+      console.log(`      ✅ Extracted ${extractedItems.length} items from chunk ${i + 1}`);
+      
+      allExtractedItems.push(...extractedItems);
+      
+    } catch (error) {
+      console.error(`      ❌ Error processing chunk ${i + 1}:`, error);
+      // Continue with other chunks even if one fails
+    }
+  }
+  
+  console.log(`   ✅ Total extracted: ${allExtractedItems.length} items from ${chunks.length} chunks`);
+  
+  return allExtractedItems;
 }
 
 /**
@@ -756,7 +896,7 @@ function selectExactMatchesForItem(exactMatches: any[]): any[] {
   
   // Always return only the top match
   console.log(`      → Best match: returning top product only`);
-  return [exactMatches[0]];
+    return [exactMatches[0]];
 }
 
 /**
@@ -828,15 +968,15 @@ function matchEnhancedRequestsToPriceBook(
     // Position #1 → Suggested Products (auto-add)
     // Positions #2-#4 → Products You Might Like (manual add)
     const top4Matches = validResults.slice(0, 4);
-    
+
     if (top4Matches.length > 0) {
       // Position #1: Best match → Auto-add to Suggested Products
       const bestMatch = top4Matches[0];
       const product = bestMatch.product;
       const matchScore = bestMatch.score;
-      
+        
       console.log(`   ✅ Best match (auto-add): "${product.product_name}" (score: ${matchScore})`);
-      
+        
       const key = product.id || product.product_name?.toLowerCase().trim();
       const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
       const quantityValue = Number(requestedQuantity);
@@ -867,56 +1007,56 @@ function matchEnhancedRequestsToPriceBook(
           price_unit: product.unit || null,
           product_brand: product.product_brand,
           product_type: product.product_type,
-          match_confidence: matchScore,
+            match_confidence: matchScore,
           matched_requests: [request.item || keywords],
-        });
-      }
-      
+      });
+    }
+    
       // Positions #2-#4: Alternatives → Products You Might Like
       const alternatives = top4Matches.slice(1, 4); // Get next 3
       
       if (alternatives.length > 0) {
         console.log(`   💡 Alternatives (manual add): ${alternatives.length} products`);
-        
+      
         alternatives.forEach((matchResult, idx) => {
-          const product = matchResult.product;
-          const matchScore = matchResult.score;
-          
+        const product = matchResult.product;
+        const matchScore = matchResult.score;
+        
           console.log(`      ${idx + 2}. "${product.product_name}" (score: ${matchScore})`);
-          
-          const key = product.id || product.product_name?.toLowerCase().trim();
+        
+        const key = product.id || product.product_name?.toLowerCase().trim();
           
           // Calculate quantities and prices (same logic as above)
-          const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
-          const quantityValue = Number(requestedQuantity);
-          const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
-          const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
-          const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
-          const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
-          const computedLineTotal = hasBudget
-            ? Number(parsedBudget)
-            : unitPrice * quantity;
-          const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
+        const requestedQuantity = typeof request.quantity === 'string' ? parseFloat(request.quantity) : request.quantity;
+        const quantityValue = Number(requestedQuantity);
+        const quantity = Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+        const parsedBudget = typeof request.budget === 'string' ? parseFloat(request.budget) : request.budget;
+        const unitPrice = Number(product.sales_price || product.unit_price || product.price || 0);
+        const hasBudget = typeof parsedBudget === 'number' && !isNaN(parsedBudget) && parsedBudget > 0;
+        const computedLineTotal = hasBudget
+          ? Number(parsedBudget)
+          : unitPrice * quantity;
+        const derivedUnitPrice = hasBudget ? Number(parsedBudget) / quantity : unitPrice;
 
-          if (!lowConfidenceMap.has(key)) {
-            lowConfidenceMap.set(key, {
-              product_id: product.id,
-              product_name: product.product_name,
-              description: product.description,
-              quantity,
-              unit_price: Number(derivedUnitPrice.toFixed(2)),
-              line_total: Number(computedLineTotal.toFixed(2)),
-              quantity_unit: request.unit || product.unit || null,
-              price_unit: product.unit || null,
-              product_brand: product.product_brand,
-              product_type: product.product_type,
-              match_confidence: matchScore,
-              matched_requests: [request.item || keywords],
+        if (!lowConfidenceMap.has(key)) {
+          lowConfidenceMap.set(key, {
+            product_id: product.id,
+            product_name: product.product_name,
+            description: product.description,
+            quantity,
+            unit_price: Number(derivedUnitPrice.toFixed(2)),
+            line_total: Number(computedLineTotal.toFixed(2)),
+            quantity_unit: request.unit || product.unit || null,
+            price_unit: product.unit || null,
+            product_brand: product.product_brand,
+            product_type: product.product_type,
+            match_confidence: matchScore,
+            matched_requests: [request.item || keywords],
               requested_item: request.item || keywords,
-            });
-          }
-        });
-      }
+          });
+        }
+      });
+    }
     } else {
       // No matches found - build detailed error message with close matches
       let reason = '';
@@ -1214,7 +1354,7 @@ export async function POST(req: NextRequest) {
     // Extract structured items from user's natural language
     console.log('🧠 Phase 1: Extracting structured items from user message...');
     console.log(`   User message: "${message}"`);
-    const extractedItems = await extractRequestedItems(message, conversationState, openai);
+    const extractedItems = await extractRequestedItemsWithChunking(message, conversationState, openai);
     console.log('✅ Extracted items:', extractedItems.map(i => `${i.quantity || 1}x ${i.item} (${i.duration || 'no duration'})`));
     console.log('📋 DEBUG: Full extracted items:', JSON.stringify(extractedItems, null, 2));
     
