@@ -306,6 +306,23 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
     event.target.value = "";
   };
 
+  const generateSampleData = (data: any[], headers: string[]): Record<string, any> => {
+    const sampleData: Record<string, any> = {};
+    
+    headers.forEach(header => {
+      // Find first non-empty value for this header
+      for (const row of data) {
+        const value = row[header];
+        if (value !== null && value !== undefined && String(value).trim() !== '') {
+          sampleData[header] = value;
+          break;
+        }
+      }
+    });
+    
+    return sampleData;
+  };
+
   const handleCsvImportClick = () => {
     // Define which fields are optional in the pricebook
     const optionalFields = ['product_family', 'product_number', 'product_brand', 'product_type', 'description'];
@@ -424,13 +441,13 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
       // Collect unique family names from CSV (normalize to avoid duplicates)
       const uniqueFamilyNamesMap = new Map<string, string>(); // normalized -> original
       csvData.forEach((row) => {
-        if (columnMapping.product_family && row[columnMapping.product_family]) {
-          const original = row[columnMapping.product_family].trim();
-          const normalized = toSingular(normalizeText(original));
+        const familyValue = getCellValue(row, 'product_family');
+        if (familyValue) {
+          const normalized = toSingular(normalizeText(familyValue));
           
           // Only add if we haven't seen this normalized version
           if (!uniqueFamilyNamesMap.has(normalized)) {
-            uniqueFamilyNamesMap.set(normalized, original);
+            uniqueFamilyNamesMap.set(normalized, familyValue);
           }
         }
       });
@@ -691,7 +708,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
               headers={csvHeaders}
               mapping={columnMapping}
               onMappingChange={setColumnMapping}
-              sampleData={csvData[0] || {}}
+              sampleData={generateSampleData(csvData, csvHeaders)}
               productFamilies={productFamilies}
               onCancel={() => {
                 setViewMode("list");
