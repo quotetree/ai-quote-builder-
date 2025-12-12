@@ -204,19 +204,31 @@ export default function LandingPageClient() {
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
   const router = useRouter();
 
-  // Hash detection for password recovery redirect
+  // Handle password recovery - check for code parameter OR hash tokens
   useEffect(() => {
     // Only run in browser
     if (typeof window === 'undefined') return;
 
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
     const hash = window.location.hash;
     const fullUrl = window.location.href;
     
     console.log('=== Password Recovery Detection ===');
     console.log('Full URL:', fullUrl);
+    console.log('Code param:', code);
     console.log('Hash:', hash);
     
-    // Check for successful recovery token
+    // Check for code parameter (PKCE flow)
+    if (code) {
+      console.log('🔄 Password reset code detected! Server should handle this...');
+      // The server-side page.tsx should handle code exchange and redirect
+      // If we're seeing this, the server redirect didn't work
+      console.log('⚠️ If you see this, the server-side code exchange may have failed');
+      return;
+    }
+    
+    // Check for successful recovery token (hash-based legacy flow)
     if (hash && hash.includes('access_token=') && hash.includes('type=recovery')) {
       console.log('✅ Recovery token detected! Redirecting to reset-password page');
       router.replace('/auth/reset-password' + hash);
@@ -226,12 +238,11 @@ export default function LandingPageClient() {
     // Check for error cases (expired token, invalid link, etc.)
     if (hash && hash.includes('error=') && (hash.includes('otp_expired') || hash.includes('access_denied'))) {
       console.log('❌ Password reset link expired or invalid');
-      // Redirect to a page that explains the error and offers to resend
       router.replace('/auth/reset-password?error=expired');
       return;
     }
     
-    console.log('ℹ️ No recovery token detected, staying on homepage');
+    console.log('ℹ️ No recovery token or code detected, staying on homepage');
   }, []); // Run once on mount
 
   const billingCycle = isYearly ? "yearly" : "monthly";
