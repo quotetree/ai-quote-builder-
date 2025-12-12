@@ -28,7 +28,17 @@ function ResetPasswordForm() {
         return;
       }
 
-      // Parse URL hash for tokens
+      // First, check if there's already an active session (from PKCE code exchange)
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        console.log('✅ Active session found (PKCE flow)');
+        setSessionReady(true);
+        setSessionLoading(false);
+        return;
+      }
+
+      // If no active session, try hash-based tokens (legacy flow)
       const hash = window.location.hash;
       const params = new URLSearchParams(hash.substring(1)); // Remove '#'
       
