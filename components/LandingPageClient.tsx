@@ -366,6 +366,7 @@ export default function LandingPageClient() {
 
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+
         <div className="text-center max-w-4xl mx-auto">
           <h2 className="text-5xl md:text-6xl font-bold mb-6 text-gray-900">
             Generate Professional Quotes{" "}
@@ -377,10 +378,57 @@ export default function LandingPageClient() {
             Transform hours of manual estimating into minutes with AI. Chat naturally to build quotes,
             adjust pricing in real-time, and deliver professional proposals that win more business.
           </p>
+
+          {/* CTA Buttons - Moved here */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
+            <button
+              onClick={async () => {
+                setIsCheckoutLoading(true);
+                try {
+                  const response = await fetch('/api/stripe/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      planType: 'individual',
+                      billingCycle: 'monthly',
+                      additionalLicenses: 0,
+                      trialPeriodDays: 14,
+                    }),
+                  });
+                  
+                  if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create checkout');
+                  }
+                  
+                  const { url } = await response.json();
+                  if (url) {
+                    window.location.href = url;
+                  }
+                } catch (error: any) {
+                  console.error('Checkout error:', error);
+                  alert(error.message || 'Failed to start checkout. Please try again.');
+                  setIsCheckoutLoading(false);
+                }
+              }}
+              disabled={isCheckoutLoading}
+              className="px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isCheckoutLoading ? 'Loading...' : 'Try For Free'}
+            </button>
+            <a
+              href="https://calendly.com/quotetree/30min"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-8 py-4 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-gray-400 hover:shadow-md transition-all font-semibold text-lg text-center"
+            >
+              Book a Demo
+            </a>
+          </div>
         </div>
 
-        {/* Video Placeholder */}
-        <div className="max-w-5xl mx-auto mb-8">
+        {/* Video Placeholder - Made smaller */}
+        <div className="max-w-4xl mx-auto mb-8">
           <div className="relative aspect-video bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-2xl overflow-hidden group cursor-pointer">
             {/* Background pattern */}
             <div className="absolute inset-0 opacity-10">
@@ -415,19 +463,6 @@ export default function LandingPageClient() {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* CTA Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-          <Link
-            href="/auth/signup"
-            className="px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-semibold text-lg"
-          >
-            Start Free Trial
-          </Link>
-          <button className="px-8 py-4 bg-white border-2 border-gray-300 text-gray-700 rounded-lg hover:border-gray-400 hover:shadow-md transition-all font-semibold text-lg">
-            View Pricing
-          </button>
         </div>
 
         {/* Feature bullets */}
