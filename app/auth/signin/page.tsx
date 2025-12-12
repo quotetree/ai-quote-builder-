@@ -4,6 +4,7 @@ import { useState, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 
 function SignInForm() {
   const [email, setEmail] = useState("");
@@ -45,10 +46,17 @@ function SignInForm() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 px-4">
       <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            QuoteTree.ai
-          </h2>
+        <div className="flex flex-col items-center">
+          <Link href="/" className="flex items-center gap-1 mb-4">
+            <Image
+              src="/quotetree-icon.svg"
+              alt="QuoteTree Logo"
+              width={56}
+              height={56}
+              className="w-14 h-14"
+            />
+            <span className="text-2xl font-medium text-green-700">QuoteTree</span>
+          </Link>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             Sign in to your account
           </p>

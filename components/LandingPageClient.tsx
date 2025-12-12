@@ -198,7 +198,7 @@ const faqs = [
 
 export default function LandingPageClient() {
   const [activeStep, setActiveStep] = useState(1);
-  const [isYearly, setIsYearly] = useState(false); // Default to monthly
+  const [isYearly, setIsYearly] = useState(true); // Default to annual
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
@@ -276,23 +276,48 @@ export default function LandingPageClient() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-green-600 to-green-700 rounded-lg flex items-center justify-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-5 h-5 text-white"
+          <div className="flex items-center gap-8">
+            {/* Logo and Company Name */}
+            <Link href="/" className="flex items-center gap-1">
+              <Image
+                src="/quotetree-icon.svg"
+                alt="QuoteTree Logo"
+                width={56}
+                height={56}
+                className="w-14 h-14"
+              />
+              <span className="text-2xl font-medium text-green-700">QuoteTree</span>
+            </Link>
+            
+            {/* Navigation Links */}
+            <div className="hidden md:flex items-center gap-8">
+              <Link
+                href="#features"
+                className="text-gray-700 hover:text-gray-900 transition-colors"
               >
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-              </svg>
+                Features
+              </Link>
+              <Link
+                href="#blog"
+                className="text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                Blog
+              </Link>
+              <Link
+                href="#pricing"
+                className="text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                Pricing
+              </Link>
+              <Link
+                href="#faq"
+                className="text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                FAQ
+              </Link>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">QuoteTree</h1>
           </div>
+          
           <div className="flex gap-4">
             <Link
               href="/auth/signin"
@@ -394,7 +419,7 @@ export default function LandingPageClient() {
       </section>
 
       {/* User Journey Section */}
-      <section className="bg-gradient-to-b from-gray-50 to-white py-20">
+      <section id="features" className="bg-gradient-to-b from-gray-50 to-white py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-4xl md:text-5xl font-bold mb-4 text-gray-900">
@@ -758,7 +783,7 @@ export default function LandingPageClient() {
       </section>
 
       {/* FAQ Section */}
-      <section className="py-20 bg-gray-50">
+      <section id="faq" className="py-20 bg-gray-50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-4xl md:text-5xl font-bold mb-4 text-gray-900">
@@ -821,23 +846,16 @@ export default function LandingPageClient() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-br from-green-600 to-green-700 rounded-lg flex items-center justify-center">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-5 h-5 text-white"
-                  >
-                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-bold text-gray-900">QuoteTree</h3>
-              </div>
+              <Link href="/" className="flex items-center gap-1 mb-4">
+                <Image
+                  src="/quotetree-icon.svg"
+                  alt="QuoteTree Logo"
+                  width={56}
+                  height={56}
+                  className="w-14 h-14"
+                />
+                <h3 className="text-2xl font-medium text-green-700">QuoteTree</h3>
+              </Link>
               <p className="text-gray-600 text-sm">
                 AI-powered quote generation for modern contractors.
               </p>

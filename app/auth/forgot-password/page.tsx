@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
 export default function ForgotPasswordPage() {
@@ -38,22 +39,15 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-600 to-green-700 rounded-lg flex items-center justify-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-6 h-6 text-white"
-              >
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-              </svg>
-            </div>
-            <span className="text-2xl font-bold text-gray-900">QuoteTree</span>
+          <Link href="/" className="inline-flex items-center gap-1 mb-6">
+            <Image
+              src="/quotetree-icon.svg"
+              alt="QuoteTree Logo"
+              width={56}
+              height={56}
+              className="w-14 h-14"
+            />
+            <span className="text-2xl font-medium text-green-700">QuoteTree</span>
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Reset Your Password</h1>
           <p className="text-gray-600">
