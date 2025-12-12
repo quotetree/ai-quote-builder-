@@ -4,7 +4,18 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import LandingPageClient from "@/components/LandingPageClient";
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: { code?: string; type?: string };
+}) {
+  // Handle password reset codes that come to root URL
+  if (searchParams.code) {
+    // Redirect to callback with the code to handle properly
+    const queryString = new URLSearchParams(searchParams as any).toString();
+    redirect(`/auth/callback?${queryString}`);
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
