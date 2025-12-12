@@ -7,16 +7,18 @@ export async function GET(request: Request) {
   const type = searchParams.get("type");
   const next = searchParams.get("next") ?? "/dashboard";
 
-  // Handle password recovery flow specifically
-  if (type === "recovery") {
-    // Password recovery should go to reset-password page
-    return NextResponse.redirect(`${origin}/auth/reset-password${hash}`);
-  }
-
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
+    
     if (!error) {
+      // Check if this is a password recovery flow
+      if (type === "recovery") {
+        // For password recovery, always redirect to reset-password page
+        return NextResponse.redirect(`${origin}/auth/reset-password`);
+      }
+      
+      // Normal authentication flow
       const forwardedHost = request.headers.get("x-forwarded-host");
       const isLocalEnv = process.env.NODE_ENV === "development";
       if (isLocalEnv) {
@@ -27,6 +29,11 @@ export async function GET(request: Request) {
         return NextResponse.redirect(`${origin}${next}`);
       }
     }
+  }
+
+  // Handle hash-based recovery tokens (legacy flow)
+  if (type === "recovery" && hash) {
+    return NextResponse.redirect(`${origin}/auth/reset-password${hash}`);
   }
 
   // return the user to an error page with instructions
