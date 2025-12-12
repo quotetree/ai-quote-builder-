@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Play, CheckCircle, ChevronDown, X } from "lucide-react";
 import Image from "next/image";
+import { createClient } from "@/lib/supabase/client";
 
 const userJourneySteps = [
   {
@@ -219,12 +220,40 @@ export default function LandingPageClient() {
     console.log('Code param:', code);
     console.log('Hash:', hash);
     
-    // Check for code parameter (PKCE flow)
+    // Check for code parameter (PKCE flow) - handle client-side
     if (code) {
-      console.log('🔄 Password reset code detected! Server should handle this...');
-      // The server-side page.tsx should handle code exchange and redirect
-      // If we're seeing this, the server redirect didn't work
-      console.log('⚠️ If you see this, the server-side code exchange may have failed');
+      console.log('🔄 Password reset code detected! Exchanging code client-side...');
+      
+      const exchangeCodeAndRedirect = async () => {
+        try {
+          const supabase = createClient();
+          console.log('Attempting code exchange...');
+          
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          
+          console.log('Exchange result:', {
+            hasSession: !!data?.session,
+            hasUser: !!data?.user,
+            error: error?.message
+          });
+          
+          if (error) {
+            console.error('❌ Code exchange failed:', error);
+            alert(`Password reset failed: ${error.message}. Please try again.`);
+            return;
+          }
+          
+          if (data.session) {
+            console.log('✅ Code exchange successful! Redirecting to reset-password...');
+            router.push('/auth/reset-password');
+          }
+        } catch (err: any) {
+          console.error('❌ Exception during code exchange:', err);
+          alert(`Password reset error: ${err.message}. Please try again.`);
+        }
+      };
+      
+      exchangeCodeAndRedirect();
       return;
     }
     
@@ -243,7 +272,7 @@ export default function LandingPageClient() {
     }
     
     console.log('ℹ️ No recovery token or code detected, staying on homepage');
-  }, []); // Run once on mount
+  }, [router]); // Run once on mount
 
   const billingCycle = isYearly ? "yearly" : "monthly";
   const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
