@@ -40,14 +40,18 @@ export default function ForgotPasswordPage() {
     setError("");
 
     try {
-      const supabase = createClient();
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${baseUrl}/auth/reset-password`,
+      // Call server API route to send password reset email
+      // This uses service role client which generates hash-based tokens (not PKCE codes)
+      const response = await fetch('/api/auth/reset-password-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
       });
 
-      if (resetError) {
-        setError(resetError.message);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || "Failed to send password reset email");
       } else {
         setMessage("Check your email for a password reset link!");
       }
