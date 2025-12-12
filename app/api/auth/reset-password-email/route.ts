@@ -12,16 +12,17 @@ export async function POST(request: Request) {
       );
     }
 
+    // Use service role client - same as Stripe webhook
     const supabase = createServiceRoleClient();
     
-    // Use service role client to send password reset email (generates hash-based tokens)
-    const { error: resetError } = await supabase.auth.admin.generateLink({
-      type: 'recovery',
-      email: email,
-      options: {
+    // Use resetPasswordForEmail with service role client
+    // This generates hash-based tokens instead of PKCE codes
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      email,
+      {
         redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/reset-password`,
-      },
-    });
+      }
+    );
 
     if (resetError) {
       console.error('Password reset email error:', resetError);
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log('✅ Password reset email sent successfully to:', email);
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Password reset API error:', error);
