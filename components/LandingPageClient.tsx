@@ -199,6 +199,7 @@ const faqs = [
 
 export default function LandingPageClient() {
   const [activeStep, setActiveStep] = useState(1);
+  const [hoveredStep, setHoveredStep] = useState<number | null>(null);
   const [isYearly, setIsYearly] = useState(true); // Default to annual
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
@@ -537,39 +538,59 @@ export default function LandingPageClient() {
           <div className="grid lg:grid-cols-12 gap-8">
             {/* Sidebar steps */}
             <div className="lg:col-span-4 space-y-3">
-              {userJourneySteps.map((step) => (
-                <button
-                  key={step.id}
-                  onMouseEnter={() => setActiveStep(step.id)}
-                  className={`w-full text-left p-6 rounded-xl transition-all duration-300 ${
-                    activeStep === step.id
-                      ? "bg-green-600 text-white shadow-xl scale-105"
-                      : "bg-white text-gray-900 hover:bg-gray-50 shadow-md hover:shadow-lg"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div
-                      className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold ${
-                        activeStep === step.id
-                          ? "bg-white text-green-600"
-                          : "bg-green-100 text-green-600"
-                      }`}
-                    >
-                      {step.id}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-lg mb-1">{step.title}</h3>
-                      <p
-                        className={`text-sm ${
-                          activeStep === step.id ? "text-green-50" : "text-gray-600"
+              {userJourneySteps.map((step) => {
+                const isActive = activeStep === step.id;
+                const isHovered = hoveredStep === step.id;
+                const showDescription = isActive || isHovered;
+                
+                return (
+                  <button
+                    key={step.id}
+                    onMouseEnter={() => {
+                      setActiveStep(step.id);
+                      setHoveredStep(step.id);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredStep(null);
+                    }}
+                    className={`w-full text-left p-6 rounded-xl transition-all duration-300 ${
+                      isActive
+                        ? "bg-green-600 text-white shadow-xl scale-105"
+                        : "bg-white text-gray-900 hover:bg-gray-50 shadow-md hover:shadow-lg"
+                    }`}
+                  >
+                    <div className="flex items-start gap-4">
+                      <div
+                        className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                          isActive
+                            ? "bg-white text-green-600"
+                            : "bg-green-100 text-green-600"
                         }`}
                       >
-                        {step.description}
-                      </p>
+                        {step.id}
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <h3 className="font-semibold text-lg mb-1">{step.title}</h3>
+                        <div
+                          className={`transition-all duration-300 ease-in-out ${
+                            showDescription
+                              ? "max-h-20 opacity-100"
+                              : "max-h-0 opacity-0"
+                          }`}
+                        >
+                          <p
+                            className={`text-sm ${
+                              isActive ? "text-green-50" : "text-gray-600"
+                            }`}
+                          >
+                            {step.description}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Screenshot display */}
