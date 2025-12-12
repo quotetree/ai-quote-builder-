@@ -5,6 +5,28 @@ import Link from "next/link";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
+async function redirectToStripeCheckout() {
+  try {
+    const response = await fetch('/api/stripe/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        planType: 'individual',
+        billingCycle: 'monthly',
+        additionalLicenses: 0,
+        trialPeriodDays: 14,
+      }),
+    });
+    
+    if (response.ok) {
+      const { url } = await response.json();
+      if (url) window.location.href = url;
+    }
+  } catch (error) {
+    console.error('Checkout error:', error);
+  }
+}
+
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -107,9 +129,12 @@ export default function ForgotPasswordPage() {
 
         <p className="text-center text-sm text-gray-500 mt-6">
           Don't have an account?{" "}
-          <Link href="/auth/signup" className="text-green-600 hover:text-green-700 font-medium">
+          <button 
+            onClick={redirectToStripeCheckout}
+            className="text-green-600 hover:text-green-700 font-medium cursor-pointer"
+          >
             Sign up
-          </Link>
+          </button>
         </p>
       </div>
     </div>

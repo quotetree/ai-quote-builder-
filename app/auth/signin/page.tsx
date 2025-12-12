@@ -131,12 +131,32 @@ function SignInForm() {
 
           <p className="text-center text-sm text-gray-600 dark:text-gray-400">
             Don't have an account?{" "}
-            <Link
-              href="/auth/signup"
-              className="font-medium text-green-600 hover:text-green-500"
+            <button
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/stripe/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      planType: 'individual',
+                      billingCycle: 'monthly',
+                      additionalLicenses: 0,
+                      trialPeriodDays: 14,
+                    }),
+                  });
+                  
+                  if (response.ok) {
+                    const { url } = await response.json();
+                    if (url) window.location.href = url;
+                  }
+                } catch (error) {
+                  console.error('Checkout error:', error);
+                }
+              }}
+              className="font-medium text-green-600 hover:text-green-500 cursor-pointer"
             >
               Sign up
-            </Link>
+            </button>
           </p>
         </form>
       </div>
