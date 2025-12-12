@@ -48,7 +48,20 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email }),
       });
 
-      const data = await response.json();
+      console.log('API Response status:', response.status);
+      console.log('API Response ok:', response.ok);
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('API Response data:', data);
+      } catch (jsonError) {
+        console.error('Failed to parse JSON response:', jsonError);
+        const text = await response.text();
+        console.error('Response text:', text);
+        setError("Server error: Invalid response format");
+        return;
+      }
 
       if (!response.ok) {
         setError(data.error || "Failed to send password reset email");
@@ -56,6 +69,7 @@ export default function ForgotPasswordPage() {
         setMessage("Check your email for a password reset link!");
       }
     } catch (err: any) {
+      console.error('Password reset error:', err);
       setError(err.message || "An error occurred");
     } finally {
       setLoading(false);
