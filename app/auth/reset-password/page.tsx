@@ -28,11 +28,35 @@ function ResetPasswordForm() {
         return;
       }
 
-      // First, check if there's already an active session (from PKCE code exchange)
+      // Check if there's a code parameter (PKCE flow)
+      const code = searchParams.get('code');
+      if (code) {
+        console.log('🔄 Password reset code detected, exchanging...');
+        try {
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          
+          if (error) {
+            console.error('❌ Code exchange failed:', error);
+            setSessionError(error.message || 'Failed to establish session');
+            setSessionReady(false);
+          } else if (data.session) {
+            console.log('✅ Code exchange successful');
+            setSessionReady(true);
+          }
+        } catch (err: any) {
+          console.error('Exception during code exchange:', err);
+          setSessionError(err.message || 'An error occurred');
+          setSessionReady(false);
+        }
+        setSessionLoading(false);
+        return;
+      }
+
+      // Check if there's already an active session
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
-        console.log('✅ Active session found (PKCE flow)');
+        console.log('✅ Active session found');
         setSessionReady(true);
         setSessionLoading(false);
         return;
