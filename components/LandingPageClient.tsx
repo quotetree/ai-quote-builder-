@@ -204,6 +204,7 @@ export default function LandingPageClient() {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const router = useRouter();
 
   // Handle password recovery - check for code parameter OR hash tokens
@@ -468,41 +469,22 @@ export default function LandingPageClient() {
           </div>
         </div>
 
-        {/* Video Placeholder - Made smaller */}
+        {/* Video Section - Self-hosted video */}
         <div className="max-w-4xl mx-auto mb-8">
-          <div className="relative aspect-video bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-2xl overflow-hidden group cursor-pointer">
-            {/* Background pattern */}
-            <div className="absolute inset-0 opacity-10">
-              <div
-                className="absolute inset-0"
-                style={{
-                  backgroundImage: `radial-gradient(circle at 2px 2px, white 1px, transparent 0)`,
-                  backgroundSize: "40px 40px",
-                }}
-              />
-            </div>
-
-            {/* Play button overlay */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="relative">
-                {/* Pulsing rings */}
-                <div className="absolute inset-0 rounded-full bg-white/20 animate-ping" />
-                <div className="absolute inset-0 rounded-full bg-white/10 animate-pulse" />
-                
-                {/* Play button */}
-                <div className="relative w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
-                  <Play className="w-10 h-10 text-green-600 ml-1" fill="currentColor" />
-                </div>
-              </div>
-            </div>
-
-            {/* Text overlay */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center -mt-32">
-                <p className="text-white/90 text-2xl font-semibold mb-2">See QuoteTree in Action</p>
-                <p className="text-white/70 text-sm">2 minute overview</p>
-              </div>
-            </div>
+          <div className="relative aspect-video rounded-2xl shadow-2xl overflow-hidden bg-black">
+            <video
+              src="/quotetree_demo.mp4"
+              className="w-full h-full"
+              controls
+              preload="metadata"
+              onError={(e) => {
+                console.error('Video failed to load:', e);
+                console.log('Attempted to load:', '/quotetree_demo.mp4');
+              }}
+              onLoadStart={() => console.log('Video load started')}
+            >
+              Your browser does not support the video tag.
+            </video>
           </div>
         </div>
 

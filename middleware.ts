@@ -17,7 +17,7 @@ export const config = {
      * - checkout/success (Success page for unauthenticated purchases)
      * Feel free to modify this pattern to include more paths.
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/auth/reset-password-email|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/auth/reset-password-email|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mov|avi|webm)$).*)",
   ],
 };
 
