@@ -500,7 +500,7 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
             description: getCellValue(row, 'description'),
             list_price: listPrice,
             sales_price: salesPrice,
-            cost_price: 0, // Default to 0 for CSV imports
+            cost_price: listPrice, // Set to listPrice for profit margin calculations
             product_type: getCellValue(row, 'product_type'),
             unit: "ea", // Default to "ea" for CSV imports
           };
@@ -1074,6 +1074,7 @@ function ProductForm({
     const normalizedData = {
       ...formData,
       product_family_id: formData.product_family_id || null,
+      cost_price: formData.list_price, // Set cost_price equal to list_price for profit margin calculations
     };
 
     onSave(normalizedData);
@@ -1771,7 +1772,7 @@ function ProductDetail({
           </div>
 
           {/* Row 5: Pricing */}
-          <div className="grid grid-cols-3 gap-6 pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-200">
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">List Price</label>
               <p className="text-lg font-semibold text-gray-900">${product.list_price.toLocaleString()}</p>
@@ -1779,12 +1780,6 @@ function ProductDetail({
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">Sales Price</label>
               <p className="text-lg font-semibold text-green-600">${product.sales_price.toLocaleString()}</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-500 mb-1">Cost Price</label>
-              <p className="text-lg font-semibold text-gray-900">
-                {product.cost_price ? `$${product.cost_price.toLocaleString()}` : "—"}
-              </p>
             </div>
           </div>
 

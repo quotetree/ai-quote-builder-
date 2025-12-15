@@ -95,7 +95,7 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
 
           <div className="p-6">
             <h2 className="text-lg font-semibold mb-4">Pricing</h2>
-            <dl className="grid grid-cols-3 gap-6">
+            <dl className="grid grid-cols-2 gap-6">
               <div className="bg-gray-50 rounded-lg p-4">
                 <dt className="text-sm font-medium text-gray-500 mb-2">List Price</dt>
                 <dd className="text-2xl font-bold text-gray-900">
@@ -108,20 +108,6 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
                   ${product.sales_price.toLocaleString()}
                 </dd>
               </div>
-              {product.cost_price > 0 && (
-                <div className="bg-green-50 rounded-lg p-4">
-                  <dt className="text-sm font-medium text-green-600 mb-2">Cost Price</dt>
-                  <dd className="text-2xl font-bold text-green-600">
-                    ${product.cost_price.toLocaleString()}
-                  </dd>
-                  {product.sales_price > product.cost_price && (
-                    <p className="text-xs text-green-600 mt-1">
-                      Margin: $
-                      {(product.sales_price - product.cost_price).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              )}
             </dl>
           </div>
 
