@@ -577,44 +577,24 @@ export default function LandingPageClient() {
 
             {/* Screenshot display */}
             <div className="lg:col-span-8">
-              <div className="relative">
-                {/* Browser chrome mockup */}
-                <div className="bg-white rounded-lg shadow-2xl overflow-hidden border border-gray-200">
-                  {/* Browser header */}
-                  <div className="bg-gray-100 px-4 py-3 flex items-center gap-2 border-b border-gray-200">
-                    <div className="flex gap-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500" />
-                      <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                      <div className="w-3 h-3 rounded-full bg-green-500" />
-                    </div>
-                    <div className="flex-1 mx-4">
-                      <div className="bg-white rounded px-3 py-1 text-sm text-gray-500 border border-gray-300">
-                        quotetree.com/projects
-                      </div>
-                    </div>
+              <div className="relative rounded-lg shadow-2xl overflow-hidden">
+                {userJourneySteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className={`transition-opacity duration-300 ${
+                      activeStep === step.id ? "opacity-100" : "opacity-0 absolute inset-0"
+                    }`}
+                  >
+                    <Image
+                      src={step.image}
+                      alt={step.title}
+                      width={1920}
+                      height={1080}
+                      className="w-full h-auto rounded-lg"
+                      priority={step.id === 1}
+                    />
                   </div>
-
-                  {/* Screenshot content */}
-                  <div className="bg-gray-50 p-4 min-h-[500px] flex items-center justify-center">
-                    {userJourneySteps.map((step) => (
-                      <div
-                        key={step.id}
-                        className={`transition-opacity duration-300 w-full ${
-                          activeStep === step.id ? "opacity-100" : "opacity-0 absolute"
-                        }`}
-                      >
-                        <Image
-                          src={step.image}
-                          alt={step.title}
-                          width={1920}
-                          height={1080}
-                          className="w-full h-auto rounded-lg shadow-lg"
-                          priority={step.id === 1}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
