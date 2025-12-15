@@ -12,37 +12,37 @@ const userJourneySteps = [
     id: 1,
     title: "Create New Project",
     description: "Start by creating a new project with a descriptive name",
-    image: "/screenshots/new-project.png",
+    image: "/screenshots/new_project.png",
   },
   {
     id: 2,
     title: "Describe Your Scope",
     description: "Chat with AI to describe your project requirements",
-    image: "/screenshots/scope-chat.png",
+    image: "/screenshots/scope_chat.png",
   },
   {
     id: 3,
     title: "Review AI Suggestions",
     description: "Get instant product recommendations and quantities",
-    image: "/screenshots/chat-results.png",
+    image: "/screenshots/chat_results.png",
   },
   {
     id: 4,
     title: "Select Products & Add Markup",
     description: "Review products, adjust quantities, and set your markup",
-    image: "/screenshots/products-markup.png",
+    image: "/screenshots/products_markup.png",
   },
   {
     id: 5,
     title: "Review Quote Log",
     description: "Manage all your quotes in one organized place",
-    image: "/screenshots/quote-log.png",
+    image: "/screenshots/quote_log.png",
   },
   {
     id: 6,
     title: "Download Professional Quote",
     description: "Generate and download beautifully formatted quotes",
-    image: "/screenshots/quote-pdf.png",
+    image: "/screenshots/quote_pdf.png",
   },
 ];
 
@@ -595,26 +595,22 @@ export default function LandingPageClient() {
                   </div>
 
                   {/* Screenshot content */}
-                  <div className="bg-gray-50 p-8 min-h-[500px] flex items-center justify-center">
+                  <div className="bg-gray-50 p-4 min-h-[500px] flex items-center justify-center">
                     {userJourneySteps.map((step) => (
                       <div
                         key={step.id}
-                        className={`transition-opacity duration-300 ${
+                        className={`transition-opacity duration-300 w-full ${
                           activeStep === step.id ? "opacity-100" : "opacity-0 absolute"
                         }`}
                       >
-                        <div className="bg-white rounded-lg shadow-md p-8 text-center">
-                          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl font-bold text-green-600">{step.id}</span>
-                          </div>
-                          <h3 className="text-2xl font-bold mb-2 text-gray-900">{step.title}</h3>
-                          <p className="text-gray-600 mb-6">{step.description}</p>
-                          <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-8">
-                            <p className="text-sm text-gray-500 italic">
-                              Screenshot placeholder - Actual interface screenshot will be displayed here
-                            </p>
-                          </div>
-                        </div>
+                        <Image
+                          src={step.image}
+                          alt={step.title}
+                          width={1920}
+                          height={1080}
+                          className="w-full h-auto rounded-lg shadow-lg"
+                          priority={step.id === 1}
+                        />
                       </div>
                     ))}
                   </div>
