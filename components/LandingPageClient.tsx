@@ -417,7 +417,7 @@ export default function LandingPageClient() {
             </span>
           </h2>
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            Describe your project and let AI pull products from your price book to build a complete quote—no spreadsheets, no rework.
+            Let AI pull products from your price book to build a complete quote—no spreadsheets, no rework.
           </p>
 
           {/* CTA Buttons - Moved here */}
