@@ -14,7 +14,7 @@ export const blogPosts: BlogPost[] = [
     category: 'Trade Specific',
     tags: ['Security Systems', 'Installation', 'Features'],
     readTime: '8 min read',
-    coverImage: '/blog/security-installers-cover.jpg',
+    coverImage: '/images/blog/security-installers-cover.png',
     featured: true,
     content: [
       {
@@ -231,7 +231,7 @@ export const blogPosts: BlogPost[] = [
     category: 'Use Cases',
     tags: ['Price Books', 'Tutorial', 'Best Practices'],
     readTime: '10 min read',
-    coverImage: '/blog/price-book-cover.jpg',
+    coverImage: '/images/blog/price-book-cover.png',
     featured: false,
     content: [
       {
