@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
         existingSubscription.billing_cycle !== billingCycle;
       
       const shouldChargeDirectly = existingSubscription && 
-        existingSubscription.status === "trialing" && 
+        (existingSubscription.status === "trialing" || (existingSubscription.status === "active" && isIndividualPlanChange)) && 
         customerId &&
         (!existingSubscription.stripe_subscription_id || isUpgradingFromFreeTrial || isIndividualPlanChange);
       
