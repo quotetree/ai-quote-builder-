@@ -196,6 +196,13 @@ export async function POST(request: NextRequest) {
           newSubscription = await stripe.subscriptions.retrieve(
             existingSubscription.stripe_subscription_id
           );
+          
+          console.log("Retrieved subscription:", {
+            id: newSubscription.id,
+            current_period_start: newSubscription.current_period_start,
+            current_period_end: newSubscription.current_period_end,
+            status: newSubscription.status
+          });
         } else {
           console.log("Creating new Stripe subscription");
           
@@ -247,6 +254,14 @@ export async function POST(request: NextRequest) {
 
         // Cast newSubscription to any to access properties
         const sub = newSubscription as any;
+        
+        // Use current timestamp as fallback if period dates are invalid
+        const currentPeriodStart = sub.current_period_start 
+          ? new Date(sub.current_period_start * 1000).toISOString()
+          : new Date().toISOString();
+        const currentPeriodEnd = sub.current_period_end
+          ? new Date(sub.current_period_end * 1000).toISOString()
+          : new Date(Date.now() + (billingCycle === 'monthly' ? 30 : 365) * 24 * 60 * 60 * 1000).toISOString();
 
         // Update database subscription
         const { data: dbUpdate, error: dbError } = await supabase
@@ -261,8 +276,8 @@ export async function POST(request: NextRequest) {
             additional_licenses: additionalLicenses,
             base_price_cents: basePriceCents,
             additional_license_price_cents: additionalLicensePriceCents,
-            current_period_start: new Date(sub.current_period_start * 1000).toISOString(),
-            current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+            current_period_start: currentPeriodStart,
+            current_period_end: currentPeriodEnd,
             trial_start_date: null,
             trial_end_date: null,
             updated_at: new Date().toISOString(),
