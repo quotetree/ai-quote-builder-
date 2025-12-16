@@ -39,19 +39,19 @@ export default function ShareButtons({ title, url }: ShareButtonsProps) {
       name: "Twitter",
       icon: Twitter,
       url: `https://twitter.com/intent/tweet?text=${encodedTitle}&url=${encodedUrl}`,
-      color: "hover:bg-blue-400 hover:text-white",
+      color: "hover:bg-green-600 hover:text-white hover:border-green-600",
     },
     {
       name: "LinkedIn",
       icon: Linkedin,
       url: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
-      color: "hover:bg-blue-600 hover:text-white",
+      color: "hover:bg-green-600 hover:text-white hover:border-green-600",
     },
     {
       name: "Facebook",
       icon: Facebook,
       url: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
-      color: "hover:bg-blue-700 hover:text-white",
+      color: "hover:bg-green-600 hover:text-white hover:border-green-600",
     },
   ];
 
@@ -79,7 +79,7 @@ export default function ShareButtons({ title, url }: ShareButtonsProps) {
         className={`flex items-center justify-center w-full p-3 rounded-lg border-2 transition-all ${
           copied
             ? "bg-green-600 text-white border-green-600"
-            : "border-gray-200 text-gray-700 hover:bg-gray-100"
+            : "border-gray-200 text-gray-700 hover:bg-green-600 hover:text-white hover:border-green-600"
         }`}
         aria-label="Copy link"
       >
