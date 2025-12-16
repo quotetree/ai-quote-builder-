@@ -663,19 +663,23 @@ export default function LandingPageClient() {
               <ul className="space-y-3">
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">3 quotes per month</span>
+                  <span className="text-sm text-gray-600">Unlimited quotes</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Basic AI chat assistant</span>
+                  <span className="text-sm text-gray-600">Advanced AI chat assistant</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Standard product library</span>
+                  <span className="text-sm text-gray-600">Full product library access</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
                   <span className="text-sm text-gray-600">PDF quote generation</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                  <span className="text-sm text-gray-600">Profit margin breakdown</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
@@ -721,23 +725,15 @@ export default function LandingPageClient() {
               <ul className="space-y-3">
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Unlimited quotes</span>
+                  <span className="text-sm text-green-50">Everything in Free Trial</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Advanced AI chat assistant</span>
+                  <span className="text-sm text-green-50">Bulk product import/export</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Full product library access</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Custom price book</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">PDF & Excel export</span>
+                  <span className="text-sm text-green-50">Profit margin breakdown</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
@@ -750,6 +746,10 @@ export default function LandingPageClient() {
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
                   <span className="text-sm text-green-50">Custom markup presets</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
+                  <span className="text-sm text-green-50">Personalize quote template</span>
                 </li>
               </ul>
             </div>
@@ -844,15 +844,7 @@ export default function LandingPageClient() {
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Admin dashboard</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Bulk product import</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">API access</span>
+                  <span className="text-sm text-gray-600">User permission settings</span>
                 </li>
               </ul>
             </div>
