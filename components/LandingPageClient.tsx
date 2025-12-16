@@ -157,39 +157,39 @@ const pricingPlans = {
 
 const faqs = [
   {
-    question: "What to expect on the 15-min demo call?",
+    question: "Who is QuoteTree built for?",
     answer:
-      "During the demo, we'll walk you through the entire quote creation process, from starting a project to downloading your finished quote. You'll see how the AI assistant works, how to customize your price book, and how QuoteTree can save you hours every week.",
+      "QuoteTree is built for security installers, low-voltage integrators, electricians, and AV contractors who quote labor, materials, and licenses regularly and want a faster, more reliable quoting process.",
   },
   {
-    question: "Will it work for my industry / products?",
+    question: "Do I need to upload my own price book?",
     answer:
-      "QuoteTree is designed for contractors and service providers across multiple industries including security systems, electrical, HVAC, networking, and more. Our AI is trained on diverse product catalogs and can adapt to your specific needs. You can also import your own price book for complete customization.",
+      "Yes. QuoteTree works best when you upload your own price book so quotes reflect your actual products, labor rates, and margins. You stay in full control of pricing.",
   },
   {
-    question: "What kind of support do you offer?",
+    question: "Can I adjust pricing and margins before sending a quote?",
     answer:
-      "All plans include email support with response times within 24 hours. Paid plans get priority support with faster response times. We also offer a comprehensive knowledge base, video tutorials, and regular webinars to help you get the most out of QuoteTree.",
+      "Yes. You can review and adjust pricing, markup, and margins in real time before finalizing and sending a quote.",
   },
   {
-    question: "Can you help me find new customers?",
+    question: "Does QuoteTree replace my estimating process?",
     answer:
-      "While QuoteTree focuses on streamlining your quoting process, we do offer integrations with popular CRM systems to help you track leads. Our goal is to help you respond to opportunities faster with professional quotes, giving you a competitive advantage in winning new business.",
+      "QuoteTree doesn't replace your expertise—it replaces the manual work. It helps you turn scopes into quotes faster without spreadsheets, repetitive data entry, or rework.",
   },
   {
-    question: "Do I need to connect to my CRM?",
+    question: "Can I edit the quote after it's generated?",
     answer:
-      "No, QuoteTree works as a standalone tool. However, if you use a CRM, we offer optional integrations that can sync your quotes and project data, making your workflow even more seamless.",
+      "Yes. Every quote is fully editable. You can add, remove, or adjust line items before sending it to a client.",
   },
   {
-    question: "Can I cancel anytime?",
+    question: "What does the final quote look like?",
     answer:
-      "Yes! All paid plans are month-to-month with no long-term commitment. You can cancel anytime from your account settings, and you'll continue to have access until the end of your billing period.",
+      "QuoteTree generates clean, professional PDFs that are easy for clients to review and approve.",
   },
   {
-    question: "What payment methods do you accept?",
+    question: "Is QuoteTree a proposal tool like Proposify?",
     answer:
-      "We accept all major credit cards (Visa, Mastercard, American Express, Discover) and process payments securely through Stripe. Annual plans can also be paid via ACH transfer upon request.",
+      "No. QuoteTree focuses on the quoting and pricing side of the workflow. It's built for generating accurate quotes from real price books—not generic proposal templates.",
   },
 ];
 
