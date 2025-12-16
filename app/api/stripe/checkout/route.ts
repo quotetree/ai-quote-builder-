@@ -144,6 +144,14 @@ export async function POST(request: NextRequest) {
       console.log("=========================");
       
       if (shouldChargeDirectly) {
+        // Type safety: Ensure customerId and user are defined
+        if (!customerId || !user) {
+          return NextResponse.json(
+            { error: "Customer ID or user not found" },
+            { status: 400 }
+          );
+        }
+        
         console.log("Trial user with payment method - creating/updating subscription directly");
         console.log("Upgrading from free trial:", isUpgradingFromFreeTrial);
         console.log("Is Individual plan change:", isIndividualPlanChange);
