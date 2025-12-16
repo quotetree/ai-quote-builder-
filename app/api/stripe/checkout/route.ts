@@ -113,43 +113,96 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
 
-      // SPECIAL CASE: Trial user with payment method but no Stripe subscription yet
-      // This happens when users sign up via landing page and get a card on file, but haven't upgraded yet
-      if (existingSubscription && existingSubscription.status === "trialing" && !existingSubscription.stripe_subscription_id && customerId) {
-        console.log("Trial user with payment method - creating subscription directly");
+      // SPECIAL CASE: Trial user with payment method
+      // Case 1: No Stripe subscription yet (signed up, added card, haven't upgraded)
+      // Case 2: Switching between Individual Monthly/Yearly during trial
+      const isIndividualPlanChange = 
+        existingSubscription?.plan_type === 'individual' && 
+        planType === 'individual' &&
+        existingSubscription.billing_cycle !== billingCycle;
+      
+      if (existingSubscription && existingSubscription.status === "trialing" && customerId &&
+          (!existingSubscription.stripe_subscription_id || isIndividualPlanChange)) {
+        console.log("Trial user with payment method - creating/updating subscription directly");
+        console.log("Is Individual plan change:", isIndividualPlanChange);
         
-        // Build line items for the new subscription
-        const lineItems: any[] = [];
-        if (planType === "individual") {
-          const priceId = billingCycle === "monthly"
+        let newSubscription: any;
+        
+        // If existing Stripe subscription, update it; otherwise create new one
+        if (existingSubscription.stripe_subscription_id && isIndividualPlanChange) {
+          console.log("Updating existing Stripe subscription:", existingSubscription.stripe_subscription_id);
+          
+          // Get current subscription to update items
+          const currentSub = await stripe.subscriptions.retrieve(existingSubscription.stripe_subscription_id, {
+            expand: ['items']
+          }) as any;
+          
+          // Build new price ID
+          const newPriceId = billingCycle === "monthly"
             ? STRIPE_PRICE_IDS.individual.monthly
             : STRIPE_PRICE_IDS.individual.yearly;
-          lineItems.push({ price: priceId, quantity: 1 });
-        } else if (planType === "organization") {
-          const basePriceId = billingCycle === "monthly"
-            ? STRIPE_PRICE_IDS.organization.base.monthly
-            : STRIPE_PRICE_IDS.organization.base.yearly;
-          lineItems.push({ price: basePriceId, quantity: 1 });
           
-          if (additionalLicenses > 0) {
-            const licensePriceId = billingCycle === "monthly"
-              ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
-              : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
-            lineItems.push({ price: licensePriceId, quantity: additionalLicenses });
+          // Delete old items and add new one
+          const itemUpdates: any[] = [];
+          currentSub.items.data.forEach((item: any) => {
+            itemUpdates.push({ id: item.id, deleted: true });
+          });
+          itemUpdates.push({ price: newPriceId, quantity: 1 });
+          
+          // Update subscription (charges card immediately, ends trial)
+          newSubscription = await stripe.subscriptions.update(
+            existingSubscription.stripe_subscription_id,
+            {
+              items: itemUpdates,
+              trial_end: 'now', // End trial immediately
+              proration_behavior: 'none', // No proration needed, just charge new amount
+              billing_cycle_anchor: 'now', // Reset billing cycle to today
+              metadata: {
+                user_id: user!.id,
+                organization_id: organizationId,
+                plan_type: planType,
+                billing_cycle: billingCycle,
+              },
+            }
+          );
+          
+          console.log("Subscription updated successfully");
+        } else {
+          console.log("Creating new Stripe subscription");
+          
+          // Build line items for the new subscription
+          const lineItems: any[] = [];
+          if (planType === "individual") {
+            const priceId = billingCycle === "monthly"
+              ? STRIPE_PRICE_IDS.individual.monthly
+              : STRIPE_PRICE_IDS.individual.yearly;
+            lineItems.push({ price: priceId, quantity: 1 });
+          } else if (planType === "organization") {
+            const basePriceId = billingCycle === "monthly"
+              ? STRIPE_PRICE_IDS.organization.base.monthly
+              : STRIPE_PRICE_IDS.organization.base.yearly;
+            lineItems.push({ price: basePriceId, quantity: 1 });
+            
+            if (additionalLicenses > 0) {
+              const licensePriceId = billingCycle === "monthly"
+                ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
+                : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
+              lineItems.push({ price: licensePriceId, quantity: additionalLicenses });
+            }
           }
-        }
 
-        // Create subscription in Stripe (charges card immediately, no trial)
-        const newSubscription = await stripe.subscriptions.create({
-          customer: customerId,
-          items: lineItems,
-          metadata: {
-            user_id: user!.id,
-            organization_id: organizationId,
-            plan_type: planType,
-            billing_cycle: billingCycle,
-          },
-        });
+          // Create subscription in Stripe (charges card immediately, no trial)
+          newSubscription = await stripe.subscriptions.create({
+            customer: customerId,
+            items: lineItems,
+            metadata: {
+              user_id: user!.id,
+              organization_id: organizationId,
+              plan_type: planType,
+              billing_cycle: billingCycle,
+            },
+          });
+        }
 
         // Calculate pricing
         const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
