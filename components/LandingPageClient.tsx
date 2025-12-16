@@ -340,7 +340,7 @@ export default function LandingPageClient() {
                 Features
               </Link>
               <Link
-                href="#blog"
+                href="/blog"
                 className="text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Blog
@@ -974,7 +974,7 @@ export default function LandingPageClient() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
+                  <Link href="/blog" className="text-gray-600 hover:text-gray-900">
                     Blog
                   </Link>
                 </li>
