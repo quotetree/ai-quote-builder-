@@ -174,7 +174,7 @@ export async function POST(request: NextRequest) {
           itemUpdates.push({ price: newPriceId, quantity: 1 });
           
           // Update subscription (charges card immediately, ends trial)
-          newSubscription = await stripe.subscriptions.update(
+          await stripe.subscriptions.update(
             existingSubscription.stripe_subscription_id,
             {
               items: itemUpdates,
@@ -191,6 +191,11 @@ export async function POST(request: NextRequest) {
           );
           
           console.log("Subscription updated successfully");
+          
+          // Retrieve the updated subscription to get correct period dates
+          newSubscription = await stripe.subscriptions.retrieve(
+            existingSubscription.stripe_subscription_id
+          );
         } else {
           console.log("Creating new Stripe subscription");
           
