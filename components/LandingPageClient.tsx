@@ -23,19 +23,19 @@ const userJourneySteps = [
   {
     id: 3,
     title: "Review AI Suggestions",
-    description: "Get instant product recommendations and quantities",
+    description: "accurate quantities",
     image: "/screenshots/chat_results.png",
   },
   {
     id: 4,
-    title: "Select Products & Add Markup",
-    description: "Review products, adjust quantities, and set your markup",
+    title: "Smart calculator",
+    description: "Easily apply discounts, calculate taxes, and add your markup",
     image: "/screenshots/products_markup.png",
   },
   {
     id: 5,
-    title: "Review Quote Log",
-    description: "Manage all your quotes in one organized place",
+    title: "Review profit margin",
+    description: "Understand what you will make at the end of each job before you send boots on the ground",
     image: "/screenshots/quote_log.png",
   },
   {
@@ -411,14 +411,13 @@ export default function LandingPageClient() {
 
         <div className="text-center max-w-4xl mx-auto">
           <h2 className="text-5xl md:text-6xl font-bold mb-6 text-gray-900">
-            Generate Professional Quotes{" "}
+            Generate construction quotes{" "}
             <span className="bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-              10x Faster
+              10x faster
             </span>
           </h2>
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            Transform hours of manual estimating into minutes with AI. Chat naturally to build quotes,
-            adjust pricing in real-time, and deliver professional proposals that win more business.
+            Describe your project and let AI pull products from your price book to build a complete quote—no spreadsheets, no rework.
           </p>
 
           {/* CTA Buttons - Moved here */}
@@ -492,15 +491,15 @@ export default function LandingPageClient() {
         <div className="flex flex-wrap justify-center gap-8 text-gray-600">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-green-600" />
-            <span>No credit card required</span>
+            <span>Build quotes in minutes</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-green-600" />
-            <span>Set up in under 5 minutes</span>
+            <span>Professional, client-ready PDFs</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-green-600" />
-            <span>Cancel anytime</span>
+            <span>AI-powered product matching</span>
           </div>
         </div>
       </section>
@@ -513,7 +512,7 @@ export default function LandingPageClient() {
               How QuoteTree Works
             </h2>
             <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              From conversation to professional quote in minutes. Here's your journey.
+              From scope to quote. AI matches products from your price book in realtime so you never underbid on a project again.
             </p>
           </div>
 
@@ -920,7 +919,7 @@ export default function LandingPageClient() {
           >
             Start Your Free Trial Today
           </Link>
-          <p className="mt-4 text-green-100 text-sm">No credit card required • Set up in 5 minutes</p>
+          <p className="mt-4 text-green-100 text-sm">Set up in 5 minutes</p>
         </div>
       </section>
 
@@ -948,7 +947,7 @@ export default function LandingPageClient() {
               <h4 className="font-semibold text-gray-900 mb-4">Product</h4>
               <ul className="space-y-2 text-sm">
                 <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
+                  <Link href="#features" className="text-gray-600 hover:text-gray-900">
                     Features
                   </Link>
                 </li>
@@ -958,45 +957,24 @@ export default function LandingPageClient() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
+                  <a href="https://calendly.com/quotetree/30min" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-900">
                     Demo
-                  </Link>
+                  </a>
                 </li>
               </ul>
             </div>
 
             <div>
-              <h4 className="font-semibold text-gray-900 mb-4">Company</h4>
+              <h4 className="font-semibold text-gray-900 mb-4">Resources</h4>
               <ul className="space-y-2 text-sm">
-                <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    About
-                  </Link>
-                </li>
                 <li>
                   <Link href="/blog" className="text-gray-600 hover:text-gray-900">
                     Blog
                   </Link>
                 </li>
                 <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    Contact
-                  </Link>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-4">Legal</h4>
-              <ul className="space-y-2 text-sm">
-                <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    Privacy Policy
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    Terms of Service
+                  <Link href="#faq" className="text-gray-600 hover:text-gray-900">
+                    FAQ
                   </Link>
                 </li>
               </ul>
