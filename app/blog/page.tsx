@@ -24,8 +24,9 @@ export default function BlogPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          plan: 'individual',
-          trialDays: 14,
+          planType: 'individual',
+          billingCycle: 'monthly',
+          trialPeriodDays: 14,
         }),
       });
 
