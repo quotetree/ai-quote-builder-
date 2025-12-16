@@ -113,18 +113,42 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .maybeSingle(); // Use maybeSingle instead of single to handle 0 results gracefully
 
-      // SPECIAL CASE: Trial user with payment method
-      // Case 1: No Stripe subscription yet (signed up, added card, haven't upgraded)
-      // Case 2: Switching between Individual Monthly/Yearly during trial
+      // SPECIAL CASE: Trial user with payment method - charge them directly
+      // Case 1: Upgrading from free trial (plan_type='free') to any paid plan
+      // Case 2: Switching between Individual Monthly/Yearly during trial (plan_type='individual')
+      // Case 3: No Stripe subscription yet (signed up, added card, haven't upgraded)
+      const isUpgradingFromFreeTrial = 
+        existingSubscription?.plan_type === 'free' && 
+        (planType === 'individual' || planType === 'organization');
+      
       const isIndividualPlanChange = 
         existingSubscription?.plan_type === 'individual' && 
         planType === 'individual' &&
         existingSubscription.billing_cycle !== billingCycle;
       
-      if (existingSubscription && existingSubscription.status === "trialing" && customerId &&
-          (!existingSubscription.stripe_subscription_id || isIndividualPlanChange)) {
+      const shouldChargeDirectly = existingSubscription && 
+        existingSubscription.status === "trialing" && 
+        customerId &&
+        (!existingSubscription.stripe_subscription_id || isUpgradingFromFreeTrial || isIndividualPlanChange);
+      
+      console.log("=== TRIAL UPGRADE CHECK ===");
+      console.log("Existing subscription:", !!existingSubscription);
+      console.log("Status:", existingSubscription?.status);
+      console.log("Customer ID:", !!customerId);
+      console.log("Stripe Subscription ID:", existingSubscription?.stripe_subscription_id);
+      console.log("Current plan_type:", existingSubscription?.plan_type);
+      console.log("Target plan_type:", planType);
+      console.log("isUpgradingFromFreeTrial:", isUpgradingFromFreeTrial);
+      console.log("isIndividualPlanChange:", isIndividualPlanChange);
+      console.log("shouldChargeDirectly:", shouldChargeDirectly);
+      console.log("=========================");
+      
+      if (shouldChargeDirectly) {
         console.log("Trial user with payment method - creating/updating subscription directly");
+        console.log("Upgrading from free trial:", isUpgradingFromFreeTrial);
         console.log("Is Individual plan change:", isIndividualPlanChange);
+        console.log("Current plan_type:", existingSubscription?.plan_type);
+        console.log("Target plan_type:", planType);
         
         let newSubscription: any;
         
