@@ -13,7 +13,36 @@ const categories = ["All", "Trade Specific", "Comparisons", "Use Cases"];
 
 export default function BlogPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
   const allPosts = getAllBlogPosts();
+
+  // Handle Stripe checkout for free trial
+  const handleFreeTrialCheckout = async () => {
+    setIsCheckoutLoading(true);
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: 'individual',
+          trialDays: 14,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create checkout');
+      }
+
+      // Redirect to Stripe checkout
+      window.location.href = data.url;
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      alert(error.message || 'Failed to start checkout. Please try again.');
+      setIsCheckoutLoading(false);
+    }
+  };
 
   // Filter posts by category
   const filteredPosts =
@@ -132,12 +161,13 @@ export default function BlogPage() {
                 QuoteTree is an AI-powered quote generation platform built for contractors and service providers. 
                 Create professional quotes 10x faster with intelligent product recommendations and automated pricing.
               </p>
-              <Link
-                href="/auth/signup"
-                className="block w-full px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-center"
+              <button
+                onClick={handleFreeTrialCheckout}
+                disabled={isCheckoutLoading}
+                className="block w-full px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Try QuoteTree Free
-              </Link>
+                {isCheckoutLoading ? 'Loading...' : 'Try QuoteTree Free'}
+              </button>
             </div>
 
             {/* Categories */}
