@@ -52,6 +52,21 @@ function normalizeToken(token: string): string {
 }
 
 /**
+ * Normalizes text for exact matching comparison.
+ * Removes punctuation, special characters, and converts to lowercase.
+ * Example: "Verkada Bullet Camera 2025" -> "verkada bullet camera 2025"
+ */
+function normalizeForExactMatch(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
+    .replace(/\s+/g, ' ')       // Normalize multiple spaces
+    .trim();
+}
+
+/**
  * Normalizes text into tokens with singular/plural handling.
  * Example: "misc materials" -> ["misc", "material"]
  */
@@ -284,10 +299,51 @@ function searchProductsWithScores(products: any[], keywords: string): { product:
       });
     }
     
+    // EXACT MATCH BONUS: +100 for exact product name or code match
+    const normalizedUserInput = normalizeForExactMatch(keywords);
+    const normalizedProductName = normalizeForExactMatch(product.product_name || '');
+    const normalizedProductCode = normalizeForExactMatch(product.product_number || '');
+
+    let exactMatchBonus = 0;
+
+    // Check for exact product name match
+    if (normalizedUserInput && normalizedProductName && normalizedUserInput === normalizedProductName) {
+      exactMatchBonus += 100;
+      console.log(`   🎯 EXACT NAME MATCH: "${product.product_name}" matches "${keywords}" exactly`);
+    }
+
+    // Check for exact product code match  
+    if (normalizedUserInput && normalizedProductCode && normalizedUserInput === normalizedProductCode) {
+      exactMatchBonus += 100;
+      console.log(`   🎯 EXACT CODE MATCH: Product code "${product.product_number}" matches "${keywords}" exactly`);
+    }
+
+    // Apply exact match bonus
+    if (exactMatchBonus > 0) {
+      score += exactMatchBonus;
+      console.log(`   ⭐ Exact match bonus applied: +${exactMatchBonus} points. Final score: ${score}`);
+    }
+    
     return { product, score };
   });
   
-  const sorted = scored.sort((a, b) => b.score - a.score);
+  const sorted = scored.sort((a, b) => {
+    // Primary sort: by score (descending)
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    
+    // Secondary sort: exact matches first (if scores are tied)
+    const aIsExact = normalizeForExactMatch(keywords) === normalizeForExactMatch(a.product.product_name || '') ||
+                     normalizeForExactMatch(keywords) === normalizeForExactMatch(a.product.product_number || '');
+    const bIsExact = normalizeForExactMatch(keywords) === normalizeForExactMatch(b.product.product_name || '') ||
+                     normalizeForExactMatch(keywords) === normalizeForExactMatch(b.product.product_number || '');
+    
+    if (bIsExact && !aIsExact) return 1;
+    if (aIsExact && !bIsExact) return -1;
+    
+    return 0; // Keep original order if both exact or both not exact
+  });
   
   // Only return products with positive scores (at least some keyword matches)
   const results = sorted.filter(item => item.score > 0).slice(0, 20);
