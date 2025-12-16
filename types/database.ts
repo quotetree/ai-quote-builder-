@@ -127,8 +127,8 @@ export interface OrganizationMemberWithProfile extends OrganizationMembership {
 // Plan pricing constants
 export const PLAN_PRICING = {
   individual: {
-    monthly: 9700, // $97.00 in cents
-    yearly: 7900, // $79.00 in cents (per month, billed yearly)
+    monthly: 7900, // $79.00 in cents
+    yearly: 6500, // $65.00 in cents (per month, billed yearly)
   },
   organization: {
     monthly: {

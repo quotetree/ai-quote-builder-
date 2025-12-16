@@ -3,8 +3,8 @@
 
 export const STRIPE_PRICE_IDS = {
   individual: {
-    monthly: process.env.STRIPE_PRICE_INDIVIDUAL_MONTHLY || "price_1SXAe1RiMM33f0now2b6gRYL", // $97/month
-    yearly: process.env.STRIPE_PRICE_INDIVIDUAL_YEARLY || "price_1SXAfbRiMM33f0noCqAfASFd", // $79/month (billed yearly)
+    monthly: process.env.STRIPE_PRICE_INDIVIDUAL_MONTHLY || "price_1SeypPRiMM33f0nozhL81TGe", // $79/month
+    yearly: process.env.STRIPE_PRICE_INDIVIDUAL_YEARLY || "price_1SeyocRiMM33f0noxWSG83YW", // $65/month (billed yearly)
   },
   organization: {
     base: {

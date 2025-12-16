@@ -65,7 +65,7 @@ const pricingPlans = {
     },
     {
       name: "Single User",
-      price: 97,
+      price: 79,
       period: "month",
       description: "Ideal for independent contractors",
       features: [
@@ -118,9 +118,9 @@ const pricingPlans = {
     },
     {
       name: "Single User",
-      price: 79,
+      price: 65,
       period: "month",
-      yearlyTotal: 948,
+      yearlyTotal: 780,
       description: "Ideal for independent contractors",
       features: [
         "Unlimited quotes",
@@ -134,7 +134,7 @@ const pricingPlans = {
       ],
       cta: "Start Free Trial",
       highlighted: true,
-      savings: "Save $216/year",
+      savings: "Save $168/year",
     },
     {
       name: "Organization",
@@ -704,13 +704,13 @@ export default function LandingPageClient() {
 
               <div className="mb-6">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-bold">${isYearly ? '79' : '97'}</span>
+                  <span className="text-5xl font-bold">${isYearly ? '65' : '79'}</span>
                   <span className="text-lg text-green-100">/month</span>
                 </div>
                 {isYearly && (
                   <>
-                    <p className="text-sm text-green-100 mt-2 font-medium">Save $216/year</p>
-                    <p className="text-sm mt-1 text-green-100">Billed $948 annually</p>
+                    <p className="text-sm text-green-100 mt-2 font-medium">Save $168/year</p>
+                    <p className="text-sm mt-1 text-green-100">Billed $780 annually</p>
                   </>
                 )}
               </div>
