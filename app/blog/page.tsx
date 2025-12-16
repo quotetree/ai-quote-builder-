@@ -7,6 +7,7 @@ import { Home, ChevronRight } from "lucide-react";
 import { getAllBlogPosts } from "@/lib/blogPosts";
 import BlogCard from "@/components/blog/BlogCard";
 import NewsletterSignup from "@/components/blog/NewsletterSignup";
+import { Toaster } from "react-hot-toast";
 
 const categories = ["All", "Trade Specific", "Comparisons", "Use Cases"];
 
@@ -22,6 +23,7 @@ export default function BlogPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">
+      <Toaster position="top-center" />
       {/* Header Navigation */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
