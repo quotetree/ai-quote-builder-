@@ -1572,17 +1572,6 @@ PRODUCT_DATA_START
 1. Product Name - Qty: X, Price: $XXX each = $XXX
 PRODUCT_DATA_END
 
-**RULE #4:** AFTER the PRODUCT_DATA block you MUST output \`REQUEST_DATA_START\` / \`REQUEST_DATA_END\` containing a VALID JSON array that summarizes EXACTLY what the user asked for in THIS message. Each object must include: 
-\`"item"\` (string), \`"quantity"\` (number), \`"unit"\` (string or null), \`"budget"\` (number or null), \`"rawText"\` (the exact words the user used), and optional \`"keywords"\`.
-
-Example:
-REQUEST_DATA_START
-[
-  { "item": "Acme widgets", "quantity": 4, "unit": "units", "budget": null, "rawText": "4 Acme widgets", "keywords": "acme widget" },
-  { "item": "Miscellaneous material", "quantity": 1, "unit": null, "budget": 150, "rawText": "$150 in misc material", "keywords": "miscellaneous material" }
-]
-REQUEST_DATA_END
-
 ## ❌ WRONG EXAMPLES (DO NOT DO THIS):
 
 **Message 1:** "I need cable and mount"
