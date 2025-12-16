@@ -237,6 +237,11 @@ export default function BlogPage() {
                     Pricing
                   </Link>
                 </li>
+                <li>
+                  <a href="https://calendly.com/quotetree/30min" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-900">
+                    Demo
+                  </a>
+                </li>
               </ul>
             </div>
 
@@ -251,22 +256,6 @@ export default function BlogPage() {
                 <li>
                   <Link href="/#faq" className="text-gray-600 hover:text-gray-900">
                     FAQ
-                  </Link>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-4">Legal</h4>
-              <ul className="space-y-2 text-sm">
-                <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    Privacy Policy
-                  </Link>
-                </li>
-                <li>
-                  <Link href="#" className="text-gray-600 hover:text-gray-900">
-                    Terms of Service
                   </Link>
                 </li>
               </ul>
