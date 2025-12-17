@@ -191,39 +191,58 @@ function AcceptInviteContent() {
         .maybeSingle();
 
       if (existingMembership) {
-        setError("You are already a member of this organization.");
-        setAccepting(false);
-        return;
-      }
+        // User is already a member (trigger already created membership on signup)
+        // Just mark invitation as accepted
+        const { error: updateError } = await supabase
+          .from("organization_invitations")
+          .update({ status: "accepted" })
+          .eq("id", invitation.id);
 
-      // Create membership
-      const { error: membershipError } = await supabase
-        .from("organization_memberships")
-        .insert({
-          organization_id: invitation.organization_id,
-          user_id: user.id,
-          role: invitation.role,
-          invited_by: null, // Could track from invitation if needed
-          invited_at: new Date().toISOString(),
-          joined_at: new Date().toISOString(),
-        });
+        if (updateError) {
+          console.error("Failed to update invitation status:", updateError);
+        }
+        
+        // Continue to success
+      } else {
+        // For existing users who signed up before the invite
+        // Create membership manually
+        const { error: membershipError } = await supabase
+          .from("organization_memberships")
+          .insert({
+            organization_id: invitation.organization_id,
+            user_id: user.id,
+            role: invitation.role,
+            invited_by: null, // Could track from invitation if needed
+            invited_at: new Date().toISOString(),
+            joined_at: new Date().toISOString(),
+          });
 
-      if (membershipError) {
-        console.error("Failed to create membership:", membershipError);
-        setError("Failed to join organization. Please contact support.");
-        setAccepting(false);
-        return;
-      }
+        if (membershipError) {
+          console.error("Failed to create membership:", membershipError);
+          setError("Failed to join organization. Please contact support.");
+          setAccepting(false);
+          return;
+        }
 
-      // Update invitation status to accepted
-      const { error: updateError } = await supabase
-        .from("organization_invitations")
-        .update({ status: "accepted" })
-        .eq("id", invitation.id);
+        // Update profile's organization_id
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update({ organization_id: invitation.organization_id })
+          .eq("id", user.id);
 
-      if (updateError) {
-        console.error("Failed to update invitation status:", updateError);
-        // Don't fail here - membership was created successfully
+        if (profileError) {
+          console.error("Failed to update profile organization:", profileError);
+        }
+
+        // Update invitation status to accepted
+        const { error: updateError } = await supabase
+          .from("organization_invitations")
+          .update({ status: "accepted" })
+          .eq("id", invitation.id);
+
+        if (updateError) {
+          console.error("Failed to update invitation status:", updateError);
+        }
       }
 
       // Success!

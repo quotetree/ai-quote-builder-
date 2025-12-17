@@ -47,10 +47,22 @@ export function useProjects() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      // Get user's organization_id from their membership
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_memberships")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError || !membership) {
+        throw new Error("Organization membership not found. Please refresh and try again.");
+      }
+
       const { data, error } = await supabase
         .from("projects")
         .insert({
           user_id: user.id,
+          organization_id: membership.organization_id,
           project_name: name,
           product_families: families,
         })
