@@ -772,7 +772,7 @@ export default function LandingPageClient() {
                   <>
                     <p className="text-sm text-green-600 mt-2 font-medium">Save $336/year</p>
                     <p className="text-sm mt-1 text-gray-600">
-                      Billed ${(130 + additionalLicenses * 65) * 12} annually
+                      Billed ${((130 + additionalLicenses * 65) * 12).toLocaleString()} annually
                     </p>
                   </>
                 )}
@@ -907,7 +907,6 @@ export default function LandingPageClient() {
           >
             Start Your Free Trial Today
           </Link>
-          <p className="mt-4 text-green-100 text-sm">Set up in 5 minutes</p>
         </div>
       </section>
 
