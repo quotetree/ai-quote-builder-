@@ -2264,6 +2264,12 @@ ${formattedResults}
       finalMessageParts.push(cleanedWithoutWorkSummary.trim());
     }
     cleanMessage = finalMessageParts.join('\n\n').trim();
+    
+    // CRITICAL: Final cleanup - ensure PRODUCT_DATA_START and REQUEST_DATA_START never appear in user-facing message
+    cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\s*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\s*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*/g, '').trim();
 
     // CRITICAL: Check abort before saving to database
     if (aborted || signal.aborted) {
