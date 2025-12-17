@@ -1572,17 +1572,6 @@ PRODUCT_DATA_START
 1. Product Name - Qty: X, Price: $XXX each = $XXX
 PRODUCT_DATA_END
 
-**RULE #4:** AFTER the PRODUCT_DATA block you MUST output \`REQUEST_DATA_START\` / \`REQUEST_DATA_END\` containing a VALID JSON array that summarizes EXACTLY what the user asked for in THIS message. Each object must include: 
-\`"item"\` (string), \`"quantity"\` (number), \`"unit"\` (string or null), \`"budget"\` (number or null), \`"rawText"\` (the exact words the user used), and optional \`"keywords"\`.
-
-Example:
-REQUEST_DATA_START
-[
-  { "item": "Acme widgets", "quantity": 4, "unit": "units", "budget": null, "rawText": "4 Acme widgets", "keywords": "acme widget" },
-  { "item": "Miscellaneous material", "quantity": 1, "unit": null, "budget": 150, "rawText": "$150 in misc material", "keywords": "miscellaneous material" }
-]
-REQUEST_DATA_END
-
 ## ❌ WRONG EXAMPLES (DO NOT DO THIS):
 
 **Message 1:** "I need cable and mount"
@@ -2275,6 +2264,12 @@ ${formattedResults}
       finalMessageParts.push(cleanedWithoutWorkSummary.trim());
     }
     cleanMessage = finalMessageParts.join('\n\n').trim();
+    
+    // CRITICAL: Final cleanup - ensure PRODUCT_DATA_START and REQUEST_DATA_START never appear in user-facing message
+    cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END\s*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*PRODUCT_DATA_START[\s\S]*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*?REQUEST_DATA_END\s*/g, '').trim();
+    cleanMessage = cleanMessage.replace(/\s*REQUEST_DATA_START[\s\S]*/g, '').trim();
 
     // CRITICAL: Check abort before saving to database
     if (aborted || signal.aborted) {
