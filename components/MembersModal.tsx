@@ -78,33 +78,41 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
         setSubscription(subData);
       }
 
-      // Get members
+      // Get members using RPC function (bypasses RLS issues)
+      console.log('📋 Fetching members using RPC function...');
+      
       const { data: membersData, error: membersError } = await supabase
-        .from("organization_memberships")
-        .select("*")
-        .eq("organization_id", context.organization_id)
-        .order("created_at", { ascending: true });
+        .rpc('get_organization_members', { p_user_id: user.id });
 
       if (membersError) {
-        console.error("Members query error:", membersError);
+        console.error("Members RPC error:", membersError);
         throw membersError;
       }
 
-      // Get profiles separately for each member
-      const membersWithProfiles = await Promise.all(
-        (membersData || []).map(async (member) => {
-          const { data: profileData } = await supabase
-            .from("profiles")
-            .select("email, full_name, company_name")
-            .eq("id", member.user_id)
-            .single();
+      console.log('✅ RPC returned', membersData?.length || 0, 'members');
 
-          return {
-            ...member,
-            profile: profileData || { email: "", full_name: null, company_name: null },
-          };
-        })
-      );
+      // Transform RPC data to match expected format
+      const membersWithProfiles = (membersData || []).map((member: any) => ({
+        id: member.id,
+        organization_id: member.organization_id,
+        user_id: member.user_id,
+        role: member.role,
+        created_at: member.created_at,
+        invited_by: member.invited_by,
+        invited_at: member.invited_at,
+        joined_at: member.joined_at,
+        updated_at: member.updated_at,
+        profile: {
+          email: member.email,
+          full_name: member.full_name,
+          company_name: member.company_name,
+        },
+      }));
+
+      console.log('👥 Total members with profiles:', membersWithProfiles.length);
+      membersWithProfiles.forEach((m: any) => {
+        console.log('  -', m.profile.email, '(', m.role, ')');
+      });
 
       setMembers(membersWithProfiles);
 

@@ -1386,12 +1386,26 @@ export async function POST(req: NextRequest) {
       console.log(`📝 edit:context { sessionId: "${editSessionId}", quoteId: "${editQuoteId}", instruction: "${message.substring(0, 50)}..." }`);
     }
 
-    // Get relevant products from price book
+    // Get user's organization to fetch products
+    const { data: orgData } = await supabase
+      .from("organization_memberships")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .single();
+
+    if (!orgData) {
+      return NextResponse.json({ 
+        error: "No organization found for user" 
+      }, { status: 400 });
+    }
+
+    // Get relevant products from price book (by organization)
     // Set high limit to fetch all products (Supabase default is 1000)
     const { data: products } = await supabase
       .from("products")
       .select("*")
-      .eq("user_id", user.id)
+      .eq("organization_id", orgData.organization_id)
       .limit(10000);
 
     // Check if price book is empty
