@@ -35,7 +35,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
   const [showAddLicenseModal, setShowAddLicenseModal] = useState(false);
   const [emailPills, setEmailPills] = useState<string[]>([]);
   const [currentEmailInput, setCurrentEmailInput] = useState("");
-  const [inviteRole, setInviteRole] = useState<"super_admin" | "admin">("admin");
+  const [inviteRole, setInviteRole] = useState<"super_admin" | "admin">("super_admin");
   const [inviting, setInviting] = useState(false);
   const [additionalLicensesToAdd, setAdditionalLicensesToAdd] = useState(1);
   const [openMemberMenu, setOpenMemberMenu] = useState<string | null>(null);
@@ -291,7 +291,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       // Reset form and reload data
       setEmailPills([]);
       setCurrentEmailInput("");
-      setInviteRole("admin");
+      setInviteRole("super_admin");
       setShowInviteModal(false);
       await loadData();
     } catch (error: any) {
@@ -790,7 +790,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                   setShowInviteModal(false);
                   setEmailPills([]);
                   setCurrentEmailInput("");
-                  setInviteRole("admin");
+                  setInviteRole("super_admin");
                 }}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -846,8 +846,8 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                   onChange={(e) => setInviteRole(e.target.value as "super_admin" | "admin")}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
                 >
-                  <option value="admin">Admin</option>
                   <option value="super_admin">Super Admin</option>
+                  <option value="admin">Admin</option>
                 </select>
               </div>
 
