@@ -2,11 +2,27 @@
 
 import { loadStripe } from "@stripe/stripe-js";
 import type { PlanType, BillingCycle, ProrationPreview } from "@/types/database";
+import { validateStripePublishableKey, isProduction } from "./env-guards";
 
-// Initialize Stripe (client-side)
-const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!
-);
+// Validate the publishable key before initializing Stripe
+// This ensures we never accidentally use test keys in production
+const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+
+// Perform validation
+try {
+  validateStripePublishableKey(publishableKey);
+} catch (error) {
+  // In client-side code, we can't throw during module initialization
+  // Log the error clearly and let it fail at runtime
+  console.error("❌ Stripe Publishable Key Validation Failed:", error);
+  if (isProduction()) {
+    // In production, this is a critical error
+    throw error;
+  }
+}
+
+// Initialize Stripe (client-side) with validated key
+const stripePromise = loadStripe(publishableKey!);
 
 /**
  * Fetch proration preview for a plan change

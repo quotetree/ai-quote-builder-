@@ -5,12 +5,25 @@ import { STRIPE_PRICE_IDS, STRIPE_CONFIG } from "@/lib/stripe/config";
 import type { PlanType, BillingCycle } from "@/types/database";
 import { PLAN_PRICING } from "@/types/database";
 import Stripe from "stripe";
+import { validateStripeSecretKey, isProduction } from "@/lib/stripe/env-guards";
 
 export async function POST(request: NextRequest) {
   try {
-    // Runtime check for Stripe key
+    // Runtime check for Stripe key and validate environment
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
+    }
+
+    // Validate that Stripe is properly configured for the current environment
+    // This prevents accidentally using test mode in production
+    try {
+      validateStripeSecretKey(process.env.STRIPE_SECRET_KEY);
+    } catch (validationError: any) {
+      console.error("Stripe configuration validation failed:", validationError.message);
+      return NextResponse.json(
+        { error: "Stripe configuration error", details: validationError.message },
+        { status: 500 }
+      );
     }
 
     const supabase = await createClient();

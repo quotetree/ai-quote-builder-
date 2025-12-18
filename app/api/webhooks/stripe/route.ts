@@ -6,11 +6,24 @@ import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
 import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 import { sendWelcomeEmail } from "@/lib/email/welcomeEmail";
+import { validateStripeSecretKey, validateWebhookSecret } from "@/lib/stripe/env-guards";
 
 export async function POST(request: NextRequest) {
-  // Runtime check for Stripe key
+  // Runtime check for Stripe key and webhook secret
   if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
     return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
+  }
+
+  // Validate that Stripe webhook is properly configured for the current environment
+  try {
+    validateStripeSecretKey(process.env.STRIPE_SECRET_KEY);
+    validateWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET, process.env.STRIPE_SECRET_KEY);
+  } catch (validationError: any) {
+    console.error("Stripe webhook configuration validation failed:", validationError.message);
+    return NextResponse.json(
+      { error: "Stripe webhook configuration error", details: validationError.message },
+      { status: 500 }
+    );
   }
 
   const body = await request.text();
