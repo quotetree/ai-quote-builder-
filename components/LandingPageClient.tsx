@@ -278,7 +278,8 @@ export default function LandingPageClient() {
   // Handle checkout for landing page users (unauthenticated)
   const handleCheckout = async (
     planType: 'individual' | 'organization',
-    trialDays?: number
+    trialDays?: number,
+    forceBillingCycle?: 'monthly' | 'yearly'
   ) => {
     setIsCheckoutLoading(true);
     try {
@@ -287,7 +288,7 @@ export default function LandingPageClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planType,
-          billingCycle: isYearly ? 'yearly' : 'monthly',
+          billingCycle: forceBillingCycle || (isYearly ? 'yearly' : 'monthly'),
           additionalLicenses: planType === 'organization' ? additionalLicenses : 0,
           trialPeriodDays: trialDays,
         }),
