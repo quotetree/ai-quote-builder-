@@ -3,17 +3,17 @@
 
 export const STRIPE_PRICE_IDS = {
   individual: {
-    monthly: process.env.STRIPE_PRICE_INDIVIDUAL_MONTHLY || "price_1SeypPRiMM33f0nozhL81TGe", // $79/month
-    yearly: process.env.STRIPE_PRICE_INDIVIDUAL_YEARLY || "price_1SeyocRiMM33f0noxWSG83YW", // $65/month (billed yearly)
+    monthly: process.env.STRIPE_PRICE_INDIVIDUAL_MONTHLY || "price_1SfiSvRiMM33f0noxjiKIwBb", // $65/month - LIVE MODE
+    yearly: process.env.STRIPE_PRICE_INDIVIDUAL_YEARLY || "price_1SfiTaRiMM33f0noXzQFmNXm", // $65/month (billed yearly) - LIVE MODE
   },
   organization: {
     base: {
-      monthly: process.env.STRIPE_PRICE_ORG_BASE_MONTHLY || "price_1Sale4RiMM33f0no5vlKWsly", // $158/month (2 licenses) - TEST MODE
-      yearly: process.env.STRIPE_PRICE_ORG_BASE_YEARLY || "price_1SaldJRiMM33f0no1uvw4pNQ", // $130/month billed yearly (2 licenses) - TEST MODE
+      monthly: process.env.STRIPE_PRICE_ORG_BASE_MONTHLY || "price_1SXAFhRiMM33f0noHER0kGb3", // $130/month (2 licenses) - LIVE MODE
+      yearly: process.env.STRIPE_PRICE_ORG_BASE_YEARLY || "price_1SXAEoRiMM33f0noEdOz3isR", // $130/month billed yearly (2 licenses) - LIVE MODE
     },
     additionalLicense: {
-      monthly: process.env.STRIPE_PRICE_LICENSE_MONTHLY || "price_1SXAh6RiMM33f0nolptn9oFm", // $79/month per license
-      yearly: process.env.STRIPE_PRICE_LICENSE_YEARLY || "price_1SXAhXRiMM33f0noFvt6V6oX", // $65/month per license
+      monthly: process.env.STRIPE_PRICE_LICENSE_MONTHLY || "price_1SXBGWRiMM33f0nosJZCK0nk", // $65/month per license - LIVE MODE
+      yearly: process.env.STRIPE_PRICE_LICENSE_YEARLY || "price_1SXBGFRiMM33f0no4Gx2P3cx", // $65/month per license - LIVE MODE
     },
   },
 } as const;
