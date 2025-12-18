@@ -327,7 +327,7 @@ async function handleCheckoutCompleted(
       stripe_customer_id: customerId,
       plan_type: planType,
       billing_cycle: billingCycle,
-      status: "active",
+      status: stripeSubscription.status || "active",
       base_licenses: baseLicenses,
       additional_licenses: additionalLicenses,
       // Remove total_licenses - it's a generated column
@@ -341,6 +341,13 @@ async function handleCheckoutCompleted(
         : null,
       current_period_end: stripeSubscription.current_period_end
         ? new Date(stripeSubscription.current_period_end * 1000).toISOString()
+        : null,
+      // IMPORTANT: Set trial dates from Stripe subscription, or null if no trial
+      trial_start_date: stripeSubscription.trial_start
+        ? new Date(stripeSubscription.trial_start * 1000).toISOString()
+        : null,
+      trial_end_date: stripeSubscription.trial_end
+        ? new Date(stripeSubscription.trial_end * 1000).toISOString()
         : null,
       cancel_at_period_end: false,
       updated_at: new Date().toISOString(),
