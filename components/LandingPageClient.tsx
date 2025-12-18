@@ -419,35 +419,7 @@ export default function LandingPageClient() {
           {/* CTA Buttons - Moved here */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <button
-              onClick={async () => {
-                setIsCheckoutLoading(true);
-                try {
-                  const response = await fetch('/api/stripe/checkout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      planType: 'individual',
-                      billingCycle: 'monthly',
-                      additionalLicenses: 0,
-                      trialPeriodDays: 14,
-                    }),
-                  });
-                  
-                  if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Failed to create checkout');
-                  }
-                  
-                  const { url } = await response.json();
-                  if (url) {
-                    window.location.href = url;
-                  }
-                } catch (error: any) {
-                  console.error('Checkout error:', error);
-                  alert(error.message || 'Failed to start checkout. Please try again.');
-                  setIsCheckoutLoading(false);
-                }
-              }}
+              onClick={() => handleCheckout('individual', 14, 'monthly')}
               disabled={isCheckoutLoading}
               className="px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -901,12 +873,13 @@ export default function LandingPageClient() {
           <p className="text-xl text-green-50 mb-8 max-w-2xl mx-auto">
             Join contractors and estimators who are saving hours every week with AI-powered quotes.
           </p>
-          <Link
-            href="/auth/signup"
-            className="inline-block px-8 py-4 bg-white text-green-600 rounded-lg hover:bg-green-50 transition-all hover:shadow-2xl font-semibold text-lg"
+          <button
+            onClick={() => handleCheckout('individual', 14, 'monthly')}
+            disabled={isCheckoutLoading}
+            className="inline-block px-8 py-4 bg-white text-green-600 rounded-lg hover:bg-green-50 transition-all hover:shadow-2xl font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Start Your Free Trial Today
-          </Link>
+            {isCheckoutLoading ? 'Loading...' : 'Start Your Free Trial Today'}
+          </button>
         </div>
       </section>
 
