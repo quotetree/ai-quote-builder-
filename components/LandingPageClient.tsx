@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Play, CheckCircle, ChevronDown, X } from "lucide-react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
+import FreeTrialModal from "@/components/FreeTrialModal";
 
 const userJourneySteps = [
   {
@@ -201,6 +202,7 @@ export default function LandingPageClient() {
   const [additionalLicenses, setAdditionalLicenses] = useState(0);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const router = useRouter();
 
   // Handle password recovery - check for code parameter OR hash tokens
@@ -365,35 +367,7 @@ export default function LandingPageClient() {
               Login
             </Link>
             <button
-              onClick={async () => {
-                setIsCheckoutLoading(true);
-                try {
-                  const response = await fetch('/api/stripe/checkout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      planType: 'individual',
-                      billingCycle: 'monthly',
-                      additionalLicenses: 0,
-                      trialPeriodDays: 14,
-                    }),
-                  });
-                  
-                  if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Failed to create checkout');
-                  }
-                  
-                  const { url } = await response.json();
-                  if (url) {
-                    window.location.href = url;
-                  }
-                } catch (error: any) {
-                  console.error('Checkout error:', error);
-                  alert(error.message || 'Failed to start checkout. Please try again.');
-                  setIsCheckoutLoading(false);
-                }
-              }}
+              onClick={() => setIsModalOpen(true)}
               disabled={isCheckoutLoading}
               className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -420,7 +394,7 @@ export default function LandingPageClient() {
           {/* CTA Buttons - Moved here */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <button
-              onClick={() => handleCheckout('individual', 14, 'monthly')}
+              onClick={() => setIsModalOpen(true)}
               disabled={isCheckoutLoading}
               className="px-8 py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -626,7 +600,7 @@ export default function LandingPageClient() {
               </div>
 
               <button
-                onClick={() => handleCheckout('individual', 14)}
+                onClick={() => setIsModalOpen(true)}
                 disabled={isCheckoutLoading}
                 className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -875,7 +849,7 @@ export default function LandingPageClient() {
             Join contractors and estimators who are saving hours every week with AI-powered quotes.
           </p>
           <button
-            onClick={() => handleCheckout('individual', 14, 'monthly')}
+            onClick={() => setIsModalOpen(true)}
             disabled={isCheckoutLoading}
             className="inline-block px-8 py-4 bg-white text-green-600 rounded-lg hover:bg-green-50 transition-all hover:shadow-2xl font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -947,6 +921,16 @@ export default function LandingPageClient() {
           </div>
         </div>
       </footer>
+
+      {/* Free Trial Modal */}
+      <FreeTrialModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmitSuccess={() => {
+          setIsModalOpen(false);
+          handleCheckout('individual', 14, 'monthly');
+        }}
+      />
     </div>
   );
 }
