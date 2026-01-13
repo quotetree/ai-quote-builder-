@@ -338,10 +338,9 @@ const buildProfitPlanningItems = (
     const quantity = safeNumber(item.quantity) || 1;
     const listPrice = deriveListPriceFromQuoteItem(item, productCosts, productTokenEntries);
     const salesPrice = roundToCents(safeNumber(item.unit_price));
+    // Only use explicitly stored discounts, not calculated fallbacks
+    // The price difference between list and sales is the margin, not a discount
     const storedDiscount = deriveDiscountFractionFromItem(item);
-    const fallbackDiscount =
-      listPrice > 0 && salesPrice > 0 ? Math.max(0, 1 - salesPrice / listPrice) : 0;
-    const discountPercent = storedDiscount || fallbackDiscount;
 
     if (
       process.env.NODE_ENV !== "production" &&
@@ -352,8 +351,6 @@ const buildProfitPlanningItems = (
         listPrice,
         salesPrice,
         storedDiscount,
-        fallbackDiscount,
-        discountPercent,
       });
     }
 
@@ -363,7 +360,7 @@ const buildProfitPlanningItems = (
       listPrice,
       salesPrice,
       quantity: quantity > 0 ? quantity : 1,
-      discountPercent,
+      discountPercent: storedDiscount,
     };
   });
 };
@@ -372,6 +369,8 @@ const computeProfitBreakdown = (
   items: ProfitPlanningItem[]
 ): { rows: ComputedProfitRow[]; totals: ProfitTotals } => {
   const rows = items.map((item) => {
+    // Only apply discount to revenue if there's an explicit stored discount
+    // This prevents double-counting the margin as both a discount AND profit
     const discountFraction =
       item.discountPercent > 0 ? Math.min(Math.max(item.discountPercent, 0), 1) : 0;
     const effectiveUnitPrice = roundToCents(item.salesPrice * (1 - discountFraction));
@@ -379,6 +378,9 @@ const computeProfitBreakdown = (
     const lineCost = roundToCents(item.listPrice * item.quantity);
     const lineProfit = roundToCents(lineRevenue - lineCost);
     const lineMarginPct = lineRevenue > 0 ? lineProfit / lineRevenue : 0;
+    
+    // Calculate fallback discount ONLY for display purposes (DISC % column)
+    // Don't use this in revenue calculations to avoid double-discounting
     const fallbackDiscount =
       item.listPrice > 0 && item.salesPrice > 0
         ? Math.max(0, 1 - item.salesPrice / item.listPrice)
