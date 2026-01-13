@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create Supabase client with service role for inserting
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // Insert into database
     const { data: inquiry, error: dbError } = await supabase
