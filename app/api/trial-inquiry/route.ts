@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceRoleClient } from '@/lib/supabase/server';
 import { sendTrialInquiryNotification } from '@/lib/email/trialInquiryNotification';
 
 export async function POST(request: NextRequest) {
@@ -24,8 +24,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Supabase client with service role for inserting
-    const supabase = await createClient();
+    // Create Supabase client with service role for inserting (bypasses RLS)
+    const supabase = createServiceRoleClient();
 
     // Insert into database
     const { data: inquiry, error: dbError } = await supabase
