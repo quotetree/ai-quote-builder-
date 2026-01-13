@@ -13,11 +13,12 @@ export const config = {
      * - favicon.ico (favicon file)
      * - api/webhooks (Stripe webhooks don't need auth)
      * - api/stripe/checkout (Landing page checkout doesn't need auth)
+     * - api/trial-inquiry (Landing page trial form doesn't need auth)
      * - api/auth/reset-password-email (Password reset API doesn't need auth)
      * - checkout/success (Success page for unauthenticated purchases)
      * Feel free to modify this pattern to include more paths.
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/auth/reset-password-email|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mov|avi|webm)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/trial-inquiry|api/auth/reset-password-email|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mov|avi|webm)$).*)",
   ],
 };
 
