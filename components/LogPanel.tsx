@@ -1482,11 +1482,11 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
             type="button"
             onClick={onSaveEdits}
             disabled={isSaving}
-            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-6 py-2 bg-white text-brand-green border-2 border-brand-green rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isSaving ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-brand-green border-t-transparent"></div>
                 Saving...
               </>
             ) : (
@@ -1497,7 +1497,7 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+          className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors"
         >
           Done
         </button>
