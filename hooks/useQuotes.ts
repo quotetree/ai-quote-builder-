@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Quote, QuoteItem } from "@/types/database";
+import { Quote, QuoteItem, ProfitOverride } from "@/types/database";
 import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 
 export function useQuotes(projectId?: string) {
@@ -314,6 +314,72 @@ export function useQuotes(projectId?: string) {
     }
   }
 
+  // Profit Override functions for profit margin simulation
+  async function fetchProfitOverrides(quoteId: string): Promise<ProfitOverride[]> {
+    try {
+      const { data, error } = await supabase
+        .from("quote_profit_overrides")
+        .select("*")
+        .eq("quote_id", quoteId);
+
+      if (error) throw error;
+      return data || [];
+    } catch (err: any) {
+      console.error("[useQuotes] Error fetching profit overrides:", err);
+      setError(err.message);
+      throw err;
+    }
+  }
+
+  async function saveProfitOverrides(
+    quoteId: string,
+    overrides: Array<{
+      item_id: string;
+      override_list_price: number | null;
+      override_sales_price: number | null;
+    }>
+  ): Promise<void> {
+    try {
+      // Prepare data for upsert
+      const upsertData = overrides.map((override) => ({
+        quote_id: quoteId,
+        item_id: override.item_id,
+        override_list_price: override.override_list_price,
+        override_sales_price: override.override_sales_price,
+      }));
+
+      const { error } = await supabase
+        .from("quote_profit_overrides")
+        .upsert(upsertData, {
+          onConflict: "quote_id,item_id",
+        });
+
+      if (error) throw error;
+      
+      console.log("[useQuotes] Saved profit overrides:", overrides.length);
+    } catch (err: any) {
+      console.error("[useQuotes] Error saving profit overrides:", err);
+      setError(err.message);
+      throw err;
+    }
+  }
+
+  async function clearProfitOverrides(quoteId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from("quote_profit_overrides")
+        .delete()
+        .eq("quote_id", quoteId);
+
+      if (error) throw error;
+      console.log("[useQuotes] Cleared profit overrides for quote:", quoteId);
+    } catch (err: any) {
+      console.error("[useQuotes] Error clearing profit overrides:", err);
+      setError(err.message);
+      throw err;
+    }
+  }
+
   return {
     quotes,
     loading,
@@ -324,6 +390,9 @@ export function useQuotes(projectId?: string) {
     updateQuote,
     deleteQuote,
     duplicateQuote,
+    fetchProfitOverrides,
+    saveProfitOverrides,
+    clearProfitOverrides,
   };
 }
 

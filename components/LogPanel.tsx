@@ -433,7 +433,7 @@ interface LogPanelProps {
 }
 
 export default function LogPanel({ projectId }: LogPanelProps) {
-  const { quotes, loading, fetchQuotes, updateQuoteStatus, updateQuote, deleteQuote, duplicateQuote } = useQuotes(projectId);
+  const { quotes, loading, fetchQuotes, updateQuoteStatus, updateQuote, deleteQuote, duplicateQuote, fetchProfitOverrides, saveProfitOverrides } = useQuotes(projectId);
   const { products } = useProducts();
   const { map: productCostMap, tokenEntries: productTokenEntries } = useMemo(
     () => buildProductCostIndex(products),
@@ -442,6 +442,9 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [showProfitBreakdown, setShowProfitBreakdown] = useState(false);
   const [profitPlanningItems, setProfitPlanningItems] = useState<ProfitPlanningItem[]>([]);
+  const [originalProfitPlanningItems, setOriginalProfitPlanningItems] = useState<ProfitPlanningItem[]>([]);
+  const [hasUnsavedProfitChanges, setHasUnsavedProfitChanges] = useState(false);
+  const [isSavingProfitEdits, setIsSavingProfitEdits] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState<string | null>(null);
   const [showRenameModal, setShowRenameModal] = useState<string | null>(null);
   const [newQuoteName, setNewQuoteName] = useState("");
@@ -493,6 +496,8 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   useEffect(() => {
     if (!selectedQuote) {
       setProfitPlanningItems([]);
+      setOriginalProfitPlanningItems([]);
+      setHasUnsavedProfitChanges(false);
       setShowProfitBreakdown(false);
       return;
     }
@@ -500,10 +505,13 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     const items = selectedQuote.items || [];
     if (items.length === 0) {
       setProfitPlanningItems([]);
+      setOriginalProfitPlanningItems([]);
+      setHasUnsavedProfitChanges(false);
       return;
     }
 
-    setProfitPlanningItems(buildProfitPlanningItems(items, productCostMap, productTokenEntries));
+    // Load profit planning items with saved overrides
+    loadProfitPlanningWithOverrides(selectedQuote);
     // Verified with CAT6 cable example: list $154.99 vs sales $247.99 now reflected in the breakdown.
     // Verified with Lucere Management quote: discounted totals (e.g. $29,765.99) now match TOTAL REVENUE in the breakdown.
   }, [selectedQuote, productCostMap, productTokenEntries]);
@@ -536,8 +544,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     setShowProfitBreakdown(false);
   };
 
-  // NOTE: Profit planning edits are kept client-side for now.
-  // Hook this into quote update APIs once we persist per-quote cost overrides.
+  // Profit planning price change handlers
   const handleListPriceChange = (itemId: string, rawValue: number) => {
     const normalizedValue = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
     setProfitPlanningItems((items) =>
@@ -545,6 +552,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
         item.id === itemId ? { ...item, listPrice: roundToCents(normalizedValue) } : item
       )
     );
+    setHasUnsavedProfitChanges(true);
   };
 
   const handleSalesPriceChange = (itemId: string, rawValue: number) => {
@@ -554,6 +562,85 @@ export default function LogPanel({ projectId }: LogPanelProps) {
         item.id === itemId ? { ...item, salesPrice: roundToCents(normalizedValue) } : item
       )
     );
+    setHasUnsavedProfitChanges(true);
+  };
+
+  // Load profit overrides and merge with computed planning items
+  const loadProfitPlanningWithOverrides = async (quote: Quote) => {
+    try {
+      // Build base profit planning items from quote
+      const baseItems = buildProfitPlanningItems(
+        quote.items || [],
+        productCostMap,
+        productTokenEntries
+      );
+
+      // Fetch saved overrides
+      const overrides = await fetchProfitOverrides(quote.id);
+      
+      // Merge overrides into base items
+      const mergedItems = baseItems.map((item) => {
+        const override = overrides.find((o) => o.item_id === item.id);
+        if (override) {
+          return {
+            ...item,
+            listPrice: override.override_list_price ?? item.listPrice,
+            salesPrice: override.override_sales_price ?? item.salesPrice,
+          };
+        }
+        return item;
+      });
+
+      setProfitPlanningItems(mergedItems);
+      setOriginalProfitPlanningItems(mergedItems);
+      setHasUnsavedProfitChanges(false);
+      
+      console.log('[LogPanel] Loaded profit planning with overrides:', {
+        baseItems: baseItems.length,
+        overrides: overrides.length,
+        merged: mergedItems.length,
+      });
+    } catch (error) {
+      console.error('[LogPanel] Error loading profit overrides:', error);
+      // Fall back to base items without overrides
+      const baseItems = buildProfitPlanningItems(
+        quote.items || [],
+        productCostMap,
+        productTokenEntries
+      );
+      setProfitPlanningItems(baseItems);
+      setOriginalProfitPlanningItems(baseItems);
+      setHasUnsavedProfitChanges(false);
+    }
+  };
+
+  // Save profit planning edits
+  const handleSaveProfitEdits = async () => {
+    if (!selectedQuote) return;
+
+    setIsSavingProfitEdits(true);
+    try {
+      // Collect all items that differ from original
+      const overrides = profitPlanningItems.map((item) => ({
+        item_id: item.id,
+        override_list_price: item.listPrice,
+        override_sales_price: item.salesPrice,
+      }));
+
+      await saveProfitOverrides(selectedQuote.id, overrides);
+      
+      // Update original items to current state
+      setOriginalProfitPlanningItems(profitPlanningItems);
+      setHasUnsavedProfitChanges(false);
+      
+      toast.success('Profit margin edits saved');
+      console.log('[LogPanel] Saved profit overrides:', overrides.length);
+    } catch (error: any) {
+      console.error('[LogPanel] Error saving profit edits:', error);
+      toast.error(error?.message || 'Failed to save profit edits');
+    } finally {
+      setIsSavingProfitEdits(false);
+    }
   };
 
   const profitSnapshot =
@@ -1026,6 +1113,9 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   onListPriceChange={handleListPriceChange}
                   onSalesPriceChange={handleSalesPriceChange}
                   onClose={() => setShowProfitBreakdown(false)}
+                  hasUnsavedChanges={hasUnsavedProfitChanges}
+                  onSaveEdits={handleSaveProfitEdits}
+                  isSaving={isSavingProfitEdits}
                 />
               )}
             </div>
@@ -1170,9 +1260,12 @@ type ProfitBreakdownViewProps = {
   onListPriceChange: (itemId: string, value: number) => void;
   onSalesPriceChange: (itemId: string, value: number) => void;
   onClose: () => void;
+  hasUnsavedChanges: boolean;
+  onSaveEdits: () => void;
+  isSaving: boolean;
 };
 
-function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChange, onClose }: ProfitBreakdownViewProps) {
+function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChange, onClose, hasUnsavedChanges, onSaveEdits, isSaving }: ProfitBreakdownViewProps) {
   // Track editing state for each field to allow free typing without constant reformatting
   const [editingFields, setEditingFields] = React.useState<Record<string, string>>({});
 
@@ -1383,11 +1476,28 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
         </div>
       </div>
 
-      <div className="flex justify-end mt-6">
+      <div className="flex justify-end gap-3 mt-6">
+        {hasUnsavedChanges && (
+          <button
+            type="button"
+            onClick={onSaveEdits}
+            disabled={isSaving}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {isSaving ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                Saving...
+              </>
+            ) : (
+              'Save Edit'
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors"
+          className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
         >
           Done
         </button>

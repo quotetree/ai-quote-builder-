@@ -387,6 +387,16 @@ export interface AnalyticsEvent {
   created_at: string;
 }
 
+export interface ProfitOverride {
+  id: string;
+  quote_id: string;
+  item_id: string;
+  override_list_price: number | null;
+  override_sales_price: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Form types
 export interface CreateProjectForm {
   project_name: string;
