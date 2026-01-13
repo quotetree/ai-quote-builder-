@@ -29,14 +29,22 @@ export async function POST(request: NextRequest) {
     // Parse service account credentials and handle Vercel newline issue
     let credentials;
     try {
-      const fixedJson = serviceAccountJson.replace(/\\n/g, '\n');
-      credentials = JSON.parse(fixedJson);
-    } catch (parseError) {
-      console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', parseError);
-      return NextResponse.json(
-        { error: 'Invalid service account credentials' },
-        { status: 500 }
-      );
+      // First, try parsing as-is (in case it's already valid JSON)
+      credentials = JSON.parse(serviceAccountJson);
+    } catch {
+      try {
+        // If that fails, try replacing escaped newlines and backslashes
+        const fixedJson = serviceAccountJson
+          .replace(/\\n/g, '\n')
+          .replace(/\\\\/g, '\\');
+        credentials = JSON.parse(fixedJson);
+      } catch (parseError) {
+        console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', parseError);
+        return NextResponse.json(
+          { error: 'Invalid service account credentials' },
+          { status: 500 }
+        );
+      }
     }
 
     // Initialize Google Sheets API

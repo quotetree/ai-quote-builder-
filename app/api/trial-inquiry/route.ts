@@ -67,8 +67,18 @@ export async function POST(request: NextRequest) {
       const sheetId = process.env.GOOGLE_SHEET_ID;
 
       if (serviceAccountJson && sheetId) {
-        const fixedJson = serviceAccountJson.replace(/\\n/g, '\n');
-        const credentials = JSON.parse(fixedJson);
+        // Handle both escaped newlines and actual newlines in the private key
+        let credentials;
+        try {
+          // First, try parsing as-is (in case it's already valid JSON)
+          credentials = JSON.parse(serviceAccountJson);
+        } catch {
+          // If that fails, try replacing escaped newlines
+          const fixedJson = serviceAccountJson
+            .replace(/\\n/g, '\n')
+            .replace(/\\\\/g, '\\');
+          credentials = JSON.parse(fixedJson);
+        }
 
         const auth = new google.auth.GoogleAuth({
           credentials,
