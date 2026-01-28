@@ -83,6 +83,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
   const [editQuoteName, setEditQuoteName] = useState<string | null>(null);
   const [changeNotes, setChangeNotes] = useState("");
   const [showChangeNotes, setShowChangeNotes] = useState(false);
+  const [pendingQuoteName, setPendingQuoteName] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -592,6 +593,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       setEditQuoteName(quoteName);
       setChangeNotes("");
       setShowChangeNotes(false);
+      setPendingQuoteName(null); // Clear any pending new quote name when entering edit mode
       
       // Load the quote preview from working state
       const workingState = await loadWorkingState();
@@ -653,6 +655,9 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       const { quoteName } = event.detail;
       
       console.log('[NewQuote] Starting new quote:', quoteName);
+      
+      // Store the quote name for later use when submitting
+      setPendingQuoteName(quoteName);
       
       try {
         // Set clearing flag to prevent race conditions
@@ -720,6 +725,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setEditMode(true);
         setEditSessionId(editStatus.sessionId);
         setEditQuoteId(editStatus.quoteId);
+        setPendingQuoteName(null); // Clear any pending new quote name when resuming edit mode
         
         // Load quote info from database
         const { data: quote } = await supabase
@@ -2052,6 +2058,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
         setLowConfidenceMatches([]);
         setQuotePreview(null);
         setShowSplitView(false);
+        setPendingQuoteName(null); // Clear the pending quote name after successful edit
         
         // Add success message to chat
         const successMessage: Partial<ChatMessage> = {
@@ -2099,7 +2106,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
           project_id: projectId,
           user_id: user.id,
           quote_number: quoteNumber,
-          quote_name: `${projectName} - ${new Date().toLocaleDateString()}`,
+          quote_name: pendingQuoteName || `${projectName} - ${new Date().toLocaleDateString()}`,
           version_number: 1,
           status: "draft",
           scope_of_work: "Generated from AI chat",
@@ -2166,6 +2173,7 @@ export default function SplitChatPanel({ projectId, projectName }: SplitChatPane
       setLowConfidenceMatches([]);
       setQuotePreview(null);
       setShowSplitView(false);
+      setPendingQuoteName(null); // Clear the pending quote name after successful submit
       
       // Add a success message to the chat
       const successMessage: Partial<ChatMessage> = {
