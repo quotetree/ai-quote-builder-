@@ -316,7 +316,7 @@ export default function LandingPageClient() {
     <div className="min-h-screen bg-white">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200">
-        <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+        <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex justify-between items-center">
           <div className="flex items-center gap-8">
             {/* Logo and Company Name */}
             <Link href="/" className="flex items-center gap-1">
@@ -325,9 +325,9 @@ export default function LandingPageClient() {
                 alt="QuoteTree Logo"
                 width={56}
                 height={56}
-                className="w-14 h-14"
+                className="w-12 h-12 sm:w-14 sm:h-14"
               />
-              <span className="text-2xl font-medium text-green-700">QuoteTree</span>
+              <span className="text-xl sm:text-2xl font-medium text-green-700">QuoteTree</span>
             </Link>
             
             {/* Navigation Links */}
@@ -359,17 +359,17 @@ export default function LandingPageClient() {
             </div>
           </div>
           
-          <div className="flex gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             <Link
               href="/auth/signin"
-              className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors font-medium"
+              className="px-3 py-2 sm:px-4 sm:py-2 text-sm sm:text-base text-gray-700 hover:text-gray-900 transition-colors font-medium"
             >
               Login
             </Link>
             <button
               onClick={() => setIsModalOpen(true)}
               disabled={isCheckoutLoading}
-              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 sm:px-6 sm:py-2 text-sm sm:text-base bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isCheckoutLoading ? 'Loading...' : 'Get Started'}
             </button>
