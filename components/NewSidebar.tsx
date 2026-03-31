@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { 
   Menu, 
@@ -21,6 +21,17 @@ import { useSidebar } from "@/contexts/SidebarContext";
 import PersonalizationModal from "./PersonalizationModal";
 import BillingModal from "./BillingModal";
 import MembersModal from "./MembersModal";
+import type { Project } from "@/types/database";
+
+function projectMatchesSearch(project: Project, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (project.project_name.toLowerCase().includes(q)) return true;
+  for (const f of project.product_families ?? []) {
+    if (f.toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
 
 interface NewSidebarProps {
   userEmail?: string;
@@ -31,6 +42,8 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const { isOpen, closeSidebar, openSidebar } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [familyFilter, setFamilyFilter] = useState<string>("all");
+  const [projectSort, setProjectSort] = useState<"recent" | "name">("recent");
   const [priceBookOpen, setPriceBookOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [personalizationOpen, setPersonalizationOpen] = useState(false);
@@ -48,6 +61,37 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const supabase = createClient();
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const familyOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of projects) {
+      for (const f of p.product_families ?? []) {
+        if (f?.trim()) set.add(f);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [projects]);
+
+  const filteredProjects = useMemo(() => {
+    let list = projects.filter((p) => {
+      if (familyFilter !== "all") {
+        const fams = p.product_families ?? [];
+        if (!fams.includes(familyFilter)) return false;
+      }
+      return true;
+    });
+    if (projectSort === "name") {
+      list = [...list].sort((a, b) =>
+        a.project_name.localeCompare(b.project_name, undefined, { sensitivity: "base" })
+      );
+    } else {
+      list = [...list].sort(
+        (a, b) =>
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+    }
+    return list;
+  }, [projects, familyFilter, projectSort]);
 
   // Refresh projects when pathname changes without clearing list UI
   useEffect(() => {
@@ -240,25 +284,79 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
 
         {/* Projects List Section - Only show when open */}
         {isOpen && (
-          <div className="flex-1 overflow-y-auto px-2 py-3">
-            <div className="px-3 mb-2">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Projects
-              </h3>
+          <div className="flex-1 overflow-y-auto px-2 py-3 min-h-0 flex flex-col">
+            <div className="px-3 mb-2 space-y-2 shrink-0">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Projects
+                </h3>
+              </div>
+              {!loading && projects.length > 0 && (
+                <>
+                  {familyOptions.length > 0 && (
+                    <select
+                      value={familyFilter}
+                      onChange={(e) => setFamilyFilter(e.target.value)}
+                      className="w-full text-xs rounded-md border border-gray-200 bg-white text-gray-800 py-1.5 px-2 focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+                      aria-label="Filter by product family"
+                    >
+                      <option value="all">All product families</option>
+                      {familyOptions.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div
+                    className="flex rounded-md border border-gray-200 p-0.5 bg-white"
+                    role="group"
+                    aria-label="Sort projects"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setProjectSort("recent")}
+                      className={`flex-1 text-[10px] font-medium py-1 rounded ${
+                        projectSort === "recent"
+                          ? "bg-gray-200 text-gray-900"
+                          : "text-gray-500 hover:text-gray-800"
+                      }`}
+                    >
+                      Recent
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProjectSort("name")}
+                      className={`flex-1 text-[10px] font-medium py-1 rounded ${
+                        projectSort === "name"
+                          ? "bg-gray-200 text-gray-900"
+                          : "text-gray-500 hover:text-gray-800"
+                      }`}
+                    >
+                      A–Z
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
             {loading ? (
               <div className="px-3 py-2 text-sm text-gray-500">Loading...</div>
             ) : projects.length === 0 ? (
               <div className="px-3 py-2 text-sm text-gray-400">No projects yet</div>
+            ) : filteredProjects.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-gray-500">
+                No projects match your filters.
+              </div>
             ) : (
-              <div className="space-y-0.5">
-                {projects.map((project) => (
+              <div className="space-y-0.5 flex-1 min-h-0">
+                {filteredProjects.map((project) => (
                   <button
                     key={project.id}
                     onClick={() => router.push(`/projects/${project.id}`)}
                     className={`w-full text-left px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm truncate ${
                       pathname === `/projects/${project.id}` ? "bg-gray-200" : ""
                     }`}
+                    title={project.project_name}
                   >
                     {project.project_name}
                   </button>
@@ -410,7 +508,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               <Search size={20} className="text-gray-400" />
               <input
                 type="text"
-                placeholder="Search projects..."
+                placeholder="Search name or product family…"
                 className="flex-1 bg-transparent border-none outline-none text-lg"
                 autoFocus
                 value={searchQuery}
@@ -428,17 +526,23 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
             </div>
             <div className="max-h-96 overflow-y-auto p-4">
               {(() => {
-                const filteredProjects = projects.filter((project) =>
-                  project.project_name.toLowerCase().includes(searchQuery.toLowerCase())
+                const modalMatches = projects.filter((p) =>
+                  projectMatchesSearch(p, searchQuery)
                 );
-                
-                return filteredProjects.length === 0 ? (
+                modalMatches.sort(
+                  (a, b) =>
+                    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                );
+
+                return modalMatches.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
-                    {searchQuery ? "No matching projects found" : "No projects found"}
+                    {searchQuery.trim()
+                      ? "No matching projects found"
+                      : "Type to search by name or product family"}
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {filteredProjects.map((project) => (
+                    {modalMatches.map((project) => (
                       <button
                         key={project.id}
                         onClick={() => {
@@ -450,7 +554,12 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                       >
                         <h4 className="font-medium">{project.project_name}</h4>
                         <p className="text-sm text-gray-500">
-                          Created {new Date(project.created_at).toLocaleDateString()}
+                          Updated {new Date(project.updated_at).toLocaleDateString()}
+                          {(project.product_families?.length ?? 0) > 0 && (
+                            <span className="block text-xs mt-0.5 text-gray-400 truncate">
+                              {(project.product_families ?? []).join(" · ")}
+                            </span>
+                          )}
                         </p>
                       </button>
                     ))}

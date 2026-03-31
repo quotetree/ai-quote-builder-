@@ -24,15 +24,23 @@ export function useProjects() {
         setLoading(true);
       }
 
-      const { data, error } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("status", "active")
-        .order("updated_at", { ascending: false })
-        .limit(50); // Limit to 50 most recent projects for better performance
+      const pageSize = 1000;
+      const rows: Project[] = [];
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await supabase
+          .from("projects")
+          .select("*")
+          .eq("status", "active")
+          .order("updated_at", { ascending: false })
+          .range(from, from + pageSize - 1);
 
-      if (error) throw error;
-      setProjects(data || []);
+        if (error) throw error;
+        if (!data?.length) break;
+        rows.push(...data);
+        if (data.length < pageSize) break;
+      }
+
+      setProjects(rows);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -71,7 +79,7 @@ export function useProjects() {
 
       if (error) throw error;
       if (data) {
-        setProjects([data, ...projects]);
+        setProjects((prev) => [data, ...prev]);
       }
       return data;
     } catch (err: any) {
@@ -91,7 +99,7 @@ export function useProjects() {
 
       if (error) throw error;
       if (data) {
-        setProjects(projects.map((p) => (p.id === id ? data : p)));
+        setProjects((prev) => prev.map((p) => (p.id === id ? data : p)));
       }
       return data;
     } catch (err: any) {
@@ -108,7 +116,7 @@ export function useProjects() {
         .eq("id", id);
 
       if (error) throw error;
-      setProjects(projects.filter((p) => p.id !== id));
+      setProjects((prev) => prev.filter((p) => p.id !== id));
     } catch (err: any) {
       setError(err.message);
       throw err;
