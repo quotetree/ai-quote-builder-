@@ -19,10 +19,10 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceClient } from "@/lib/supabase/service";
 import {
   getOrCreateFirmaWorkspace,
-  getFirmaSigningRequestById,
   getFirmaSigningRequestUsers,
-  type FirmaSigningRequest,
 } from "@/lib/firma";
+
+const FIRMA_API_BASE = "https://api.firma.dev/functions/v1/signing-request-api";
 
 // ─── Firma → internal status mapping ─────────────────────────────────────────
 
@@ -31,26 +31,34 @@ import {
  * Firma may use different casing or wording across API versions.
  */
 function mapFirmaStatus(raw: string): string | null {
-  switch (raw.toLowerCase()) {
-    case "completed":
-    case "signed":
-      return "completed";
-    case "declined":
-    case "rejected":
-    case "cancelled":
-    case "canceled":
-      return "declined";
-    case "expired":
-      return "expired";
-    case "sent":
-    case "pending":
-    case "in_progress":
-      return "sent";
-    case "viewed":
-      return "viewed";
-    default:
-      return null;
+  // Normalise: lowercase, collapse separators
+  const s = raw.toLowerCase().replace(/[\s_\-]+/g, "_");
+  if (["completed", "signed", "complete", "fully_signed", "all_signed",
+       "executed", "done", "finished", "finalized"].includes(s)) return "completed";
+  if (["declined", "rejected", "cancelled", "canceled", "refused",
+       "voided", "void"].includes(s)) return "declined";
+  if (["expired", "timed_out", "timeout"].includes(s)) return "expired";
+  if (["sent", "pending", "in_progress", "active", "awaiting_signature",
+       "awaiting", "waiting", "open", "processing"].includes(s)) return "sent";
+  if (["viewed", "opened", "seen", "read"].includes(s)) return "viewed";
+  return null;
+}
+
+/**
+ * Searches common nesting patterns in a raw Firma response object to pull
+ * a scalar string field (e.g. "status", "document_url").
+ * Firma has varied its response shape across API versions; this tries all of them.
+ */
+function extractField(raw: Record<string, unknown>, key: string): string | null {
+  if (typeof raw[key] === "string" && raw[key] !== "") return raw[key] as string;
+  for (const wrapper of ["data", "signing_request", "result", "record", "signingRequest"]) {
+    const nested = raw[wrapper];
+    if (nested && typeof nested === "object") {
+      const val = (nested as Record<string, unknown>)[key];
+      if (typeof val === "string" && val !== "") return val;
+    }
   }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -158,34 +166,51 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: sig.status });
   }
 
-  // ── 7. Poll Firma API for signing request status ─────────────────────────────
-  let firmaReq: FirmaSigningRequest | null = null;
-  try {
-    firmaReq = await getFirmaSigningRequestById(workspaceApiKey, firmaRequestId);
-    console.log(
-      `[sync-status] step7 Firma GET signing-request` +
-      ` | id: ${firmaRequestId}` +
-      ` | status: ${firmaReq?.status ?? "(not found)"}` +
-      ` | keys: ${firmaReq ? Object.keys(firmaReq as unknown as object).join(", ") : "null"}`
-    );
-  } catch (err) {
-    console.warn("[sync-status] step7 Firma API error:", err);
+  // ── 7. Call Firma — raw fetch, extract fields from any nesting depth ────────
+  // We bypass the typed lib/firma.ts abstraction here so that an unexpected
+  // response shape cannot silently prevent a status update.
+  const firmaUrl = `${FIRMA_API_BASE}/signing-requests/${firmaRequestId}`;
+
+  const doFirmaFetch = (apiKey: string) =>
+    fetch(firmaUrl, {
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    });
+
+  let firmaRes = await doFirmaFetch(workspaceApiKey);
+
+  // Workspace key stale? Fall back to the master key and retry.
+  if ((firmaRes.status === 401 || firmaRes.status === 403) && process.env.FIRMA_API_KEY) {
+    const masterKey = process.env.FIRMA_API_KEY.trim();
+    if (masterKey && masterKey !== workspaceApiKey) {
+      console.warn(`[sync-status] step7 workspace key ${firmaRes.status} — retrying with master key`);
+      firmaRes = await doFirmaFetch(masterKey);
+    }
+  }
+
+  const firmaText = await firmaRes.text().catch(() => "");
+  console.log(
+    `[sync-status] step7 Firma GET ${firmaUrl}` +
+    ` | HTTP ${firmaRes.status}` +
+    ` | body: ${firmaText.slice(0, 600)}`
+  );
+
+  if (!firmaRes.ok) {
+    console.warn(`[sync-status] step7 Firma returned ${firmaRes.status} — keeping current status`);
     return NextResponse.json({ status: sig.status });
   }
 
-  if (!firmaReq) {
-    console.warn(`[sync-status] step7 Firma returned null for id: ${firmaRequestId} (404 or bad shape)`);
+  let firmaRaw: Record<string, unknown> = {};
+  try { firmaRaw = JSON.parse(firmaText) as Record<string, unknown>; } catch {
+    console.warn("[sync-status] step7 Firma response is not JSON — keeping current status");
     return NextResponse.json({ status: sig.status });
   }
 
-  // ── 8. Also fetch per-recipient signed_at from Firma users endpoint ──────────
-  // This lets us update all_signers_data with individual signed_at timestamps
-  // even when the recipient.signed webhook didn't arrive.
+  // ── 8. Fetch per-recipient signed_at (non-fatal) ──────────────────────────
   let firmaUsers: Array<Record<string, unknown>> = [];
   try {
     firmaUsers = (await getFirmaSigningRequestUsers(workspaceApiKey, firmaRequestId)) as unknown as Array<Record<string, unknown>>;
   } catch {
-    // Non-fatal — proceed without per-recipient signed_at data
+    // Non-fatal — proceed without per-recipient signed_at
   }
 
   // ── 9. Merge per-recipient signed_at into all_signers_data ───────────────────
@@ -206,10 +231,22 @@ export async function POST(req: NextRequest) {
     return s;
   });
 
-  // ── 10. Map Firma status → internal status ────────────────────────────────────
-  const mapped = firmaReq.status ? mapFirmaStatus(firmaReq.status) : null;
+  // ── 10. Extract fields using extractField — handles all nesting shapes ────────
+  const rawFirmaStatus   = extractField(firmaRaw, "status");
+  const newSignedPdfUrl  =
+    extractField(firmaRaw, "document_url") ??
+    extractField(firmaRaw, "signed_pdf_url") ??
+    extractField(firmaRaw, "signed_document_url") ??
+    (sigRow.signed_pdf_url as string | null) ??
+    null;
+  const newAuditTrailUrl =
+    extractField(firmaRaw, "audit_trail_url") ??
+    (sigRow.audit_trail_url as string | null) ??
+    null;
+  const rawCompletedAt   = extractField(firmaRaw, "completed_at");
 
-  // Determine the new status — only advance, never downgrade
+  const mapped = rawFirmaStatus ? mapFirmaStatus(rawFirmaStatus) : null;
+
   const statusPriority: Record<string, number> = {
     draft: 0, sent: 1, viewed: 2, completed: 3, declined: 3, expired: 3, failed: 3,
   };
@@ -219,33 +256,17 @@ export async function POST(req: NextRequest) {
 
   console.log(
     `[sync-status] step10 status mapping` +
-    ` | raw Firma status: "${firmaReq.status}"` +
-    ` | mapped: "${mapped ?? "null (UNHANDLED)"}"` +
-    ` | db current: "${sig.status}" (priority ${currentPriority})` +
-    ` | new priority: ${newPriority}` +
+    ` | Firma raw: "${rawFirmaStatus ?? "null"}"` +
+    ` | mapped: "${mapped ?? "null"}"` +
+    ` | db: "${sig.status}" (pri ${currentPriority})` +
     ` | result: "${newStatus}"` +
-    (mapped === null ? " ⚠️ STATUS STRING NOT HANDLED BY mapFirmaStatus" : "")
+    (mapped === null ? ` ⚠️ UNHANDLED STATUS — keys in response: ${Object.keys(firmaRaw).join(", ")}` : "")
   );
-
-  // ── 11. Collect URL fields from Firma response ────────────────────────────────
-  const rawReq = firmaReq as unknown as Record<string, unknown>;
-  const newSignedPdfUrl =
-    (rawReq.document_url as string | undefined) ??
-    (rawReq.signed_pdf_url as string | undefined) ??
-    (sigRow.signed_pdf_url as string | null) ??
-    null;
-  const newAuditTrailUrl =
-    (rawReq.audit_trail_url as string | undefined) ??
-    (sigRow.audit_trail_url as string | null) ??
-    null;
 
   console.log(
     `[sync-status] step11 URL fields` +
-    ` | document_url: ${rawReq.document_url ?? "null"}` +
-    ` | signed_pdf_url (firma): ${rawReq.signed_pdf_url ?? "null"}` +
-    ` | signed_pdf_url (db): ${sigRow.signed_pdf_url ?? "null"}` +
-    ` | resolved newSignedPdfUrl: ${newSignedPdfUrl ?? "null"}` +
-    ` | audit_trail_url: ${newAuditTrailUrl ?? "null"}`
+    ` | newSignedPdfUrl: ${newSignedPdfUrl ?? "null"}` +
+    ` | newAuditTrailUrl: ${newAuditTrailUrl ?? "null"}`
   );
 
   // ── 12. Build DB update payload ───────────────────────────────────────────────
@@ -255,7 +276,7 @@ export async function POST(req: NextRequest) {
   if (newStatus !== sig.status) {
     updatePayload.status = newStatus;
     hasChanges = true;
-    console.log(`[sync-status] step12 status change: "${sig.status}" → "${newStatus}"`);
+    console.log(`[sync-status] step12 status: "${sig.status}" → "${newStatus}"`);
   } else {
     console.log(`[sync-status] step12 no status change — still "${sig.status}"`);
   }
@@ -267,8 +288,8 @@ export async function POST(req: NextRequest) {
     updatePayload.audit_trail_url = newAuditTrailUrl;
     hasChanges = true;
   }
-  if (newStatus === "completed" && firmaReq.completed_at) {
-    updatePayload.completed_at = firmaReq.completed_at;
+  if (newStatus === "completed" && rawCompletedAt) {
+    updatePayload.completed_at = rawCompletedAt;
     hasChanges = true;
   }
   if (signersChanged) {

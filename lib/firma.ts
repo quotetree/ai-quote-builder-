@@ -296,28 +296,67 @@ export async function getFirmaSigningRequestById(
   workspaceApiKey: string,
   signingRequestId: string
 ): Promise<FirmaSigningRequest | null> {
-  const res = await fetch(
-    `${FIRMA_API_BASE}/signing-requests/${signingRequestId}`,
-    { headers: getFirmaHeaders(workspaceApiKey) }
-  );
+  const url = `${FIRMA_API_BASE}/signing-requests/${signingRequestId}`;
+
+  const doFetch = async (apiKey: string) =>
+    fetch(url, { headers: getFirmaHeaders(apiKey) });
+
+  let res = await doFetch(workspaceApiKey);
+
+  // If the workspace key is stale (401/403), fall back to the master API key.
+  // The signing request lives in Firma regardless of which key we authenticate with.
+  if ((res.status === 401 || res.status === 403) && process.env.FIRMA_API_KEY) {
+    const masterKey = process.env.FIRMA_API_KEY.trim();
+    if (masterKey && masterKey !== workspaceApiKey) {
+      console.warn(
+        `[firma] workspace key returned ${res.status} for signing-request ${signingRequestId} — retrying with master key`
+      );
+      res = await doFetch(masterKey);
+    }
+  }
 
   if (res.status === 404) return null;
 
+  const text = await res.text().catch(() => "");
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Firma GET signing-request failed (${res.status}): ${body}`);
+    // Don't throw — log and return null so callers can fall back gracefully
+    console.error(`[firma] GET signing-request failed (${res.status}): ${text.slice(0, 400)}`);
+    return null;
   }
 
-  const data = await res.json();
-  console.log("[firma] GET signing-request response:", JSON.stringify(data).slice(0, 400));
+  let data: unknown;
+  try { data = JSON.parse(text); } catch {
+    console.error("[firma] GET signing-request: response is not JSON:", text.slice(0, 200));
+    return null;
+  }
 
+  console.log("[firma] GET signing-request full response:", JSON.stringify(data).slice(0, 800));
+
+  // Search common nesting patterns — Firma has varied this across API versions
+  const candidates: unknown[] = [data];
   if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    if (record.id) return record as unknown as FirmaSigningRequest;
-    if (record.data && typeof record.data === "object") {
-      return (record.data as Record<string, unknown>) as unknown as FirmaSigningRequest;
+    const r = data as Record<string, unknown>;
+    for (const key of ["data", "signing_request", "result", "record", "signingRequest"]) {
+      if (r[key] && typeof r[key] === "object") candidates.push(r[key]);
+    }
+    // Also unwrap arrays (list endpoints sometimes return a single-item array)
+    if (Array.isArray(r.data) && r.data.length === 1) candidates.push(r.data[0]);
+    if (Array.isArray(data) && (data as unknown[]).length >= 1) candidates.push((data as unknown[])[0]);
+  }
+
+  for (const c of candidates) {
+    if (c && typeof c === "object") {
+      const obj = c as Record<string, unknown>;
+      if (typeof obj.id === "string" && obj.id.length > 0) {
+        return obj as unknown as FirmaSigningRequest;
+      }
     }
   }
+
+  console.warn(
+    `[firma] GET signing-request: could not find id field in response. ` +
+    `Top-level keys: ${data && typeof data === "object" ? Object.keys(data as object).join(", ") : typeof data}`
+  );
   return null;
 }
 
@@ -629,9 +668,11 @@ export function verifyFirmaWebhookSignature(
   const signature = parts["v1"];
   if (!timestamp || !signature) return false;
 
-  // Reject timestamps older than 5 minutes
+  // Accept webhooks up to 1 hour old to handle Firma's retry schedule.
+  // Firma re-uses the original HMAC timestamp on retries, so the 5-minute
+  // window used to silently drop every delivery attempt after the first.
   const ageSeconds = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
-  if (!Number.isFinite(ageSeconds) || ageSeconds > 300) {
+  if (!Number.isFinite(ageSeconds) || ageSeconds > 3600) {
     console.warn("[firma webhook] Timestamp too old or invalid:", ageSeconds, "s");
     return false;
   }

@@ -227,6 +227,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ── All recipients signed ────────────────────────────────────────────────────
+    // Extra aliases in case Firma uses a different event name variant
+    case "signing_request.complete":
+    case "signing_request.signed":
+    case "signing_request.executed":
+    case "signing_request.finished":
+    case "signing_request.fully_signed":
     case "signing_request.completed": {
       updatePayload.status       = "completed";
       updatePayload.completed_at = event.data?.signing_request?.completed_at ?? now;
