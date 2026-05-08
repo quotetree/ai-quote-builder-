@@ -19,6 +19,7 @@ import Image from "next/image";
 import PriceBookModal from "./PriceBookModal";
 import { useSidebar } from "@/contexts/SidebarContext";
 import PersonalizationModal from "./PersonalizationModal";
+import ProposalTemplateModal from "./proposal-template/ProposalTemplateModal";
 import BillingModal from "./BillingModal";
 import MembersModal from "./MembersModal";
 import type { Project } from "@/types/database";
@@ -47,6 +48,8 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const [priceBookOpen, setPriceBookOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [personalizationOpen, setPersonalizationOpen] = useState(false);
+  const [personalizationSubMenuOpen, setPersonalizationSubMenuOpen] = useState(false);
+  const [proposalTemplateOpen, setProposalTemplateOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [profile, setProfile] = useState<{
@@ -433,27 +436,59 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
             <p className="text-xs text-gray-500 truncate">{userEmail}</p>
           </div>
           <div className="py-2">
-            <button
-              onClick={() => {
-                if (canManagePersonalization()) {
-                  setAccountMenuOpen(false);
-                  setPersonalizationOpen(true);
-                }
-              }}
-              disabled={!canManagePersonalization()}
-              className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
-                canManagePersonalization()
-                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
-                  : "text-gray-400 cursor-not-allowed opacity-60"
-              }`}
-              title={!canManagePersonalization() ? "Owner access only" : ""}
-            >
-              <span className="flex items-center gap-2">
-                Personalization
-                {!canManagePersonalization() && <Lock size={14} className="text-gray-400" />}
-              </span>
-              <ChevronRight size={14} className="text-gray-400" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => {
+                  if (canManagePersonalization()) {
+                    setPersonalizationSubMenuOpen((v) => !v);
+                  }
+                }}
+                disabled={!canManagePersonalization()}
+                className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                  canManagePersonalization()
+                    ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                    : "text-gray-400 cursor-not-allowed opacity-60"
+                }`}
+                title={!canManagePersonalization() ? "Owner access only" : ""}
+              >
+                <span className="flex items-center gap-2">
+                  Personalization
+                  {!canManagePersonalization() && <Lock size={14} className="text-gray-400" />}
+                </span>
+                <ChevronRight size={14} className="text-gray-400" />
+              </button>
+
+              {personalizationSubMenuOpen && canManagePersonalization() && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setPersonalizationSubMenuOpen(false)}
+                  />
+                  <div className="absolute left-full top-0 ml-1 z-50 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                    <button
+                      onClick={() => {
+                        setPersonalizationSubMenuOpen(false);
+                        setAccountMenuOpen(false);
+                        setPersonalizationOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      Quote template
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPersonalizationSubMenuOpen(false);
+                        setAccountMenuOpen(false);
+                        setProposalTemplateOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      Proposal template
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <button
               onClick={() => {
                 if (canManageMembers()) {
@@ -583,6 +618,11 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         onUpdated={(updated) => {
           setProfile(updated);
         }}
+      />
+
+      <ProposalTemplateModal
+        isOpen={proposalTemplateOpen}
+        onClose={() => setProposalTemplateOpen(false)}
       />
 
       <BillingModal

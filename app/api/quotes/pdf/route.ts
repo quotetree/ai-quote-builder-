@@ -102,15 +102,217 @@ const getTaxInfo = (quote: any) => {
   };
 };
 
+/** Shared PDF-builder — accepts either real DB data or mock sample data. */
+function buildQuotePDF(opts: {
+  quoteNumber: string;
+  companyName: string | null;
+  companyAddress: string | null;
+  logoAsset: ImageAsset | null;
+  items: Array<{
+    product_name: string;
+    unit_price: number;
+    line_total: number;
+    quantity: number;
+    discount_percent: number;
+  }>;
+  subtotal: number;
+  discount_amount: number;
+  discount_rate: number;
+  tax_rate: number;
+  tax_amount: number;
+  total_price: number;
+  charges?: any[];
+  isMock?: boolean;
+}) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  // Optional "SAMPLE" diagonal watermark for mock/placeholder PDFs
+  if (opts.isMock) {
+    doc.saveGraphicsState();
+    doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(72);
+    doc.setTextColor(0, 0, 0);
+    doc.text("SAMPLE", pageWidth / 2, pageHeight / 2, {
+      align: "center",
+      angle: 45,
+    });
+    doc.restoreGraphicsState();
+  }
+
+  const headerStartY = 20;
+  let leftColumnBottom = headerStartY;
+
+  if (opts.logoAsset) {
+    try {
+      const maxLogoHeight = 25;
+      const imgProps = doc.getImageProperties(opts.logoAsset.dataUrl);
+      const aspectRatio = imgProps.width / imgProps.height;
+      const logoHeight = maxLogoHeight;
+      const logoWidth = logoHeight * aspectRatio;
+      doc.addImage(opts.logoAsset.dataUrl, opts.logoAsset.format, 20, headerStartY, logoWidth, logoHeight);
+      leftColumnBottom = headerStartY + logoHeight + 4;
+    } catch {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.setTextColor(45, 90, 71);
+      doc.text(opts.companyName || "Company Name", 20, headerStartY + 12);
+      leftColumnBottom = headerStartY + 20;
+    }
+  } else {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.setTextColor(45, 90, 71);
+    doc.text(opts.companyName || "Company Name", 20, headerStartY + 12);
+    leftColumnBottom = headerStartY + 20;
+  }
+
+  const addressStartY = leftColumnBottom;
+  if (opts.companyAddress) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    const addressLines = doc.splitTextToSize(opts.companyAddress, pageWidth / 2 - 20);
+    doc.text(addressLines, 20, addressStartY);
+    leftColumnBottom = addressStartY + addressLines.length * 6 + 6;
+  } else {
+    leftColumnBottom = addressStartY + 6;
+  }
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(12);
+  doc.setTextColor(0, 0, 0);
+  doc.text(`Quote Number: ${opts.quoteNumber}`, pageWidth - 20, addressStartY, { align: "right" });
+
+  const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
+
+  const tableData = opts.items.map((item) => {
+    const salesPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
+    const discountPercent = safeNumber(item.discount_percent);
+    const displayListPrice =
+      discountPercent > 0 && discountPercent < 1
+        ? salesPrice / (1 - discountPercent)
+        : salesPrice;
+    return [
+      item.product_name || "-",
+      formatCurrency(displayListPrice),
+      formatPercent(item.discount_percent),
+      formatCurrency(salesPrice),
+      formatQuantity(item.quantity),
+      formatCurrency(item.line_total),
+    ];
+  });
+
+  autoTable(doc, {
+    startY: tableStartY,
+    head: [["Product", "List Price", "Discount", "Sales Price", "Quantity", "Total Price"]],
+    body: tableData.length > 0 ? tableData : [["No items", "", "", "", "", ""]],
+    theme: "grid",
+    headStyles: { fillColor: [62, 62, 62], textColor: 255, halign: "center" },
+    styles: { fontSize: 9, textColor: [50, 50, 50] },
+    columnStyles: {
+      1: { halign: "right" },
+      2: { halign: "center" },
+      3: { halign: "right" },
+      4: { halign: "center" },
+      5: { halign: "right" },
+    },
+  });
+
+  const finalY = ((doc as any).lastAutoTable?.finalY || tableStartY) + 10;
+  doc.setFontSize(11);
+  doc.setTextColor(0, 0, 0);
+
+  const totalsX = pageWidth - 70;
+  let currentY = finalY;
+
+  const taxAmount = opts.charges
+    ? getTaxInfo({ tax_rate: opts.tax_rate, tax_amount: opts.tax_amount, charges: opts.charges }).amount
+    : roundToCents(opts.tax_amount);
+
+  doc.text("Subtotal:", totalsX, currentY);
+  doc.text(formatCurrency(opts.subtotal), pageWidth - 20, currentY, { align: "right" });
+
+  if ((opts.discount_amount ?? 0) > 0) {
+    currentY += 7;
+    const discountLabel = formatPercent(opts.discount_rate);
+    doc.text(`Discount${discountLabel ? ` (${discountLabel})` : ""}:`, totalsX, currentY);
+    doc.text(`-${formatCurrency(opts.discount_amount)}`, pageWidth - 20, currentY, { align: "right" });
+  }
+
+  currentY += 7;
+  doc.text("Tax:", totalsX, currentY);
+  doc.text(formatCurrency(taxAmount), pageWidth - 20, currentY, { align: "right" });
+
+  currentY += 10;
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.text("Total:", totalsX, currentY);
+  doc.text(formatCurrency(opts.total_price), pageWidth - 20, currentY, { align: "right" });
+
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(
+    "This quote is valid until the expiration date shown above.",
+    pageWidth / 2,
+    pageHeight - 20,
+    { align: "center" }
+  );
+
+  return doc;
+}
+
+/** Hardcoded sample data used for template placeholder pages. */
+const MOCK_QUOTE = {
+  quoteNumber: "SAMPLE-001",
+  companyName: "Your Company Logo",
+  companyAddress: "123 Business Street\nSuite 100, City, ST 12345",
+  items: [
+    { product_name: "Product A — Annual License", unit_price: 199, line_total: 4298.4, quantity: 27, discount_percent: 0.2 },
+    { product_name: "Service B — Installation & Setup", unit_price: 350, line_total: 350, quantity: 1, discount_percent: 0 },
+  ],
+  subtotal: 4648.4,
+  discount_amount: 0,
+  discount_rate: 0,
+  tax_rate: 0,
+  tax_amount: 0,
+  total_price: 4648.4,
+};
+
 export async function POST(req: NextRequest) {
   try {
-    const { quoteId } = await req.json();
+    const body = await req.json();
+    const { quoteId, mock } = body;
+
+    // ── Mock / placeholder mode (template builder design-time) ──
+    if (mock === true) {
+      const doc = buildQuotePDF({
+        quoteNumber: MOCK_QUOTE.quoteNumber,
+        companyName: MOCK_QUOTE.companyName,
+        companyAddress: MOCK_QUOTE.companyAddress,
+        logoAsset: null,
+        items: MOCK_QUOTE.items,
+        subtotal: MOCK_QUOTE.subtotal,
+        discount_amount: MOCK_QUOTE.discount_amount,
+        discount_rate: MOCK_QUOTE.discount_rate,
+        tax_rate: MOCK_QUOTE.tax_rate,
+        tax_amount: MOCK_QUOTE.tax_amount,
+        total_price: MOCK_QUOTE.total_price,
+        isMock: true,
+      });
+      const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+      return new NextResponse(pdfBuffer, {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="quote-placeholder.pdf"',
+        },
+      });
+    }
 
     if (!quoteId) {
-      return NextResponse.json(
-        { error: "Missing quote ID" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing quote ID" }, { status: 400 });
     }
 
     // Verify authentication
@@ -157,163 +359,28 @@ export async function POST(req: NextRequest) {
       ? await fetchImageDataUrl(profile.company_logo_url)
       : null;
 
-    // Generate PDF
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-
-    const headerStartY = 20;
-    let leftColumnBottom = headerStartY;
-
-    if (logoAsset) {
-      try {
-        // Set maximum height for logo (25mm) and calculate width proportionally
-        const maxLogoHeight = 25;
-        const imgProps = doc.getImageProperties(logoAsset.dataUrl);
-        const aspectRatio = imgProps.width / imgProps.height;
-        const logoHeight = maxLogoHeight;
-        const logoWidth = logoHeight * aspectRatio;
-        
-        // Add logo at x=20 (left margin), aligned with address below
-        doc.addImage(logoAsset.dataUrl, logoAsset.format, 20, headerStartY, logoWidth, logoHeight);
-        leftColumnBottom = headerStartY + logoHeight + 4;
-      } catch (logoError) {
-        // If logo fails to load, fall back to text company name
-        console.warn("Failed to add logo to PDF, using company name instead:", logoError);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(20);
-        doc.setTextColor(0, 63, 171);
-        doc.text(profile?.company_name || "Company Name", 20, headerStartY + 12);
-        leftColumnBottom = headerStartY + 20;
-      }
-    } else {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(20);
-      doc.setTextColor(0, 63, 171);
-      doc.text(profile?.company_name || "Company Name", 20, headerStartY + 12);
-      leftColumnBottom = headerStartY + 20;
-    }
-
-    // Address and Quote Number on same baseline
-    const addressStartY = leftColumnBottom;
-    
-    if (profile?.company_address) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(12);
-      doc.setTextColor(0, 0, 0);
-      const addressLines = doc.splitTextToSize(profile.company_address, pageWidth / 2 - 20);
-      doc.text(addressLines, 20, addressStartY);
-      leftColumnBottom = addressStartY + addressLines.length * 6 + 6;
-    } else {
-      leftColumnBottom = addressStartY + 6;
-    }
-
-    // Quote Number - aligned with first line of address
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-    doc.text(`Quote Number: ${quote.quote_number}`, pageWidth - 20, addressStartY, { align: "right" });
-
-    // Start table right after header section
-    const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
-
-    const tableData =
-      quote.items?.map((item: any) => {
-        // Calculate sales price from line_total (includes markup, discounts, etc.)
-        const salesPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
-        
-        // Back-calculate list price so it matches the sales price after discount
-        // This hides any markup from the customer - they'll see the math work out correctly
-        const discountPercent = safeNumber(item.discount_percent);
-        let displayListPrice: number;
-        
-        if (discountPercent > 0 && discountPercent < 1) {
-          // If there's a discount, back-calculate: listPrice = salesPrice / (1 - discount)
-          displayListPrice = salesPrice / (1 - discountPercent);
-        } else {
-          // No discount, so list price = sales price
-          displayListPrice = salesPrice;
-        }
-        
-        return [
-          item.product_name || item.product_number || "-",
-          formatCurrency(displayListPrice),
-          formatPercent(item.discount_percent),
-          formatCurrency(salesPrice),
-          formatQuantity(item.quantity),
-          formatCurrency(item.line_total),
-        ];
-      }) || [];
-
-    autoTable(doc, {
-      startY: tableStartY,
-      head: [["Product", "List Price", "Discount", "Sales Price", "Quantity", "Total Price"]],
-      body: tableData.length > 0 ? tableData : [["No items", "", "", "", "", ""]],
-      theme: "grid",
-      headStyles: {
-        fillColor: [62, 62, 62],
-        textColor: 255,
-        halign: "center",
-      },
-      styles: {
-        fontSize: 9,
-        textColor: [50, 50, 50],
-      },
-      columnStyles: {
-        1: { halign: "right" },  // List Price
-        2: { halign: "center" }, // Discount
-        3: { halign: "right" },  // Sales Price
-        4: { halign: "center" }, // Quantity
-        5: { halign: "right" },  // Total Price
-      },
+    // Generate PDF using shared builder
+    const doc = buildQuotePDF({
+      quoteNumber: quote.quote_number,
+      companyName: profile?.company_name ?? null,
+      companyAddress: profile?.company_address ?? null,
+      logoAsset,
+      items: (quote.items ?? []).map((item: any) => ({
+        product_name: item.product_name || item.product_number || "-",
+        unit_price: safeNumber(item.unit_price),
+        line_total: safeNumber(item.line_total),
+        quantity: safeNumber(item.quantity),
+        discount_percent: safeNumber(item.discount_percent),
+      })),
+      subtotal: safeNumber(quote.subtotal),
+      discount_amount: safeNumber(quote.discount_amount),
+      discount_rate: safeNumber(quote.discount_rate),
+      tax_rate: safeNumber(quote.tax_rate),
+      tax_amount: safeNumber(quote.tax_amount),
+      total_price: safeNumber(quote.total_price),
+      charges: quote.charges,
     });
 
-    // Calculate final Y position after table
-    const finalY = ((doc as any).lastAutoTable?.finalY || tableStartY) + 10;
-
-    // Totals
-    doc.setFontSize(11);
-    doc.setTextColor(0, 0, 0);
-    
-    const totalsX = pageWidth - 70;
-    let currentY = finalY;
-
-    const { rate: taxRate, amount: taxAmount } = getTaxInfo(quote);
-
-    doc.text("Subtotal:", totalsX, currentY);
-    doc.text(formatCurrency(quote.subtotal), pageWidth - 20, currentY, { align: "right" });
-
-    if ((quote.discount_amount ?? 0) > 0) {
-      currentY += 7;
-      const discountLabel = formatPercent(quote.discount_rate);
-      doc.text(
-        `Discount${discountLabel ? ` (${discountLabel})` : ""}:`,
-        totalsX,
-        currentY
-      );
-      doc.text(`-${formatCurrency(quote.discount_amount)}`, pageWidth - 20, currentY, { align: "right" });
-    }
-
-    currentY += 7;
-    doc.text("Tax:", totalsX, currentY);
-    doc.text(formatCurrency(taxAmount), pageWidth - 20, currentY, { align: "right" });
-
-    currentY += 10;
-    doc.setFontSize(13);
-    doc.setFont("helvetica", "bold");
-    doc.text("Total:", totalsX, currentY);
-    doc.text(formatCurrency(quote.total_price), pageWidth - 20, currentY, { align: "right" });
-
-    // Footer
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    doc.text(
-      "This quote is valid until the expiration date shown above.",
-      pageWidth / 2,
-      doc.internal.pageSize.getHeight() - 20,
-      { align: "center" }
-    );
-
-    // Generate PDF buffer
     const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
 
     return new NextResponse(pdfBuffer, {
