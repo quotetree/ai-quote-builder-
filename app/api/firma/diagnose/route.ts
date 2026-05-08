@@ -101,27 +101,28 @@ export async function GET(req: NextRequest) {
     .eq("proposal_id", proposal.id)
     .maybeSingle();
 
+  const sigRaw = sig as Record<string, unknown> | null;
   trace.step3_signatureLookup = {
     client: "service-role (bypasses RLS)",
-    found: !!sig,
+    found: !!sigRaw,
     error: sigErr?.message ?? null,
-    sigId:                        sig?.id ?? null,
-    status:                       sig?.status ?? null,
-    firma_signing_request_id:     (sig as Record<string, unknown> | null)?.firma_signing_request_id ?? null,
-    firma_signing_request_user_id:(sig as Record<string, unknown> | null)?.firma_signing_request_user_id ?? null,
-    signed_pdf_url:               (sig as Record<string, unknown> | null)?.signed_pdf_url ?? null,
-    audit_trail_url:              (sig as Record<string, unknown> | null)?.audit_trail_url ?? null,
-    all_signers_data:             (sig as Record<string, unknown> | null)?.all_signers_data ?? null,
-    sent_at:                      (sig as Record<string, unknown> | null)?.sent_at ?? null,
-    completed_at:                 (sig as Record<string, unknown> | null)?.completed_at ?? null,
-    updated_at:                   (sig as Record<string, unknown> | null)?.updated_at ?? null,
+    sigId:                        sigRaw?.id ?? null,
+    status:                       sigRaw?.status ?? null,
+    firma_signing_request_id:     sigRaw?.firma_signing_request_id ?? null,
+    firma_signing_request_user_id:sigRaw?.firma_signing_request_user_id ?? null,
+    signed_pdf_url:               sigRaw?.signed_pdf_url ?? null,
+    audit_trail_url:              sigRaw?.audit_trail_url ?? null,
+    all_signers_data:             sigRaw?.all_signers_data ?? null,
+    sent_at:                      sigRaw?.sent_at ?? null,
+    completed_at:                 sigRaw?.completed_at ?? null,
+    updated_at:                   sigRaw?.updated_at ?? null,
   };
 
-  if (sigErr || !sig) {
+  if (sigErr || !sigRaw) {
     return NextResponse.json({ error: "Signature row not found", trace });
   }
 
-  const firmaRequestId = (sig as Record<string, unknown>).firma_signing_request_id as string | null;
+  const firmaRequestId = sigRaw.firma_signing_request_id as string | null;
   if (!firmaRequestId) {
     return NextResponse.json({ error: "firma_signing_request_id is null in DB", trace });
   }
@@ -227,25 +228,26 @@ export async function GET(req: NextRequest) {
   const statusPriority: Record<string, number> = {
     draft: 0, sent: 1, viewed: 2, completed: 3, declined: 3, expired: 3, failed: 3,
   };
-  const currentPriority = statusPriority[sig.status as string] ?? 0;
+  const currentDbStatus = sigRaw.status as string;
+  const currentPriority = statusPriority[currentDbStatus] ?? 0;
   const newPriority = mappedStatus ? (statusPriority[mappedStatus] ?? 0) : 0;
-  const wouldUpdateTo = newPriority > currentPriority ? mappedStatus : sig.status;
+  const wouldUpdateTo = newPriority > currentPriority ? mappedStatus : currentDbStatus;
 
   trace.step7_statusMapping = {
     rawFirmaStatus,
     mappedStatus,
-    currentDbStatus: sig.status,
+    currentDbStatus,
     currentPriority,
     newPriority,
-    wouldUpdateStatus: wouldUpdateTo !== sig.status,
+    wouldUpdateStatus: wouldUpdateTo !== currentDbStatus,
     wouldUpdateTo,
     rawDocumentUrl,
     rawAuditTrailUrl,
     note: mappedStatus === null
       ? `⚠️ mapFirmaStatus("${rawFirmaStatus}") returned null — this status string is not handled`
       : newPriority <= currentPriority
-        ? `ℹ️ No status upgrade: current="${sig.status}" (priority ${currentPriority}) >= mapped="${mappedStatus}" (priority ${newPriority})`
-        : `✅ Would advance: "${sig.status}" → "${wouldUpdateTo}"`,
+        ? `ℹ️ No status upgrade: current="${currentDbStatus}" (priority ${currentPriority}) >= mapped="${mappedStatus}" (priority ${newPriority})`
+        : `✅ Would advance: "${currentDbStatus}" → "${wouldUpdateTo}"`,
   };
 
   // ── 8. Webhook timestamp tolerance check ─────────────────────────────────────
@@ -268,7 +270,7 @@ export async function GET(req: NextRequest) {
   if (firmaGetHttpStatus !== 200)         issues.push(`Firma GET /signing-requests returned HTTP ${firmaGetHttpStatus}`);
   if (!rawFirmaStatus)                    issues.push("Could not extract status field from Firma response");
   if (mappedStatus === null)              issues.push(`mapFirmaStatus("${rawFirmaStatus}") returned null — unhandled status string`);
-  if (mappedStatus === sig.status)        issues.push(`Status already matches DB ("${sig.status}") — no update needed`);
+  if (mappedStatus === currentDbStatus)   issues.push(`Status already matches DB ("${currentDbStatus}") — no update needed`);
 
   trace.summary = {
     issues: issues.length > 0 ? issues : ["No issues detected in this trace"],
