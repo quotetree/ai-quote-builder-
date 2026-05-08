@@ -61,17 +61,27 @@ function extractField(raw: Record<string, unknown>, key: string): string | null 
   return null;
 }
 
+/**
+ * Searches the signing request body for an inline recipients / signers array.
+ * Firma sometimes embeds per-signer data (including signed_at) directly in the
+ * GET /signing-requests/{id} response rather than only on the /users sub-endpoint.
+ */
+function extractRecipientArray(raw: Record<string, unknown>): Array<Record<string, unknown>> {
+  const recipientKeys = ["recipients", "users", "signers", "signing_users",
+                         "signing_request_users", "participants"];
+  const wrapperKeys   = ["", "data", "signing_request", "result", "record", "signingRequest"];
+  for (const wrapper of wrapperKeys) {
+    const obj: unknown = wrapper ? raw[wrapper] : raw;
+    if (!obj || typeof obj !== "object") continue;
+    for (const key of recipientKeys) {
+      const arr = (obj as Record<string, unknown>)[key];
+      if (Array.isArray(arr) && arr.length > 0) return arr as Array<Record<string, unknown>>;
+    }
+  }
+  return [];
+}
+
 export async function POST(req: NextRequest) {
-  // ── 0. Env var presence check (boolean only — never log values) ──────────────
-  console.log(
-    "[sync-status] 🔧 Env vars present:" +
-    `\n  FIRMA_API_KEY: ${!!process.env.FIRMA_API_KEY}` +
-    `\n  FIRMA_WEBHOOK_SECRET: ${!!process.env.FIRMA_WEBHOOK_SECRET}` +
-    `\n  PDFSHIFT_API_KEY: ${!!process.env.PDFSHIFT_API_KEY}` +
-    `\n  SUPABASE_SERVICE_ROLE_KEY: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}` +
-    `\n  NEXT_PUBLIC_SUPABASE_URL: ${!!process.env.NEXT_PUBLIC_SUPABASE_URL}` +
-    `\n  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${!!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
-  );
 
   // ── 1. Auth ──────────────────────────────────────────────────────────────────
   const supabase = await createClient();
@@ -205,7 +215,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: sig.status });
   }
 
-  // ── 8. Fetch per-recipient signed_at — try workspace key then master key ───────
+  // ── 7b. Extract inline recipients from the signing request body ───────────────
+  // Firma sometimes embeds a recipients / signers array directly in the signing
+  // request object.  Pull it here so we can use it even if the /users endpoint
+  // doesn't return signed_at.
+  const bodyRecipients = extractRecipientArray(firmaRaw);
+
+  // ── 8. Fetch per-recipient signed_at from /users sub-endpoint ────────────────
   let firmaUsers: Array<Record<string, unknown>> = [];
   try {
     firmaUsers = (await getFirmaSigningRequestUsers(workspaceApiKey, firmaRequestId)) as unknown as Array<Record<string, unknown>>;
@@ -217,22 +233,31 @@ export async function POST(req: NextRequest) {
           process.env.FIRMA_API_KEY.trim(), firmaRequestId
         )) as unknown as Array<Record<string, unknown>>;
       } catch {
-        // Non-fatal — proceed without per-recipient signed_at
+        // Non-fatal — proceed without per-recipient signed_at from /users
       }
     }
   }
 
   // ── 9. Merge per-recipient signed_at into all_signers_data ───────────────────
+  // Priority: body recipients (inline in signing request) > /users endpoint
   const currentSigners: Array<Record<string, unknown>> =
     Array.isArray(sigRow.all_signers_data) ? sigRow.all_signers_data as Array<Record<string, unknown>> : [];
 
   let signersChanged = false;
   const updatedSigners = currentSigners.map((s) => {
     const email = ((s.email as string) ?? "").toLowerCase();
-    const firmaUser = firmaUsers.find(
-      (u) => ((u.email as string) ?? "").toLowerCase() === email
+    const bodyRecip = bodyRecipients.find(
+      (u) => ((u.email as string) ?? "").toLowerCase() === email ||
+             ((u.firma_user_id as string) ?? "") === ((s.firma_user_id as string) ?? "NOT_FOUND")
     );
-    const signedAt = firmaUser?.signed_at as string | undefined;
+    const firmaUser = firmaUsers.find(
+      (u) => ((u.email as string) ?? "").toLowerCase() === email ||
+             ((u.id as string) ?? "") === ((s.firma_user_id as string) ?? "NOT_FOUND")
+    );
+    const signedAt = (
+      (bodyRecip?.signed_at as string | undefined) ??
+      (firmaUser?.signed_at as string | undefined)
+    );
     if (signedAt && !s.signed_at) {
       signersChanged = true;
       return { ...s, signed_at: signedAt };
@@ -319,15 +344,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Single summary log — appears as the last line in Vercel's per-request view
+  // Single summary log — appears as the last line in Vercel's per-request view.
+  // Always includes top-level Firma response keys so we can diagnose shape issues
+  // without needing to expand the full step-7 log entry.
   console.log(
     `[sync-status] ✅ done | proposal: ${proposal.id.slice(0, 8)}` +
     ` | firmaStatus: "${rawFirmaStatus ?? "null"}"` +
-    ` | signers: ${signedCount}/${signerCount} signed` +
+    ` | signers: ${signedCount}/${signerCount} signed (body:${bodyRecipients.length} users:${firmaUsers.length})` +
     ` | db: "${sig.status}" → "${newStatus}"` +
     ` | changed: ${hasChanges}` +
     ` | signedPdfUrl: ${newSignedPdfUrl ? "present" : "null"}` +
-    (mapped === null && rawFirmaStatus ? ` ⚠️ unmapped status "${rawFirmaStatus}" — top-level keys: ${Object.keys(firmaRaw).join(", ")}` : "")
+    ` | firmaKeys: [${Object.keys(firmaRaw).join(", ")}]` +
+    (bodyRecipients.length > 0
+      ? ` | bodyRecip[0]keys: [${Object.keys(bodyRecipients[0]).join(", ")}]`
+      : "") +
+    (mapped === null && rawFirmaStatus ? ` ⚠️ unmapped: "${rawFirmaStatus}"` : "")
   );
 
   return NextResponse.json({
