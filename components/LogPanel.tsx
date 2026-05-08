@@ -1,11 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2 } from "lucide-react";
+import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2, Layout, ArrowLeft } from "lucide-react";
+import ProposalTemplateModal from "@/components/proposal-template/ProposalTemplateModal";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useProducts } from "@/hooks/useProducts";
 import { Product, Quote, QuoteItem } from "@/types/database";
+import { createClient } from "@/lib/supabase/client";
 import toast from "react-hot-toast";
+import type { ProposalSignatureStatus } from "@/components/proposal-template/proposalTemplateTypes";
 
 type QuoteWithExtras = Quote & {
   baked_markups?: any[];
@@ -451,12 +454,45 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [newQuoteNameInput, setNewQuoteNameInput] = useState("");
+  const [proposalQuoteId, setProposalQuoteId] = useState<string | null>(null);
+  const [proposalQuoteName, setProposalQuoteName] = useState<string>("");
+
+  // Signature status per quote (quoteId → ProposalSignatureStatus)
+  const [signaturesMap, setSignaturesMap] = useState<Record<string, ProposalSignatureStatus>>({});
 
   useEffect(() => {
     if (projectId) {
       fetchQuotes(projectId);
     }
   }, [projectId]);
+
+  // Load proposal signature statuses whenever the quote list changes
+  useEffect(() => {
+    if (quotes.length === 0) return;
+    const supabase = createClient();
+    (async () => {
+      try {
+        // Join proposal_signatures → quote_proposals to map quote_id → status
+        const { data } = await supabase
+          .from("proposal_signatures")
+          .select("status, quote_proposals!inner(quote_id)")
+          .in(
+            "quote_proposals.quote_id",
+            quotes.map((q) => q.id)
+          );
+
+        if (!data) return;
+        const map: Record<string, ProposalSignatureStatus> = {};
+        for (const row of data) {
+          const qp = row.quote_proposals as unknown as { quote_id: string };
+          if (qp?.quote_id) map[qp.quote_id] = row.status as ProposalSignatureStatus;
+        }
+        setSignaturesMap(map);
+      } catch {
+        // non-fatal
+      }
+    })();
+  }, [quotes]);
 
   // Close actions menu when clicking outside
   useEffect(() => {
@@ -527,6 +563,25 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       default:
         return "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400";
     }
+  };
+
+  const getSignatureStatusBadge = (status: ProposalSignatureStatus | undefined) => {
+    if (!status) return null;
+    const map: Record<ProposalSignatureStatus, { label: string; cls: string }> = {
+      draft:     { label: "Draft",     cls: "bg-gray-100 dark:bg-gray-800 text-gray-500" },
+      sent:      { label: "Sent",      cls: "bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+      viewed:    { label: "Viewed",    cls: "bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400" },
+      completed: { label: "Completed", cls: "bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400" },
+      declined:  { label: "Declined",  cls: "bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400" },
+      expired:   { label: "Expired",   cls: "bg-gray-100 dark:bg-gray-800 text-gray-400" },
+      failed:    { label: "Failed",    cls: "bg-red-50 dark:bg-red-900/10 text-red-500" },
+    };
+    const { label, cls } = map[status] ?? map.draft;
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+        {label}
+      </span>
+    );
   };
 
   const handleStatusChange = async (quoteId: string, newStatus: Quote['status']) => {
@@ -824,6 +879,37 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     );
   }
 
+  // ── Inline Proposal Builder view ──
+  if (proposalQuoteId) {
+    return (
+      <div className="h-full flex flex-col bg-white dark:bg-gray-900">
+        {/* Back bar */}
+        <div className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <button
+            onClick={() => setProposalQuoteId(null)}
+            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <ArrowLeft size={16} />
+            Back to Quotes
+          </button>
+          <span className="text-gray-300 dark:text-gray-600 select-none">|</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400 truncate">{proposalQuoteName}</span>
+        </div>
+        {/* Inline proposal builder — reuses ProposalTemplateModal with inline + quoteId */}
+        <div className="flex-1 overflow-hidden">
+          <ProposalTemplateModal
+            isOpen={true}
+            inline={true}
+            quoteId={proposalQuoteId}
+            quoteName={proposalQuoteName}
+            projectId={projectId}
+            onClose={() => setProposalQuoteId(null)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full bg-gray-50 dark:bg-gray-950 p-6">
       {/* Header */}
@@ -900,21 +986,9 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(quote.created_at).toLocaleDateString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <select
-                        value={quote.status}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleStatusChange(quote.id, e.target.value as Quote['status']);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className={`text-sm px-3 py-1 rounded-full font-medium ${getStatusColor(quote.status)}`}
-                      >
-                        <option value="draft">Draft</option>
-                        <option value="for_approval">For Approval</option>
-                        <option value="approved">Approved</option>
-                        <option value="declined">Declined</option>
-                      </select>
+                    {/* Status — shows proposal/signature tracking status */}
+                    <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {getSignatureStatusBadge(signaturesMap[quote.id] ?? "draft")}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex gap-2 items-center">
@@ -986,6 +1060,18 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                               >
                                 <FileEdit size={16} className="flex-shrink-0" />
                                 <span>Rename Quote</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setProposalQuoteId(quote.id);
+                                  setProposalQuoteName(quote.quote_name);
+                                  setShowActionsMenu(null);
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
+                              >
+                                <Layout size={16} className="flex-shrink-0" />
+                                <span>Build Proposal</span>
                               </button>
                               <button
                                 onClick={(e) => {

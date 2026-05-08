@@ -178,9 +178,9 @@ export default function DashboardPage() {
         } else {
           toast.error("Project created but some files failed to upload");
         }
-        // Force a router refresh to update the sidebar
-        router.refresh();
         router.push(`/projects/${project.id}`);
+        // Notify sidebar to refresh project list without blocking navigation
+        window.dispatchEvent(new CustomEvent("projectUpdated"));
         setProjectName("");
         setProjectInputFocused(false);
       }

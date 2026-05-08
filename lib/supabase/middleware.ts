@@ -38,6 +38,13 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Skip authentication check for webhook routes, auth routes, checkout success, and blog
+  // /proposal/export/* is accessible without a login session, but ONLY when a
+  // signed ?token= query param is present.  Token validity is enforced in the
+  // page itself (verifyExportToken).  Without a token, unauthenticated requests
+  // fall through to the normal sign-in redirect below.
+  const isProposalExport = request.nextUrl.pathname.startsWith("/proposal/export/");
+  const hasExportToken = request.nextUrl.searchParams.has("token");
+
   if (
     !user &&
     !request.nextUrl.pathname.startsWith("/auth") &&
@@ -45,6 +52,7 @@ export async function updateSession(request: NextRequest) {
     !request.nextUrl.pathname.startsWith("/api/stripe/webhook") &&
     !request.nextUrl.pathname.startsWith("/checkout/success") &&
     !request.nextUrl.pathname.startsWith("/blog") &&
+    !(isProposalExport && hasExportToken) &&
     request.nextUrl.pathname !== "/"
   ) {
     // no user, potentially respond by redirecting the user to the login page
