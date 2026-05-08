@@ -239,25 +239,40 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 9. Merge per-recipient signed_at into all_signers_data ───────────────────
-  // Priority: body recipients (inline in signing request) > /users endpoint
+  // Firma may use different field names for the signing timestamp on user objects.
+  // Check all known variants so we handle every API version.
   const currentSigners: Array<Record<string, unknown>> =
     Array.isArray(sigRow.all_signers_data) ? sigRow.all_signers_data as Array<Record<string, unknown>> : [];
+
+  const isSignedUser = (u: Record<string, unknown>): string | undefined => {
+    // Direct timestamp fields (any name Firma uses)
+    for (const k of ["signed_at", "signed_on", "completed_at", "executed_at", "finished_at"]) {
+      if (typeof u[k] === "string" && u[k] !== "") return u[k] as string;
+    }
+    // Boolean / status fields — treat as signed_at = now() so inference can fire
+    if (u.is_signed === true || u.has_signed === true) return new Date().toISOString();
+    const uStatus = (u.status ?? u.state ?? u.signing_status) as string | undefined;
+    if (typeof uStatus === "string") {
+      const norm = uStatus.toLowerCase().replace(/[\s_\-]+/g, "_");
+      if (["signed", "completed", "done", "finished", "executed", "complete"].includes(norm)) {
+        return new Date().toISOString();
+      }
+    }
+    return undefined;
+  };
 
   let signersChanged = false;
   const updatedSigners = currentSigners.map((s) => {
     const email = ((s.email as string) ?? "").toLowerCase();
+    const uid   = (s.firma_user_id as string) ?? "";
     const bodyRecip = bodyRecipients.find(
-      (u) => ((u.email as string) ?? "").toLowerCase() === email ||
-             ((u.firma_user_id as string) ?? "") === ((s.firma_user_id as string) ?? "NOT_FOUND")
+      (u) => ((u.email as string) ?? "").toLowerCase() === email || (u.firma_user_id as string) === uid
     );
     const firmaUser = firmaUsers.find(
       (u) => ((u.email as string) ?? "").toLowerCase() === email ||
-             ((u.id as string) ?? "") === ((s.firma_user_id as string) ?? "NOT_FOUND")
+             (u.id as string) === uid || (u.firma_user_id as string) === uid
     );
-    const signedAt = (
-      (bodyRecip?.signed_at as string | undefined) ??
-      (firmaUser?.signed_at as string | undefined)
-    );
+    const signedAt = isSignedUser(bodyRecip ?? {}) ?? isSignedUser(firmaUser ?? {});
     if (signedAt && !s.signed_at) {
       signersChanged = true;
       return { ...s, signed_at: signedAt };
@@ -266,36 +281,87 @@ export async function POST(req: NextRequest) {
   });
 
   // ── 10. Determine new status ──────────────────────────────────────────────────
-  const rawFirmaStatus   = extractField(firmaRaw, "status");
+  // Firma's `status` field is an object (not a string), so extractField returns null.
+  // We also look inside the status object for a nested string, then fall back to
+  // other completion signals that are more reliable than the status field itself.
+
+  const rawFirmaStatus: string | null = (() => {
+    // Try scalar first (handles older API versions)
+    const direct = extractField(firmaRaw, "status");
+    if (direct) return direct;
+    // status may be a nested object: { current: "...", ... }
+    const statusObj = firmaRaw.status;
+    if (statusObj && typeof statusObj === "object") {
+      const obj = statusObj as Record<string, unknown>;
+      for (const k of ["current", "value", "name", "label", "type", "state", "slug"]) {
+        if (typeof obj[k] === "string" && obj[k] !== "") return obj[k] as string;
+      }
+      // Last resort: first string value in the object
+      const first = Object.values(obj).find(v => typeof v === "string" && v !== "");
+      if (first) return first as string;
+    }
+    return null;
+  })();
+
+  // final_document_download_url being present is the most reliable completion signal:
+  // Firma only populates it once all signers are done and the certificate is generated.
+  const finalDocUrl =
+    extractField(firmaRaw, "final_document_download_url") ??
+    extractField(firmaRaw, "document_only_download_url") ??
+    null;
+
   const newSignedPdfUrl  =
+    finalDocUrl ??
     extractField(firmaRaw, "document_url") ??
     extractField(firmaRaw, "signed_pdf_url") ??
     extractField(firmaRaw, "signed_document_url") ??
     (sigRow.signed_pdf_url as string | null) ??
     null;
+
   const newAuditTrailUrl =
+    extractField(firmaRaw, "certificate_only_download_url") ??
     extractField(firmaRaw, "audit_trail_url") ??
     (sigRow.audit_trail_url as string | null) ??
     null;
-  const rawCompletedAt   = extractField(firmaRaw, "completed_at");
+
+  // timestamps object may carry completed_at / viewed_at even when status is opaque
+  const tsObj = (firmaRaw.timestamps && typeof firmaRaw.timestamps === "object")
+    ? firmaRaw.timestamps as Record<string, unknown>
+    : {};
+  const tsCompletedAt =
+    (["completed_at", "signed_at", "finished_at", "executed_at"] as const)
+      .map(k => tsObj[k]).find(v => typeof v === "string" && v !== "") as string | undefined;
+  const tsViewedAt =
+    (["viewed_at", "opened_at", "first_viewed_at", "last_viewed_at"] as const)
+      .map(k => tsObj[k]).find(v => typeof v === "string" && v !== "") as string | undefined;
+  const rawCompletedAt =
+    tsCompletedAt ?? extractField(firmaRaw, "completed_at") ?? null;
 
   const statusPriority: Record<string, number> = {
     draft: 0, sent: 1, viewed: 2, completed: 3, declined: 3, expired: 3, failed: 3,
   };
 
-  // Start from Firma's top-level status field
+  // Start from mapped Firma status string
   const mapped = rawFirmaStatus ? mapFirmaStatus(rawFirmaStatus) : null;
   const currentPriority = statusPriority[sig.status] ?? 0;
   const mappedPriority  = mapped ? (statusPriority[mapped] ?? 0) : 0;
   let newStatus = mappedPriority > currentPriority ? mapped! : sig.status;
 
-  // ── 10b. Infer status from per-signer signed_at ──────────────────────────────
-  // Firma keeps its aggregate status as "pending"/"in_progress" until EVERY
-  // signer completes — this means a partial signature never advances our status.
-  // Instead, count signed_at values from the updated signers list and infer:
-  //   all signed  → completed
-  //   any signed  → at least viewed
-  // This fires regardless of what the top-level Firma status field says.
+  // ── 10b. Infer completion from reliable signals ───────────────────────────────
+  // Signal 1: final_document_download_url is set → all signers done, cert generated
+  if (finalDocUrl && (statusPriority[newStatus] ?? 0) < statusPriority["completed"]) {
+    newStatus = "completed";
+  }
+  // Signal 2: timestamps.completed_at → Firma recorded a completion timestamp
+  if (tsCompletedAt && (statusPriority[newStatus] ?? 0) < statusPriority["completed"]) {
+    newStatus = "completed";
+  }
+  // Signal 3: timestamps.viewed_at → at least one recipient opened the document
+  if (tsViewedAt && (statusPriority[newStatus] ?? 0) < statusPriority["viewed"]) {
+    newStatus = "viewed";
+  }
+
+  // ── 10c. Infer from per-signer signed_at counts ───────────────────────────────
   const signerCount  = updatedSigners.length;
   const signedCount  = updatedSigners.filter(s => s.signed_at).length;
 
@@ -344,20 +410,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Single summary log — appears as the last line in Vercel's per-request view.
-  // Always includes top-level Firma response keys so we can diagnose shape issues
-  // without needing to expand the full step-7 log entry.
+  const tsKeys = Object.keys(tsObj);
+  const statusObjKeys = (firmaRaw.status && typeof firmaRaw.status === "object")
+    ? Object.keys(firmaRaw.status as object) : [];
+  const user0Keys = firmaUsers.length > 0 ? Object.keys(firmaUsers[0]) : [];
+
+  // Single summary log — last line in Vercel's per-request view
   console.log(
     `[sync-status] ✅ done | proposal: ${proposal.id.slice(0, 8)}` +
     ` | firmaStatus: "${rawFirmaStatus ?? "null"}"` +
+    ` | finalDocUrl: ${finalDocUrl ? "present" : "null"}` +
+    ` | tsCompleted: ${tsCompletedAt ? "yes" : "no"} tsViewed: ${tsViewedAt ? "yes" : "no"}` +
     ` | signers: ${signedCount}/${signerCount} signed (body:${bodyRecipients.length} users:${firmaUsers.length})` +
     ` | db: "${sig.status}" → "${newStatus}"` +
     ` | changed: ${hasChanges}` +
-    ` | signedPdfUrl: ${newSignedPdfUrl ? "present" : "null"}` +
     ` | firmaKeys: [${Object.keys(firmaRaw).join(", ")}]` +
-    (bodyRecipients.length > 0
-      ? ` | bodyRecip[0]keys: [${Object.keys(bodyRecipients[0]).join(", ")}]`
-      : "") +
+    (statusObjKeys.length > 0 ? ` | statusObjKeys: [${statusObjKeys.join(", ")}]` : " | status: scalar") +
+    (tsKeys.length > 0 ? ` | tsKeys: [${tsKeys.join(", ")}]` : "") +
+    (user0Keys.length > 0 ? ` | user[0]keys: [${user0Keys.join(", ")}]` : "") +
     (mapped === null && rawFirmaStatus ? ` ⚠️ unmapped: "${rawFirmaStatus}"` : "")
   );
 
