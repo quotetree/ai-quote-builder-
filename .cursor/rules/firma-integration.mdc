@@ -1,0 +1,76 @@
+---
+description: Rules for the Firma e-signature integration — sync-status, webhooks, and status mapping
+alwaysApply: true
+---
+
+# Firma Integration Rules
+
+## Status Inference — Do Not Rely on Firma's Aggregate Status Alone
+
+Firma keeps its top-level `status` field as `"pending"` or `"in_progress"` until **every** signer completes. A partial signature never advances the aggregate status.
+
+Always infer our internal status from per-signer `signed_at` counts **in addition to** the aggregate status field:
+
+```typescript
+// After merging firmaUsers into updatedSigners:
+const signedCount = updatedSigners.filter(s => s.signed_at).length;
+const signerCount = updatedSigners.length;
+
+if (signerCount > 0 && signedCount === signerCount) {
+  newStatus = "completed";  // all signed
+} else if (signedCount > 0 && statusPriority[newStatus] < statusPriority["viewed"]) {
+  newStatus = "viewed";     // partial signing
+}
+```
+
+## mapFirmaStatus — Always Normalise Before Switching
+
+Firma has used different status strings across API versions. Always normalise before comparing:
+
+```typescript
+const s = raw.toLowerCase().replace(/[\s_\-]+/g, "_");
+// covers: completed, complete, signed, fully_signed, executed, done, finished
+// covers: pending, in_progress, active, awaiting, open, processing → "sent"
+```
+
+## Response Shape — Never Assume a Single Nesting Depth
+
+Firma may return `{ id, status }` flat **or** `{ data: { id, status } }` **or** `{ signing_request: { id, status } }`. Always use `extractField()`:
+
+```typescript
+function extractField(raw: Record<string, unknown>, key: string): string | null {
+  if (typeof raw[key] === "string") return raw[key] as string;
+  for (const w of ["data", "signing_request", "result", "record"]) {
+    const val = (raw[w] as Record<string, unknown> | undefined)?.[key];
+    if (typeof val === "string") return val;
+  }
+  return null;
+}
+```
+
+## Workspace Key — Always Fall Back to Master Key on 401/403
+
+The cached workspace key in `firma_workspaces` can become stale. Any Firma API call that receives 401/403 must retry with `process.env.FIRMA_API_KEY`:
+
+```typescript
+let res = await fetch(url, { headers: { Authorization: `Bearer ${workspaceKey}` } });
+if ((res.status === 401 || res.status === 403) && process.env.FIRMA_API_KEY) {
+  res = await fetch(url, { headers: { Authorization: `Bearer ${process.env.FIRMA_API_KEY}` } });
+}
+```
+
+## Webhook Timestamp Tolerance
+
+Firma re-uses the **original** HMAC timestamp on retries. Tolerance must be ≥ 1 hour (3600 s) or retries will be silently rejected.
+
+## Vercel Logs — Last Line Only
+
+Vercel's per-request log view shows only the **last** `console.log` line. Put a single comprehensive summary log at the very end of each route handler:
+
+```typescript
+console.log(`[sync-status] ✅ done | db: "${oldStatus}" → "${newStatus}" | signers: ${signedCount}/${signerCount} | changed: ${hasChanges}`);
+```
+
+## Never Throw in getFirmaSigningRequestById
+
+An unexpected response shape must return `null`, never throw. Throws are silently caught upstream and leave the DB status unchanged with no visible error.

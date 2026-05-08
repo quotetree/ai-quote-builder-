@@ -205,12 +205,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: sig.status });
   }
 
-  // ── 8. Fetch per-recipient signed_at (non-fatal) ──────────────────────────
+  // ── 8. Fetch per-recipient signed_at — try workspace key then master key ───────
   let firmaUsers: Array<Record<string, unknown>> = [];
   try {
     firmaUsers = (await getFirmaSigningRequestUsers(workspaceApiKey, firmaRequestId)) as unknown as Array<Record<string, unknown>>;
   } catch {
-    // Non-fatal — proceed without per-recipient signed_at
+    // Workspace key may be stale — retry with master key
+    if (process.env.FIRMA_API_KEY) {
+      try {
+        firmaUsers = (await getFirmaSigningRequestUsers(
+          process.env.FIRMA_API_KEY.trim(), firmaRequestId
+        )) as unknown as Array<Record<string, unknown>>;
+      } catch {
+        // Non-fatal — proceed without per-recipient signed_at
+      }
+    }
   }
 
   // ── 9. Merge per-recipient signed_at into all_signers_data ───────────────────
@@ -231,7 +240,7 @@ export async function POST(req: NextRequest) {
     return s;
   });
 
-  // ── 10. Extract fields using extractField — handles all nesting shapes ────────
+  // ── 10. Determine new status ──────────────────────────────────────────────────
   const rawFirmaStatus   = extractField(firmaRaw, "status");
   const newSignedPdfUrl  =
     extractField(firmaRaw, "document_url") ??
@@ -245,29 +254,33 @@ export async function POST(req: NextRequest) {
     null;
   const rawCompletedAt   = extractField(firmaRaw, "completed_at");
 
-  const mapped = rawFirmaStatus ? mapFirmaStatus(rawFirmaStatus) : null;
-
   const statusPriority: Record<string, number> = {
     draft: 0, sent: 1, viewed: 2, completed: 3, declined: 3, expired: 3, failed: 3,
   };
+
+  // Start from Firma's top-level status field
+  const mapped = rawFirmaStatus ? mapFirmaStatus(rawFirmaStatus) : null;
   const currentPriority = statusPriority[sig.status] ?? 0;
-  const newPriority = mapped ? (statusPriority[mapped] ?? 0) : 0;
-  const newStatus = newPriority > currentPriority ? mapped! : sig.status;
+  const mappedPriority  = mapped ? (statusPriority[mapped] ?? 0) : 0;
+  let newStatus = mappedPriority > currentPriority ? mapped! : sig.status;
 
-  console.log(
-    `[sync-status] step10 status mapping` +
-    ` | Firma raw: "${rawFirmaStatus ?? "null"}"` +
-    ` | mapped: "${mapped ?? "null"}"` +
-    ` | db: "${sig.status}" (pri ${currentPriority})` +
-    ` | result: "${newStatus}"` +
-    (mapped === null ? ` ⚠️ UNHANDLED STATUS — keys in response: ${Object.keys(firmaRaw).join(", ")}` : "")
-  );
+  // ── 10b. Infer status from per-signer signed_at ──────────────────────────────
+  // Firma keeps its aggregate status as "pending"/"in_progress" until EVERY
+  // signer completes — this means a partial signature never advances our status.
+  // Instead, count signed_at values from the updated signers list and infer:
+  //   all signed  → completed
+  //   any signed  → at least viewed
+  // This fires regardless of what the top-level Firma status field says.
+  const signerCount  = updatedSigners.length;
+  const signedCount  = updatedSigners.filter(s => s.signed_at).length;
 
-  console.log(
-    `[sync-status] step11 URL fields` +
-    ` | newSignedPdfUrl: ${newSignedPdfUrl ?? "null"}` +
-    ` | newAuditTrailUrl: ${newAuditTrailUrl ?? "null"}`
-  );
+  if (signerCount > 0 && signedCount === signerCount &&
+      (statusPriority[newStatus] ?? 0) < statusPriority["completed"]) {
+    newStatus = "completed";
+  } else if (signedCount > 0 &&
+             (statusPriority[newStatus] ?? 0) < statusPriority["viewed"]) {
+    newStatus = "viewed";
+  }
 
   // ── 12. Build DB update payload ───────────────────────────────────────────────
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -276,9 +289,6 @@ export async function POST(req: NextRequest) {
   if (newStatus !== sig.status) {
     updatePayload.status = newStatus;
     hasChanges = true;
-    console.log(`[sync-status] step12 status: "${sig.status}" → "${newStatus}"`);
-  } else {
-    console.log(`[sync-status] step12 no status change — still "${sig.status}"`);
   }
   if (newSignedPdfUrl && newSignedPdfUrl !== (sigRow.signed_pdf_url as string | null)) {
     updatePayload.signed_pdf_url = newSignedPdfUrl;
@@ -306,10 +316,19 @@ export async function POST(req: NextRequest) {
 
     if (updateErr) {
       console.error("[sync-status] DB update failed:", updateErr.message);
-    } else {
-      console.log("[sync-status] DB updated successfully for proposal:", proposal.id.slice(0, 8));
     }
   }
+
+  // Single summary log — appears as the last line in Vercel's per-request view
+  console.log(
+    `[sync-status] ✅ done | proposal: ${proposal.id.slice(0, 8)}` +
+    ` | firmaStatus: "${rawFirmaStatus ?? "null"}"` +
+    ` | signers: ${signedCount}/${signerCount} signed` +
+    ` | db: "${sig.status}" → "${newStatus}"` +
+    ` | changed: ${hasChanges}` +
+    ` | signedPdfUrl: ${newSignedPdfUrl ? "present" : "null"}` +
+    (mapped === null && rawFirmaStatus ? ` ⚠️ unmapped status "${rawFirmaStatus}" — top-level keys: ${Object.keys(firmaRaw).join(", ")}` : "")
+  );
 
   return NextResponse.json({
     status: (updatePayload.status as string | undefined) ?? sig.status,
