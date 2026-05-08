@@ -85,11 +85,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 3. Load proposal ─────────────────────────────────────────────────────────
-  const { data: proposal } = await supabase
+  const { data: proposal, error: proposalErr } = await supabase
     .from("quote_proposals")
     .select("id, organization_id")
     .eq("quote_id", quoteId)
     .maybeSingle();
+
+  console.log(
+    `[sync-status] step3 proposal lookup | quoteId: ${quoteId}` +
+    ` | found: ${!!proposal} | proposalId: ${proposal?.id ?? "none"} | err: ${proposalErr?.message ?? "none"}`
+  );
 
   if (!proposal) {
     return NextResponse.json({ status: null });
@@ -102,6 +107,13 @@ export async function POST(req: NextRequest) {
     .select("id, status, firma_signing_request_id, all_signers_data, signed_pdf_url, audit_trail_url")
     .eq("proposal_id", proposal.id)
     .maybeSingle();
+
+  console.log(
+    `[sync-status] step4 sig lookup | proposalId: ${proposal.id}` +
+    ` | found: ${!!sig} | status: ${sig?.status ?? "none"}` +
+    ` | firma_id: ${(sig as Record<string, unknown> | null)?.firma_signing_request_id ?? "none"}` +
+    ` | err: ${sigErr?.message ?? "none"}`
+  );
 
   if (sigErr) {
     console.error("[sync-status] DB lookup error:", sigErr.message);
@@ -120,6 +132,7 @@ export async function POST(req: NextRequest) {
     sig.status === "declined" ||
     sig.status === "expired"
   ) {
+    console.log(`[sync-status] step5 terminal status "${sig.status}" — returning cached row`);
     return NextResponse.json({
       status: sig.status,
       signed_pdf_url: sigRow.signed_pdf_url ?? null,
@@ -131,6 +144,7 @@ export async function POST(req: NextRequest) {
 
   const firmaRequestId = sigRow.firma_signing_request_id as string | null;
   if (!firmaRequestId) {
+    console.warn("[sync-status] step5 firma_signing_request_id is null — cannot poll Firma");
     return NextResponse.json({ status: sig.status });
   }
 
@@ -138,8 +152,9 @@ export async function POST(req: NextRequest) {
   let workspaceApiKey: string;
   try {
     workspaceApiKey = await getOrCreateFirmaWorkspace(proposal.organization_id);
+    console.log(`[sync-status] step6 workspace key found | orgId: ${proposal.organization_id.slice(0, 8)}`);
   } catch (err) {
-    console.warn("[sync-status] Could not get Firma workspace key:", err);
+    console.warn("[sync-status] step6 Could not get Firma workspace key:", err);
     return NextResponse.json({ status: sig.status });
   }
 
@@ -147,14 +162,19 @@ export async function POST(req: NextRequest) {
   let firmaReq: FirmaSigningRequest | null = null;
   try {
     firmaReq = await getFirmaSigningRequestById(workspaceApiKey, firmaRequestId);
-    console.log("[sync-status] Firma signing request status:", firmaReq?.status ?? "(not found)");
+    console.log(
+      `[sync-status] step7 Firma GET signing-request` +
+      ` | id: ${firmaRequestId}` +
+      ` | status: ${firmaReq?.status ?? "(not found)"}` +
+      ` | keys: ${firmaReq ? Object.keys(firmaReq as unknown as object).join(", ") : "null"}`
+    );
   } catch (err) {
-    console.warn("[sync-status] Firma API error:", err);
-    // Don't fail — return current DB status so UI stays functional
+    console.warn("[sync-status] step7 Firma API error:", err);
     return NextResponse.json({ status: sig.status });
   }
 
   if (!firmaReq) {
+    console.warn(`[sync-status] step7 Firma returned null for id: ${firmaRequestId} (404 or bad shape)`);
     return NextResponse.json({ status: sig.status });
   }
 
@@ -197,6 +217,16 @@ export async function POST(req: NextRequest) {
   const newPriority = mapped ? (statusPriority[mapped] ?? 0) : 0;
   const newStatus = newPriority > currentPriority ? mapped! : sig.status;
 
+  console.log(
+    `[sync-status] step10 status mapping` +
+    ` | raw Firma status: "${firmaReq.status}"` +
+    ` | mapped: "${mapped ?? "null (UNHANDLED)"}"` +
+    ` | db current: "${sig.status}" (priority ${currentPriority})` +
+    ` | new priority: ${newPriority}` +
+    ` | result: "${newStatus}"` +
+    (mapped === null ? " ⚠️ STATUS STRING NOT HANDLED BY mapFirmaStatus" : "")
+  );
+
   // ── 11. Collect URL fields from Firma response ────────────────────────────────
   const rawReq = firmaReq as unknown as Record<string, unknown>;
   const newSignedPdfUrl =
@@ -209,6 +239,15 @@ export async function POST(req: NextRequest) {
     (sigRow.audit_trail_url as string | null) ??
     null;
 
+  console.log(
+    `[sync-status] step11 URL fields` +
+    ` | document_url: ${rawReq.document_url ?? "null"}` +
+    ` | signed_pdf_url (firma): ${rawReq.signed_pdf_url ?? "null"}` +
+    ` | signed_pdf_url (db): ${sigRow.signed_pdf_url ?? "null"}` +
+    ` | resolved newSignedPdfUrl: ${newSignedPdfUrl ?? "null"}` +
+    ` | audit_trail_url: ${newAuditTrailUrl ?? "null"}`
+  );
+
   // ── 12. Build DB update payload ───────────────────────────────────────────────
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   let hasChanges = false;
@@ -216,7 +255,9 @@ export async function POST(req: NextRequest) {
   if (newStatus !== sig.status) {
     updatePayload.status = newStatus;
     hasChanges = true;
-    console.log(`[sync-status] Status change: ${sig.status} → ${newStatus}`);
+    console.log(`[sync-status] step12 status change: "${sig.status}" → "${newStatus}"`);
+  } else {
+    console.log(`[sync-status] step12 no status change — still "${sig.status}"`);
   }
   if (newSignedPdfUrl && newSignedPdfUrl !== (sigRow.signed_pdf_url as string | null)) {
     updatePayload.signed_pdf_url = newSignedPdfUrl;
