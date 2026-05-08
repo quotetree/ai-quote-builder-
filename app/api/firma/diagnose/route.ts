@@ -26,7 +26,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceClient } from "@/lib/supabase/service";
 import { getOrCreateFirmaWorkspace } from "@/lib/firma";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 const FIRMA_API_BASE = "https://api.firma.dev/functions/v1/signing-request-api";
 
@@ -126,7 +125,7 @@ export async function GET(req: NextRequest) {
         trace,
       });
     }
-    sigRow = data as Record<string, unknown>;
+    sigRow = data as unknown as Record<string, unknown>;
   }
 
   // Mode B: projectId + quoteNumber → resolve quoteId → quote_proposals → proposal_signatures
@@ -190,7 +189,7 @@ export async function GET(req: NextRequest) {
         trace,
       });
     }
-    sigRow = sigData as Record<string, unknown>;
+    sigRow = sigData as unknown as Record<string, unknown>;
   }
 
   // Mode C: direct quoteId UUID
@@ -235,7 +234,7 @@ export async function GET(req: NextRequest) {
         trace,
       });
     }
-    sigRow = sigData as Record<string, unknown>;
+    sigRow = sigData as unknown as Record<string, unknown>;
   }
 
   if (!sigRow) {
@@ -401,5 +400,3 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(trace, { status: 200 });
 }
 
-// Suppress unused-import warning — supabase client type used implicitly via getServiceClient
-void (null as unknown as SupabaseClient);
