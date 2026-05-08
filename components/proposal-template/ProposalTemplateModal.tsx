@@ -709,9 +709,12 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
 
   // Poll for status changes every 20 s while the document is pending.
   // Stops once status reaches a terminal state (completed/declined/expired).
+  // Also fires immediately on open so stale DB state is refreshed without
+  // waiting a full 20-second cycle.
   useEffect(() => {
     if (!isOpen || !quoteId) return;
     if (signatureStatus !== "sent" && signatureStatus !== "viewed") return;
+    void refreshSignatureStatus();
     const id = setInterval(refreshSignatureStatus, 20_000);
     return () => clearInterval(id);
   }, [isOpen, quoteId, signatureStatus, refreshSignatureStatus]);
@@ -1564,6 +1567,29 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
           ) : initializing ? (
             <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
               Loading template…
+            </div>
+          ) : signatureStatus === "completed" && signedPdfUrl ? (
+            /* ── Completed: show the signed PDF instead of the editable draft ── */
+            <div className="flex-1 overflow-auto bg-gray-100 flex flex-col items-center">
+              <div className="w-full max-w-[850px] mx-auto py-5 px-4 flex flex-col gap-3 min-h-full">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-sm font-medium text-gray-600">Completed signed document</p>
+                  <a
+                    href={signedPdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                  >
+                    Open in new tab
+                    <ExternalLink size={11} />
+                  </a>
+                </div>
+                <iframe
+                  src={signedPdfUrl}
+                  title="Signed document"
+                  className="w-full flex-1 min-h-[800px] rounded-lg border border-gray-200 shadow bg-white"
+                />
+              </div>
             </div>
           ) : (
             <>

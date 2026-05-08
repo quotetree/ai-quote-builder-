@@ -39,6 +39,17 @@ interface FirmaEventBody {
 // ─── Webhook handler ──────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // ── 0. Env var presence check (boolean only — never log values) ──────────────
+  console.log(
+    "[firma/webhook] 🔧 Env vars present:" +
+    `\n  FIRMA_API_KEY: ${!!process.env.FIRMA_API_KEY}` +
+    `\n  FIRMA_WEBHOOK_SECRET: ${!!process.env.FIRMA_WEBHOOK_SECRET}` +
+    `\n  PDFSHIFT_API_KEY: ${!!process.env.PDFSHIFT_API_KEY}` +
+    `\n  SUPABASE_SERVICE_ROLE_KEY: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}` +
+    `\n  NEXT_PUBLIC_SUPABASE_URL: ${!!process.env.NEXT_PUBLIC_SUPABASE_URL}` +
+    `\n  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${!!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
+  );
+
   const rawBody = await req.text();
 
   // ── 1. Read and log ALL Firma headers (diagnostic) ───────────────────────────
