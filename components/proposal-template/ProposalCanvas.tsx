@@ -41,6 +41,7 @@ interface ProposalCanvasProps {
   onDuplicateElement: (id: string) => void;
   onDeleteElement: (id: string) => void;
   onContentChange: (id: string, content: string) => void;
+  onCustomVarSync?: (variableName: string, content: string) => void;
   onHeightChange: (id: string, height: number) => void;
   onInsertAfter: (id: string, anchorX: number, anchorY: number) => void;
   onRequestAddElement?: (anchorX: number, anchorY: number) => void;
@@ -75,6 +76,7 @@ export default function ProposalCanvas({
   onDuplicateElement,
   onDeleteElement,
   onContentChange,
+  onCustomVarSync,
   onHeightChange,
   onInsertAfter,
   onRequestAddElement,
@@ -333,6 +335,7 @@ export default function ProposalCanvas({
                         onDuplicateElement={onDuplicateElement}
                         onDeleteElement={onDeleteElement}
                         onContentChange={onContentChange}
+                        onCustomVarSync={onCustomVarSync}
                         onHeightChange={onHeightChange}
                         onInsertAfter={onInsertAfter}
                         onVariableNameChange={onVariableNameChange}
@@ -381,6 +384,7 @@ export default function ProposalCanvas({
                     onDuplicateElement={onDuplicateElement}
                     onDeleteElement={onDeleteElement}
                     onContentChange={onContentChange}
+                    onCustomVarSync={onCustomVarSync}
                     onHeightChange={onHeightChange}
                     onInsertAfter={onInsertAfter}
                     onVariableNameChange={onVariableNameChange}

@@ -49,6 +49,12 @@ interface ProposalElementProps {
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onContentChange: (id: string, content: string) => void;
+  /**
+   * Called instead of onContentChange when a custom_variable element's value
+   * changes. Receives the variable's name and new value so the caller can sync
+   * every matching custom_variable across the whole document.
+   */
+  onCustomVarSync?: (variableName: string, content: string) => void;
   onHeightChange: (id: string, height: number) => void;
   onInsertAfter: (id: string, anchorX: number, anchorY: number) => void;
   onResizeStart: (id: string, handle: ResizeHandle, clientX: number, clientY: number, startEl: { x: number; y: number; w: number; h: number; elementType?: string }) => void;
@@ -70,6 +76,7 @@ export default function ProposalElement({
   onDuplicate,
   onDelete,
   onContentChange,
+  onCustomVarSync,
   onHeightChange,
   onInsertAfter,
   onResizeStart,
@@ -405,7 +412,14 @@ export default function ProposalElement({
             ref={varValueRef}
             type="text"
             value={element.content || ""}
-            onChange={(e) => onContentChange(id, e.target.value)}
+            onChange={(e) => {
+              const newValue = e.target.value;
+              if (onCustomVarSync && element.variableName) {
+                onCustomVarSync(element.variableName, newValue);
+              } else {
+                onContentChange(id, newValue);
+              }
+            }}
             onMouseDown={(e) => e.stopPropagation()}
             placeholder="Enter value"
             className="w-full h-full px-2 rounded border border-brand-green/30 outline-none bg-transparent placeholder:text-brand-green/40"
