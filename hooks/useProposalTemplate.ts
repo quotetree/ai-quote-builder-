@@ -103,10 +103,13 @@ export function useProposalTemplate(initialPages: TemplatePage[] = []) {
         if (!page) return prev;
         // Compute y from the FRESH prev state — avoids stale-closure bugs
         // when updateElementHeight has reflowed elements since the last render.
-        const lastBottom = page.elements.reduce(
-          (max, el) => Math.max(max, el.y + el.h),
-          32
-        );
+        // Use the LAST element in array order (most recently added), not the
+        // one with the highest bottom edge, so pre-existing elements like
+        // signature/date fields at the bottom don't push new elements there.
+        const lastEl = page.elements.length > 0
+          ? page.elements[page.elements.length - 1]
+          : null;
+        const lastBottom = lastEl ? lastEl.y + lastEl.h : 32;
         const size = DEFAULT_ELEMENT_SIZES[type];
         // Clamp so the element bottom never exceeds PAGE_FLOOR, preventing PDF cut-off.
         const rawY = snapToGrid(lastBottom + 12);
