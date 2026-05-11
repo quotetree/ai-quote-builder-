@@ -347,7 +347,6 @@ export default function ProposalEditorToolbar({
     if (tab === "text") {
       document.execCommand("foreColor", false, color);
       setCurrentTextColor(color);
-      onStyleChange({ color });
     } else {
       // hiliteColor applies background to selection; rgba(0,0,0,0) clears it
       document.execCommand("hiliteColor", false, color);
