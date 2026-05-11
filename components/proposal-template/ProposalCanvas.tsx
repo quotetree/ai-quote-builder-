@@ -387,7 +387,10 @@ export default function ProposalCanvas({
                     recipients={recipients}
                     onChangeQuote={onChangeQuote}
                     quoteDataMap={quoteDataMap}
-                    onRequestAddElement={onRequestAddElement}
+                    onRequestAddElement={(x: number, y: number) => {
+                      onSetActivePage?.(idx);
+                      onRequestAddElement?.(x, y);
+                    }}
                   />
                 </div>
               </div>
