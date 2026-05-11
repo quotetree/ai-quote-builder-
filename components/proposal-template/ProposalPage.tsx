@@ -45,6 +45,7 @@ interface ProposalPageProps {
   onDuplicateElement: (id: string) => void;
   onDeleteElement: (id: string) => void;
   onContentChange: (id: string, content: string) => void;
+  onCustomVarSync?: (variableName: string, content: string) => void;
   onHeightChange: (id: string, height: number) => void;
   onInsertAfter: (id: string, anchorX: number, anchorY: number) => void;
   onRequestAddElement?: (anchorX: number, anchorY: number) => void;
@@ -72,6 +73,7 @@ export default function ProposalPage({
   onDuplicateElement,
   onDeleteElement,
   onContentChange,
+  onCustomVarSync,
   onHeightChange,
   onInsertAfter,
   onRequestAddElement,
@@ -160,6 +162,7 @@ export default function ProposalPage({
           onDuplicate={onDuplicateElement}
           onDelete={onDeleteElement}
           onContentChange={onContentChange}
+          onCustomVarSync={onCustomVarSync}
           onHeightChange={onHeightChange}
           onInsertAfter={onInsertAfter}
           onResizeStart={onResizeStart}

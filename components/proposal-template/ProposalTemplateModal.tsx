@@ -219,6 +219,7 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
     updateElementStyles,
     updateElementContent,
     updateElementVariableName,
+    syncCustomVarContentByName,
     duplicateElement,
     deleteElement,
     setSelectedElementId,
@@ -1612,6 +1613,7 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
                 onContentChange={(id, content) =>
                   updateElementContent(id, content, activePageIndex)
                 }
+                onCustomVarSync={syncCustomVarContentByName}
                 onVariableNameChange={(id, name) =>
                   updateElementVariableName(id, name, activePageIndex)
                 }

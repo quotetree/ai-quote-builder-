@@ -156,7 +156,8 @@ export async function generateProposalPDF(
         }
 
         case "custom_variable": {
-          const label = el.variableName ? `{{${el.variableName}}}` : htmlToText(el.content);
+          // Prefer the filled value; fall back to the placeholder token if empty.
+          const label = el.content || (el.variableName ? `{{${el.variableName}}}` : "");
           if (!label) continue;
 
           doc.setFont("helvetica", "normal");

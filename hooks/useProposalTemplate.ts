@@ -437,6 +437,30 @@ export function useProposalTemplate(initialPages: TemplatePage[] = []) {
     [activePageIndex, commitPages]
   );
 
+  /**
+   * Updates the content of every `custom_variable` element whose `variableName`
+   * matches the given key, across all pages. This makes custom variables
+   * document-scoped: typing a value in one field syncs it everywhere in the doc.
+   */
+  const syncCustomVarContentByName = useCallback(
+    (variableName: string, content: string) => {
+      commitPages((prev) => {
+        const next = clonePages(prev);
+        let changed = false;
+        for (const page of next) {
+          for (const el of page.elements) {
+            if (el.type === "custom_variable" && el.variableName === variableName) {
+              el.content = content;
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+    [commitPages]
+  );
+
   const duplicateElement = useCallback(
     (elementId: string, pageIndex: number = activePageIndex) => {
       const id = generateId();
@@ -737,6 +761,7 @@ export function useProposalTemplate(initialPages: TemplatePage[] = []) {
     updateElementContent,
     updateElementStyles,
     updateElementVariableName,
+    syncCustomVarContentByName,
     duplicateElement,
     deleteElement,
     addPage,
