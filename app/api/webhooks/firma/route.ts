@@ -30,6 +30,9 @@ interface FirmaEventBody {
       document_url?: string;
       signed_pdf_url?: string;
       audit_trail_url?: string;
+      final_document_download_url?: string;
+      document_only_download_url?: string;
+      certificate_only_download_url?: string;
     };
     recipients?: FirmaEventRecipient[];
     // Some Firma versions nest differently
