@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Link2, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, CheckCircle2, Clock, Copy, ExternalLink, Link2, Loader2, X } from "lucide-react";
 import {
   ELEMENT_LABELS,
   ProposalRecipient,
@@ -44,6 +44,7 @@ interface SignerLink {
   name: string;
   firma_user_id: string;
   signing_url: string;
+  signed_at?: string;
 }
 
 interface Props {
@@ -283,9 +284,21 @@ export default function ProposalShareLinkModal({
           ) : (
             /* Post-generation state */
             <div className="space-y-4">
-              <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-xs text-green-700 dark:text-green-400">
-                ✓ Links generated. Firma has emailed each signer. You can also share the links below manually.
-              </div>
+              {(() => {
+                const signedCount = signerLinks.filter((l) => l.signed_at).length;
+                const totalCount  = signerLinks.length;
+                const allSigned   = signedCount === totalCount && totalCount > 0;
+                const someSigned  = signedCount > 0 && !allSigned;
+                return (
+                  <div className={`p-3 border rounded-lg text-xs ${allSigned ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400" : someSigned ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400" : "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400"}`}>
+                    {allSigned
+                      ? `✓ All ${totalCount} signer${totalCount !== 1 ? "s" : ""} have signed.`
+                      : someSigned
+                        ? `${signedCount} of ${totalCount} signer${totalCount !== 1 ? "s" : ""} ${signedCount === 1 ? "has" : "have"} signed — waiting for the remaining ${totalCount - signedCount}.`
+                        : "✓ Links generated. Firma has emailed each signer. You can also share the links below manually."}
+                  </div>
+                );
+              })()}
 
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
@@ -295,25 +308,44 @@ export default function ProposalShareLinkModal({
                   Links are unique for each recipient. Make sure the intended recipients are the only ones accessing their link.
                 </p>
                 <div className="space-y-3">
-                  {signerLinks.map((link) => (
-                    <div key={link.firma_user_id} className="flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-                          {link.name}
-                        </p>
-                        <a
-                          href={link.signing_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-500 hover:underline flex items-center gap-0.5 truncate"
-                        >
-                          {link.signing_url.replace("https://", "").slice(0, 40)}…
-                          <ExternalLink size={10} className="flex-shrink-0" />
-                        </a>
+                  {signerLinks.map((link) => {
+                    const hasSigned = !!link.signed_at;
+                    return (
+                      <div key={link.firma_user_id} className={`rounded-lg border p-3 ${hasSigned ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20" : "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800/50"}`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {hasSigned ? (
+                            <CheckCircle2 size={15} className="text-green-600 dark:text-green-400 flex-shrink-0" />
+                          ) : (
+                            <Clock size={15} className="text-amber-500 flex-shrink-0" />
+                          )}
+                          <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate flex-1">
+                            {link.name}
+                          </p>
+                          <span className={`text-xs font-semibold flex-shrink-0 ${hasSigned ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                            {hasSigned ? "Signed" : "Pending"}
+                          </span>
+                        </div>
+                        {hasSigned ? (
+                          <p className="text-xs text-green-600 dark:text-green-400 pl-5">
+                            Signed {new Date(link.signed_at!).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                          </p>
+                        ) : (
+                          <div className="flex items-center gap-2 pl-5">
+                            <a
+                              href={link.signing_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-500 hover:underline flex items-center gap-0.5 truncate flex-1"
+                            >
+                              {link.signing_url.replace("https://", "").slice(0, 38)}…
+                              <ExternalLink size={10} className="flex-shrink-0" />
+                            </a>
+                            <CopyButton text={link.signing_url} />
+                          </div>
+                        )}
                       </div>
-                      <CopyButton text={link.signing_url} />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

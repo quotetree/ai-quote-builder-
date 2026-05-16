@@ -172,7 +172,7 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
   const [signatureStatus, setSignatureStatus] = useState<ProposalSignatureStatus | null>(null);
   // Existing signer links loaded from DB (populated when a signing request has already been sent)
   const [existingSignerLinks, setExistingSignerLinks] = useState<Array<{
-    email: string; name: string; firma_user_id: string; signing_url: string;
+    email: string; name: string; firma_user_id: string; signing_url: string; signed_at?: string;
   }>>([]);
   // Completed signing: URLs stored by Firma webhook
   const [signedPdfUrl, setSignedPdfUrl] = useState<string | null>(null);
