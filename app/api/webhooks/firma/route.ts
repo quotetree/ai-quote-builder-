@@ -11,7 +11,8 @@ interface FirmaEventRecipient {
   first_name?: string;
   last_name?: string;
   designation?: string;
-  signed_at?: string;
+  finished_on?: string; // Firma's actual field name for signing timestamp
+  signed_at?: string;   // alias kept for older event payloads
 }
 
 interface FirmaEventBody {
@@ -188,14 +189,18 @@ export async function POST(req: NextRequest) {
         ...(event.data?.recipient ? [event.data.recipient] : []),
       ];
 
+      // Firma uses finished_on as the signing timestamp; fall back to signed_at for older payloads
+      const getRecipientSignedAt = (r: FirmaEventRecipient): string | undefined =>
+        r.finished_on ?? r.signed_at;
+
       console.log(
         `[firma/webhook] ✍️  recipient.signed | recipients in payload: ${eventRecipients.length}` +
-        ` | signed_at present: ${eventRecipients.filter(r => r.signed_at).map(r => r.email).join(", ")}`
+        ` | finished_on present: ${eventRecipients.filter(r => r.finished_on).map(r => r.email).join(", ")}`
       );
 
       const signedEmails = new Set(
         eventRecipients
-          .filter((r) => r.signed_at)
+          .filter((r) => getRecipientSignedAt(r))
           .map((r) => (r.email ?? "").toLowerCase())
       );
 
@@ -208,7 +213,7 @@ export async function POST(req: NextRequest) {
           const match = eventRecipients.find(
             (r) => (r.email ?? "").toLowerCase() === email
           );
-          return { ...s, signed_at: match?.signed_at ?? now };
+          return { ...s, signed_at: getRecipientSignedAt(match!) ?? now };
         }
         return s;
       });

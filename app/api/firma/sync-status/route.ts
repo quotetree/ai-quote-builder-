@@ -268,8 +268,8 @@ export async function POST(req: NextRequest) {
 
   const isSignedUser = (u: Record<string, unknown>): string | undefined => {
     // Direct timestamp fields (any name Firma uses)
-    for (const k of ["signed_at", "signed_on", "completed_at", "executed_at",
-                      "finished_at", "sign_date", "signature_date", "action_at"]) {
+    for (const k of ["finished_on", "signed_at", "signed_on", "completed_at",
+                      "executed_at", "finished_at", "sign_date", "signature_date", "action_at"]) {
       if (typeof u[k] === "string" && u[k] !== "") return u[k] as string;
     }
     // Boolean / status fields — treat as signed_at = now() so inference can fire
