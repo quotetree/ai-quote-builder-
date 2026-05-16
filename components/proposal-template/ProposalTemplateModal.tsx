@@ -712,12 +712,21 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
   // Stops once status reaches a terminal state (completed/declined/expired).
   // Also fires immediately on open so stale DB state is refreshed without
   // waiting a full 20-second cycle.
+  //
+  // For completed documents: do a one-shot sync-status call so the signed
+  // PDF URL is always fetched from Firma on open, even if it was missing
+  // from the DB row we loaded above (webhook can fire before Firma finishes
+  // generating the final bundle).
   useEffect(() => {
     if (!isOpen || !quoteId) return;
-    if (signatureStatus !== "sent" && signatureStatus !== "viewed") return;
-    void refreshSignatureStatus();
-    const id = setInterval(refreshSignatureStatus, 20_000);
-    return () => clearInterval(id);
+    if (signatureStatus === "sent" || signatureStatus === "viewed") {
+      void refreshSignatureStatus();
+      const id = setInterval(refreshSignatureStatus, 20_000);
+      return () => clearInterval(id);
+    }
+    if (signatureStatus === "completed") {
+      void refreshSignatureStatus();
+    }
   }, [isOpen, quoteId, signatureStatus, refreshSignatureStatus]);
 
   const handleSave = async () => {
