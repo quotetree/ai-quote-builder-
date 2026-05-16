@@ -1938,6 +1938,7 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
         setSignatureStatus(status);
         if (links && links.length > 0) setExistingSignerLinks(links);
       }}
+      onRefreshStatus={() => { void refreshSignatureStatus(); }}
     />
   ) : null;
 

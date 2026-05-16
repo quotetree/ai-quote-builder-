@@ -244,17 +244,44 @@ export async function POST(req: NextRequest) {
   const currentSigners: Array<Record<string, unknown>> =
     Array.isArray(sigRow.all_signers_data) ? sigRow.all_signers_data as Array<Record<string, unknown>> : [];
 
+  /**
+   * Extracts a scalar status string from a user object, handling both the case
+   * where status is a plain string ("signed") and where Firma returns it as an
+   * object ({ current: "signed" }) — matching the same pattern handled for the
+   * top-level signing request status field.
+   */
+  const extractUserStatusString = (u: Record<string, unknown>): string | null => {
+    for (const key of ["status", "state", "signing_status", "recipient_status"]) {
+      const val = u[key];
+      if (typeof val === "string" && val !== "") return val;
+      if (val && typeof val === "object") {
+        const obj = val as Record<string, unknown>;
+        for (const k of ["current", "value", "name", "label", "type", "state", "slug"]) {
+          if (typeof obj[k] === "string" && obj[k] !== "") return obj[k] as string;
+        }
+        const first = Object.values(obj).find(v => typeof v === "string" && v !== "");
+        if (first) return first as string;
+      }
+    }
+    return null;
+  };
+
   const isSignedUser = (u: Record<string, unknown>): string | undefined => {
     // Direct timestamp fields (any name Firma uses)
-    for (const k of ["signed_at", "signed_on", "completed_at", "executed_at", "finished_at"]) {
+    for (const k of ["signed_at", "signed_on", "completed_at", "executed_at",
+                      "finished_at", "sign_date", "signature_date", "action_at"]) {
       if (typeof u[k] === "string" && u[k] !== "") return u[k] as string;
     }
     // Boolean / status fields — treat as signed_at = now() so inference can fire
-    if (u.is_signed === true || u.has_signed === true) return new Date().toISOString();
-    const uStatus = (u.status ?? u.state ?? u.signing_status) as string | undefined;
-    if (typeof uStatus === "string") {
+    if (u.is_signed === true || u.has_signed === true || u.signed === true) {
+      return new Date().toISOString();
+    }
+    // Status string — may be a plain string OR a nested object (e.g. { current: "signed" })
+    const uStatus = extractUserStatusString(u);
+    if (uStatus) {
       const norm = uStatus.toLowerCase().replace(/[\s_\-]+/g, "_");
-      if (["signed", "completed", "done", "finished", "executed", "complete"].includes(norm)) {
+      if (["signed", "completed", "done", "finished", "executed", "complete",
+           "sign_complete", "signature_complete"].includes(norm)) {
         return new Date().toISOString();
       }
     }

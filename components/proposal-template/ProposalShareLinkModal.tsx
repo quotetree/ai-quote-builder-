@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Clock, Copy, ExternalLink, Link2, Loader2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, CheckCircle2, Clock, Copy, ExternalLink, Link2, Loader2, RefreshCw, X } from "lucide-react";
 import {
   ELEMENT_LABELS,
   ProposalRecipient,
@@ -67,6 +67,11 @@ interface Props {
   currentSignatureStatus?: ProposalSignatureStatus | null;
   /** Called when links have been generated so parent can refresh status and links */
   onLinksGenerated?: (status: ProposalSignatureStatus, links?: SignerLink[]) => void;
+  /**
+   * Called when the modal opens or when the user hits "Refresh status".
+   * The parent should call /api/firma/sync-status and update existingLinks + currentSignatureStatus.
+   */
+  onRefreshStatus?: () => void;
 }
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -120,31 +125,71 @@ function CopyButton({ text }: { text: string }) {
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export default function ProposalShareLinkModal({
-  isOpen, onClose, quoteId, quoteName, recipients, pages, existingLinks, currentSignatureStatus, onLinksGenerated,
+  isOpen, onClose, quoteId, quoteName, recipients, pages, existingLinks,
+  currentSignatureStatus, onLinksGenerated, onRefreshStatus,
 }: Props) {
   const [generating, setGenerating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signerLinks, setSignerLinks] = useState<SignerLink[]>([]);
   const [currentStatus, setCurrentStatus] = useState<ProposalSignatureStatus | null>(null);
+  // Track whether we've already triggered the initial refresh for this open session
+  const hasTriggeredRefreshRef = useRef(false);
 
   const signers = recipients.filter((r) => r.role === "signer");
   const hasRecipients = signers.length > 0;
 
-  // When the modal opens, pre-populate from existingLinks if available (no new request needed).
-  // Use the actual status from the parent so we show "Completed", "Viewed", etc. correctly.
+  // On open: populate from existingLinks and trigger an immediate status refresh so
+  // any signatures that happened since the last poll are picked up right away.
   useEffect(() => {
     if (isOpen) {
       setError(null);
-      if (existingLinks && existingLinks.length > 0) {
-        setSignerLinks(existingLinks);
-        setCurrentStatus(currentSignatureStatus ?? "sent");
-      } else {
-        setSignerLinks([]);
-        setCurrentStatus(null);
-      }
+      hasTriggeredRefreshRef.current = false;
+    } else {
+      hasTriggeredRefreshRef.current = false;
+    }
+  }, [isOpen]);
+
+  // Keep signerLinks and status badge in sync with parent whenever existingLinks
+  // or currentSignatureStatus change (covers both initial open and live poll updates).
+  useEffect(() => {
+    if (!isOpen) return;
+    if (existingLinks && existingLinks.length > 0) {
+      setSignerLinks(existingLinks);
+      setCurrentStatus((prev) => currentSignatureStatus ?? prev ?? "sent");
+    } else if (existingLinks && existingLinks.length === 0) {
+      // Links were cleared (e.g. after re-generate) — let the generate flow handle it
+    }
+  // We intentionally track the array reference; shallow-equal is fine here since
+  // the parent always creates a new array reference when all_signers_data changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingLinks, currentSignatureStatus, isOpen]);
+
+  // Trigger an immediate sync-status check the first time the modal opens for a
+  // signing request that is already in "sent" or "viewed" state, so the user sees
+  // fresh data without waiting up to 20 s for the next background poll.
+  useEffect(() => {
+    if (!isOpen || hasTriggeredRefreshRef.current) return;
+    if (existingLinks && existingLinks.length > 0 && onRefreshStatus) {
+      hasTriggeredRefreshRef.current = true;
+      onRefreshStatus();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]); // snapshot on open only — parent updates existingLinks/currentSignatureStatus before opening
+  }, [isOpen, existingLinks]);
+
+  const handleRefresh = async () => {
+    if (!onRefreshStatus) return;
+    setRefreshing(true);
+    try {
+      await new Promise<void>((resolve) => {
+        onRefreshStatus();
+        // Give the parent ~2 s to fetch and propagate the update
+        setTimeout(resolve, 2000);
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!hasRecipients) return;
@@ -349,14 +394,27 @@ export default function ProposalShareLinkModal({
                 </div>
               </div>
 
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className="w-full flex items-center justify-center gap-2 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-              >
-                {generating ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-                Re-generate links
-              </button>
+              <div className="flex gap-2">
+                {onRefreshStatus && (
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing || generating}
+                    className="flex-1 flex items-center justify-center gap-2 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+                    title="Check Firma for the latest signing status"
+                  >
+                    {refreshing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    Refresh status
+                  </button>
+                )}
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating || refreshing}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+                >
+                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                  Re-generate links
+                </button>
+              </div>
             </div>
           )}
         </div>
