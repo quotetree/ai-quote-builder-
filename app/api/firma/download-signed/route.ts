@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getServiceClient } from "@/lib/supabase/service";
 
 export async function GET(req: NextRequest) {
   const quoteId = req.nextUrl.searchParams.get("quoteId");
@@ -23,18 +24,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Look up the signed PDF URL from proposal_signatures
-  const { data: sigRow, error: dbError } = await supabase
-    .from("proposal_signatures")
-    .select("signed_pdf_url, status")
+  // Step 1: resolve quote_id → proposal_id via quote_proposals
+  const { data: proposal, error: proposalErr } = await supabase
+    .from("quote_proposals")
+    .select("id")
     .eq("quote_id", quoteId)
     .maybeSingle();
 
-  if (dbError) {
-    console.error("[download-signed] DB error:", dbError);
+  if (proposalErr) {
+    console.error("[download-signed] proposal lookup error:", proposalErr.message);
     return NextResponse.json({ error: "Database error" }, { status: 500 });
   }
+  if (!proposal) {
+    return NextResponse.json({ error: "No proposal found for this quote" }, { status: 404 });
+  }
 
+  // Step 2: look up the signed PDF URL via service client (bypasses RLS)
+  const db = getServiceClient();
+  const { data: sigRow, error: sigErr } = await db
+    .from("proposal_signatures")
+    .select("signed_pdf_url, status")
+    .eq("proposal_id", proposal.id)
+    .maybeSingle();
+
+  if (sigErr) {
+    console.error("[download-signed] signature lookup error:", sigErr.message);
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
   if (!sigRow?.signed_pdf_url) {
     return NextResponse.json(
       { error: "No signed PDF available for this document" },
@@ -42,7 +58,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Fetch the PDF from Firma's CDN server-side
+  // Step 3: fetch the PDF from Firma's CDN server-side
   let pdfRes: Response;
   try {
     pdfRes = await fetch(sigRow.signed_pdf_url);
@@ -61,7 +77,7 @@ export async function GET(req: NextRequest) {
 
   const pdfBuffer = await pdfRes.arrayBuffer();
 
-  // Look up quote name for the filename
+  // Step 4: look up quote name for a friendly filename
   const { data: quote } = await supabase
     .from("quotes")
     .select("quote_number, quote_name")
@@ -73,7 +89,7 @@ export async function GET(req: NextRequest) {
     : "proposal";
   const filename = `${safeName}_signed.pdf`;
 
-  console.log(`[download-signed] ✅ streaming signed PDF | quoteId: ${quoteId} | bytes: ${pdfBuffer.byteLength}`);
+  console.log(`[download-signed] ✅ done | quoteId: ${quoteId} | bytes: ${pdfBuffer.byteLength} | file: ${filename}`);
 
   return new NextResponse(pdfBuffer, {
     headers: {
