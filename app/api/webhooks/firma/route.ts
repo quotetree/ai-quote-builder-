@@ -243,20 +243,31 @@ export async function POST(req: NextRequest) {
       updatePayload.completed_at = event.data?.signing_request?.completed_at ?? now;
 
       const signingReq = event.data?.signing_request;
-      const docUrl = signingReq?.document_url ?? signingReq?.signed_pdf_url ?? null;
+      // Prefer Firma's final bundle URLs (populated once all signatures + cert are ready)
+      const docUrl =
+        signingReq?.final_document_download_url ??
+        signingReq?.document_only_download_url ??
+        signingReq?.document_url ??
+        signingReq?.signed_pdf_url ??
+        null;
       if (docUrl) {
         updatePayload.signed_pdf_url = docUrl;
         console.log(`[firma/webhook] 📄 signed_pdf_url captured`);
       } else {
-        console.warn(`[firma/webhook] ⚠️  No signed PDF URL in completed event`);
+        console.warn(`[firma/webhook] ⚠️  No signed PDF URL in completed event — sync-status will re-fetch Firma`);
       }
-      if (signingReq?.audit_trail_url) {
-        updatePayload.audit_trail_url = signingReq.audit_trail_url;
+      const auditUrl =
+        signingReq?.certificate_only_download_url ??
+        signingReq?.audit_trail_url ??
+        null;
+      if (auditUrl) {
+        updatePayload.audit_trail_url = auditUrl;
       }
       console.log(
         `[firma/webhook] ✅ → COMPLETED | id: ${row.id.slice(0, 8)}` +
         ` | completed_at: ${updatePayload.completed_at}` +
-        ` | signed_pdf_url: ${docUrl ?? "(none)"}`
+        ` | signed_pdf_url: ${docUrl ?? "(none)"}` +
+        ` | audit_trail_url: ${auditUrl ?? "(none)"}`
       );
       break;
     }
