@@ -32,6 +32,10 @@ function extractField(raw: Record<string, unknown>, key: string): string | null 
 
 export async function GET(req: NextRequest) {
   const quoteId = req.nextUrl.searchParams.get("quoteId");
+  // view=1 → Content-Disposition: inline (browser renders in-tab / iframe)
+  // default  → Content-Disposition: attachment (browser downloads the file)
+  const viewMode = req.nextUrl.searchParams.get("view") === "1";
+
   if (!quoteId) {
     return NextResponse.json({ error: "quoteId is required" }, { status: 400 });
   }
@@ -75,10 +79,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No signing record found for this proposal" }, { status: 404 });
   }
 
-  let signedPdfUrl: string | null = sigRow.signed_pdf_url ?? null;
+  // Step 3: always call Firma to get a fresh download URL.
+  // Firma's download URLs are time-limited pre-signed URLs that expire, so we
+  // never rely on a cached URL for the actual binary fetch.
+  let signedPdfUrl: string | null = null;
 
-  // Step 3: if the URL is missing, call Firma directly to get the final bundle URL
-  if (!signedPdfUrl && sigRow.firma_signing_request_id) {
+  if (sigRow.firma_signing_request_id) {
     console.log(`[download-signed] signed_pdf_url missing — fetching from Firma | sigId: ${sigRow.id}`);
 
     const firmaRequestId = sigRow.firma_signing_request_id as string;
@@ -158,6 +164,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Last resort: fall back to the cached DB URL (may be expired, but worth trying)
+  if (!signedPdfUrl && sigRow.signed_pdf_url) {
+    console.warn("[download-signed] falling back to cached signed_pdf_url from DB");
+    signedPdfUrl = sigRow.signed_pdf_url as string;
+  }
+
   if (!signedPdfUrl) {
     return NextResponse.json(
       { error: "Signed PDF not yet available. The document may still be processing — please try again in a moment." },
@@ -201,7 +213,9 @@ export async function GET(req: NextRequest) {
   return new NextResponse(pdfBuffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": viewMode
+        ? `inline; filename="${filename}"`
+        : `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
     },
   });

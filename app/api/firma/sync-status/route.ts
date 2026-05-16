@@ -143,11 +143,11 @@ export async function POST(req: NextRequest) {
 
   const sigRow = sig as Record<string, unknown>;
 
-  // ── 5. Return immediately for terminal statuses ──────────────────────────────
-  // For declined/expired there is no PDF to fetch, so always return cached data.
-  // For completed: only short-circuit if we already have the signed_pdf_url stored.
-  // If signed_pdf_url is still null (webhook fired before Firma finished generating
-  // the final bundle), fall through and re-fetch from Firma to pick it up.
+  // ── 5. Return immediately for truly terminal statuses with no PDF ────────────
+  // Declined/expired have no signed PDF — always serve from cache.
+  // Completed is NOT short-circuited here: Firma's download URLs are time-limited
+  // pre-signed URLs that expire, so we always re-fetch from Firma to return a
+  // fresh URL on every sync-status call for completed documents.
   if (sig.status === "declined" || sig.status === "expired") {
     console.log(`[sync-status] step5 terminal status "${sig.status}" — returning cached row`);
     return NextResponse.json({
@@ -159,19 +159,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (sig.status === "completed" && sigRow.signed_pdf_url) {
-    console.log(`[sync-status] step5 completed with signed_pdf_url — returning cached row`);
-    return NextResponse.json({
-      status: sig.status,
-      signed_pdf_url: sigRow.signed_pdf_url,
-      audit_trail_url: sigRow.audit_trail_url ?? null,
-      all_signers_data: sigRow.all_signers_data ?? [],
-      changed: false,
-    });
-  }
-
   if (sig.status === "completed") {
-    console.log(`[sync-status] step5 completed but signed_pdf_url is null — re-fetching Firma to capture final bundle`);
+    console.log(`[sync-status] step5 completed — re-fetching Firma for fresh download URL`);
   }
 
   const firmaRequestId = sigRow.firma_signing_request_id as string | null;

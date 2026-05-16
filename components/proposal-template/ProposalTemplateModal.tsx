@@ -1440,9 +1440,9 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
                         {/* Completed: signed PDF + audit trail; Sent/Viewed: share link */}
                         {signatureStatus === "completed" ? (
                           <>
-                            {signedPdfUrl && (
+                            {quoteId && (
                               <a
-                                href={signedPdfUrl}
+                                href={`/api/firma/download-signed?quoteId=${quoteId}&view=1`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={() => setSendDropdownOpen(false)}
@@ -1612,14 +1612,14 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
             <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
               Loading template…
             </div>
-          ) : signatureStatus === "completed" && signedPdfUrl ? (
+          ) : signatureStatus === "completed" && quoteId ? (
             /* ── Completed: show the signed PDF instead of the editable draft ── */
             <div className="flex-1 overflow-auto bg-gray-100 flex flex-col items-center">
               <div className="w-full max-w-[850px] mx-auto py-5 px-4 flex flex-col gap-3 min-h-full">
                 <div className="flex items-center justify-between px-1">
                   <p className="text-sm font-medium text-gray-600">Completed signed document</p>
                   <a
-                    href={signedPdfUrl}
+                    href={`/api/firma/download-signed?quoteId=${quoteId}&view=1`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
@@ -1629,7 +1629,7 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
                   </a>
                 </div>
                 <iframe
-                  src={signedPdfUrl}
+                  src={`/api/firma/download-signed?quoteId=${quoteId}&view=1`}
                   title="Signed document"
                   className="w-full flex-1 min-h-[800px] rounded-lg border border-gray-200 shadow bg-white"
                 />
