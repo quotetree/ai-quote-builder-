@@ -809,6 +809,36 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
   };
 
   const handleDownloadPDF = async () => {
+    // When the document is completed and Firma has a signed PDF, download that
+    // instead of regenerating the unsigned proposal via html2canvas.
+    if (signatureStatus === "completed" && signedPdfUrl && quoteId) {
+      setDownloadingPDF(true);
+      const toastId = toast.loading("Downloading signed PDF…");
+      try {
+        const res = await fetch(`/api/firma/download-signed?quoteId=${quoteId}`);
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const safeName = quoteName
+          ? quoteName.replace(/[^a-z0-9\-_ ]/gi, "").trim() || "proposal"
+          : "proposal";
+        a.download = `${safeName}_signed.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success("Signed PDF downloaded!", { id: toastId });
+      } catch (err: any) {
+        console.error("[PDF] Signed PDF download failed:", err);
+        toast.error(err?.message ?? "Failed to download signed PDF", { id: toastId });
+      } finally {
+        setDownloadingPDF(false);
+      }
+      return;
+    }
+
     if (pages.length === 0) { toast.error("No pages to export."); return; }
     setDownloadingPDF(true);
     const toastId = toast.loading("Generating PDF…");
