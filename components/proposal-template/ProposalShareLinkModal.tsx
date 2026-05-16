@@ -131,6 +131,7 @@ export default function ProposalShareLinkModal({
   const [generating, setGenerating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [firmaDebug, setFirmaDebug] = useState<string | null>(null);
   const [signerLinks, setSignerLinks] = useState<SignerLink[]>([]);
   const [currentStatus, setCurrentStatus] = useState<ProposalSignatureStatus | null>(null);
   // Track whether we've already triggered the initial refresh for this open session
@@ -166,26 +167,67 @@ export default function ProposalShareLinkModal({
   }, [existingLinks, currentSignatureStatus, isOpen]);
 
   // Trigger an immediate sync-status check the first time the modal opens for a
-  // signing request that is already in "sent" or "viewed" state, so the user sees
-  // fresh data without waiting up to 20 s for the next background poll.
+  // signing request that is already in flight, so the user sees fresh data without
+  // waiting up to 20 s for the next background poll.
   useEffect(() => {
     if (!isOpen || hasTriggeredRefreshRef.current) return;
-    if (existingLinks && existingLinks.length > 0 && onRefreshStatus) {
+    if (existingLinks && existingLinks.length > 0) {
       hasTriggeredRefreshRef.current = true;
-      onRefreshStatus();
+      // Fire-and-forget — we don't need to await here; state update comes via the
+      // existingLinks effect once the parent propagates the sync-status response.
+      // Also call handleRefresh-style direct fetch so the modal updates itself.
+      fetch("/api/firma/sync-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId }),
+      })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data) return;
+          if (Array.isArray(data.all_signers_data) && data.all_signers_data.length > 0) {
+            setSignerLinks(data.all_signers_data as SignerLink[]);
+          }
+          if (data.status) setCurrentStatus(data.status as ProposalSignatureStatus);
+          onRefreshStatus?.();
+        })
+        .catch(() => { /* non-fatal */ });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, existingLinks]);
 
   const handleRefresh = async () => {
-    if (!onRefreshStatus) return;
     setRefreshing(true);
+    setError(null);
+    setFirmaDebug(null);
     try {
-      await new Promise<void>((resolve) => {
-        onRefreshStatus();
-        // Give the parent ~2 s to fetch and propagate the update
-        setTimeout(resolve, 2000);
+      const res = await fetch("/api/firma/sync-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId }),
       });
+      if (!res.ok) {
+        setError("Could not reach the signing service. Try again in a moment.");
+        return;
+      }
+      const data = await res.json();
+      // Update the modal's own state immediately from the live API response
+      if (Array.isArray(data.all_signers_data) && data.all_signers_data.length > 0) {
+        setSignerLinks(data.all_signers_data as SignerLink[]);
+      }
+      if (data.status) {
+        setCurrentStatus(data.status as ProposalSignatureStatus);
+      }
+      // If nobody was detected as signed, surface what Firma actually returned so
+      // we can identify the correct field name to check.
+      const signersCopy = (Array.isArray(data.all_signers_data) ? data.all_signers_data : signerLinks) as SignerLink[];
+      const stillPending = signersCopy.every((s) => !s.signed_at);
+      if (stillPending && Array.isArray(data._firma_user_debug) && data._firma_user_debug.length > 0) {
+        setFirmaDebug(JSON.stringify(data._firma_user_debug, null, 2));
+      }
+      // Also notify the parent so its background state stays in sync
+      onRefreshStatus?.();
+    } catch {
+      setError("Network error. Check your connection and try again.");
     } finally {
       setRefreshing(false);
     }
@@ -393,6 +435,21 @@ export default function ProposalShareLinkModal({
                   })}
                 </div>
               </div>
+
+              {/* Diagnostic block — shown when refresh ran but no signatures detected */}
+              {firmaDebug && (
+                <details className="rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-900/20 p-3">
+                  <summary className="text-xs font-medium text-orange-700 dark:text-orange-400 cursor-pointer select-none">
+                    ⚠ Firma returned data but no signed status was detected — tap to see raw fields
+                  </summary>
+                  <pre className="mt-2 text-xs text-orange-800 dark:text-orange-300 overflow-x-auto whitespace-pre-wrap break-all">
+                    {firmaDebug}
+                  </pre>
+                  <p className="mt-2 text-xs text-orange-600 dark:text-orange-400">
+                    Share this with support to identify the correct field name.
+                  </p>
+                </details>
+              )}
 
               <div className="flex gap-2">
                 {onRefreshStatus && (

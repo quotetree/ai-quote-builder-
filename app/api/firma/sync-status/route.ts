@@ -458,11 +458,30 @@ export async function POST(req: NextRequest) {
     (mapped === null && rawFirmaStatus ? ` ⚠️ unmapped: "${rawFirmaStatus}"` : "")
   );
 
+  // When nobody has been detected as signed yet, include a sanitised snapshot of
+  // what Firma's /users endpoint actually returned so the UI can surface it for
+  // debugging without requiring Vercel log access.
+  const firmaUserDebug = signedCount === 0 && firmaUsers.length > 0
+    ? firmaUsers.map((u) => {
+        // Strip any field that looks like a URL or token to avoid leaking signing links
+        const safe: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(u)) {
+          if (typeof v === "string" && (v.startsWith("http") || v.length > 200)) {
+            safe[k] = `(${typeof v})`;
+          } else {
+            safe[k] = v;
+          }
+        }
+        return safe;
+      })
+    : undefined;
+
   return NextResponse.json({
     status: (updatePayload.status as string | undefined) ?? sig.status,
     signed_pdf_url: (updatePayload.signed_pdf_url as string | undefined) ?? (sigRow.signed_pdf_url as string | null) ?? null,
     audit_trail_url: (updatePayload.audit_trail_url as string | undefined) ?? (sigRow.audit_trail_url as string | null) ?? null,
     all_signers_data: (updatePayload.all_signers_data as unknown[] | undefined) ?? (sigRow.all_signers_data as unknown[]) ?? [],
     changed: hasChanges,
+    ...(firmaUserDebug ? { _firma_user_debug: firmaUserDebug } : {}),
   });
 }
