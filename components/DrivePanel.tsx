@@ -1196,11 +1196,14 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
 
   async function createSpreadsheet(templateId?: SpreadsheetTemplateId) {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
       const initialSections = buildTemplatesections(templateId);
       const { data, error } = await supabase
         .from("project_spreadsheets")
         .insert({
           project_id: projectId,
+          user_id: user.id,
           folder_id: currentFolderId,
           title: templateId ? TEMPLATE_LABELS[templateId] : "Untitled Spreadsheet",
           template_id: templateId ?? null,
