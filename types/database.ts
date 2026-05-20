@@ -328,6 +328,48 @@ export interface ProjectNote {
   updated_at: string;
 }
 
+// ============================================
+// ESTIMATE SPREADSHEET TYPES
+// ============================================
+
+export type SpreadsheetTemplateId = 'purchase_order' | 'invoice' | 'timesheet';
+
+export interface SpreadsheetRow {
+  id: string;
+  /** Free-text label the user typed into the Product/Service column */
+  custom_label: string;
+  /** UUID of the matched price book product, null if unmatched */
+  product_id: string | null;
+  product_name: string;
+  product_code: string;
+  list_price: number;
+  sales_price: number;
+  quantity: number;
+}
+
+export interface SpreadsheetSection {
+  id: string;
+  /** Editable section header, e.g. "Product or service", "Labor", etc. */
+  label: string;
+  rows: SpreadsheetRow[];
+}
+
+export interface ProjectSpreadsheet {
+  id: string;
+  project_id: string;
+  user_id: string;
+  folder_id: string | null;
+  title: string;
+  template_id: SpreadsheetTemplateId | null;
+  sections: SpreadsheetSection[];
+  charges: ChargeConfig[];
+  baked_markups: BakedMarkupConfig[];
+  subtotal: number;
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Quote {
   id: string;
   project_id: string;
@@ -357,6 +399,8 @@ export interface Quote {
   diff_summary: QuoteDiffSummary | null;
   author_id: string | null;
   is_editing: boolean;
+  // Spreadsheet link (Phase 1+)
+  spreadsheet_id: string | null;
 }
 
 export interface QuoteItem {

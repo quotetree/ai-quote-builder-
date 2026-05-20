@@ -178,6 +178,9 @@ import {
   ProjectDocument,
   ProjectFolder,
   ProjectNote,
+  ProjectSpreadsheet,
+  SpreadsheetSection,
+  SpreadsheetTemplateId,
 } from "@/types/database";
 import toast from "react-hot-toast";
 
@@ -187,7 +190,7 @@ interface DrivePanelProps {
 
 type DirectoryFile = File & { webkitRelativePath?: string };
 type ViewerMode = "image" | "pdf" | "office" | "text" | "other";
-type DriveItemType = "file" | "folder" | "note";
+type DriveItemType = "file" | "folder" | "note" | "spreadsheet";
 type TextAlignValue = "left" | "center" | "right";
 
 interface UploadProgress {
@@ -225,6 +228,59 @@ interface TableHoverState {
 
 const NOTE_AUTOSAVE_DELAY = 900;
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
+
+// ── Spreadsheet template helpers ──────────────────────────────────────────────
+
+const TEMPLATE_LABELS: Record<string, string> = {
+  purchase_order: "Purchase Order",
+  invoice: "Invoice",
+  timesheet: "Weekly Time Sheet",
+};
+
+const makeRow = (): SpreadsheetSection["rows"][number] => ({
+  id: crypto.randomUUID(),
+  custom_label: "",
+  product_id: null,
+  product_name: "",
+  product_code: "",
+  list_price: 0,
+  sales_price: 0,
+  quantity: 1,
+});
+
+const makeSection = (label: string, rowCount = 3): SpreadsheetSection => ({
+  id: crypto.randomUUID(),
+  label,
+  rows: Array.from({ length: rowCount }, makeRow),
+});
+
+function buildTemplatesections(templateId?: SpreadsheetTemplateId): SpreadsheetSection[] {
+  if (!templateId) {
+    return [makeSection("Product or service")];
+  }
+  if (templateId === "purchase_order") {
+    return [
+      makeSection("Materials"),
+      makeSection("Labor"),
+      makeSection("Equipment"),
+    ];
+  }
+  if (templateId === "invoice") {
+    return [
+      makeSection("Services"),
+      makeSection("Products"),
+      makeSection("Fees", 1),
+    ];
+  }
+  // timesheet
+  return [
+    makeSection("Monday"),
+    makeSection("Tuesday"),
+    makeSection("Wednesday"),
+    makeSection("Thursday"),
+    makeSection("Friday"),
+  ];
+}
 
 const OFFICE_MIME_TYPES = new Set([
   "application/msword",
@@ -350,7 +406,8 @@ interface DocumentCardMeta {
 type RenameTarget =
   | { type: "file"; record: ProjectDocument }
   | { type: "folder"; record: ProjectFolder }
-  | { type: "note"; record: ProjectNote };
+  | { type: "note"; record: ProjectNote }
+  | { type: "spreadsheet"; record: ProjectSpreadsheet };
 
 const getDocumentMeta = (doc: ProjectDocument): DocumentCardMeta => {
   const mime = doc.file_type?.toLowerCase() || "";
@@ -484,6 +541,10 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [activeNote, setActiveNote] = useState<NoteEditorState | null>(null);
+  const [spreadsheets, setSpreadsheets] = useState<ProjectSpreadsheet[]>([]);
+  const [showSpreadsheetTemplateModal, setShowSpreadsheetTemplateModal] = useState(false);
+  const [menuOpenSpreadsheetId, setMenuOpenSpreadsheetId] = useState<string | null>(null);
+  const [activeSpreadsheetId, setActiveSpreadsheetId] = useState<string | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
   const currentFolderId =
     folderStack.length > 0 ? folderStack[folderStack.length - 1].id : null;
@@ -906,16 +967,31 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         ? noteQuery.eq("folder_id", folderId)
         : noteQuery.is("folder_id", null);
 
-      const [{ data: folderData, error: folderError }, { data: docData, error: docError }, { data: noteData, error: noteError }] =
-        await Promise.all([folderQuery, docQuery, noteQuery]);
+      const sheetQuery = supabase
+        .from("project_spreadsheets")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("updated_at", { ascending: false });
+      folderId
+        ? sheetQuery.eq("folder_id", folderId)
+        : sheetQuery.is("folder_id", null);
+
+      const [
+        { data: folderData, error: folderError },
+        { data: docData, error: docError },
+        { data: noteData, error: noteError },
+        { data: sheetData, error: sheetError },
+      ] = await Promise.all([folderQuery, docQuery, noteQuery, sheetQuery]);
 
       if (folderError) throw folderError;
       if (docError) throw docError;
       if (noteError) throw noteError;
+      if (sheetError) throw sheetError;
 
       setFolders(folderData || []);
       setDocuments(docData || []);
       setNotes(noteData || []);
+      setSpreadsheets((sheetData as ProjectSpreadsheet[]) || []);
     } catch (error: any) {
       console.error(error);
       toast.error("Failed to load folder contents");
@@ -992,6 +1068,11 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
           .from("project_notes")
           .update({ folder_id: target.id })
           .eq("id", dragItem.id);
+      } else if (dragItem.type === "spreadsheet") {
+        await supabase
+          .from("project_spreadsheets")
+          .update({ folder_id: target.id })
+          .eq("id", dragItem.id);
       } else if (dragItem.type === "folder") {
         const allowed = await ensureFolderMoveAllowed(dragItem.id, target.id);
         if (!allowed) {
@@ -1023,6 +1104,11 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         } else if (dragItem.type === "note") {
           await supabase
             .from("project_notes")
+            .update({ folder_id: targetFolderId })
+            .eq("id", dragItem.id);
+        } else if (dragItem.type === "spreadsheet") {
+          await supabase
+            .from("project_spreadsheets")
             .update({ folder_id: targetFolderId })
             .eq("id", dragItem.id);
         } else if (dragItem.type === "folder") {
@@ -1104,6 +1190,49 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create note");
+    }
+  }
+
+  async function createSpreadsheet(templateId?: SpreadsheetTemplateId) {
+    try {
+      const initialSections = buildTemplatesections(templateId);
+      const { data, error } = await supabase
+        .from("project_spreadsheets")
+        .insert({
+          project_id: projectId,
+          folder_id: currentFolderId,
+          title: templateId ? TEMPLATE_LABELS[templateId] : "Untitled Spreadsheet",
+          template_id: templateId ?? null,
+          sections: initialSections,
+          charges: [],
+          baked_markups: [],
+          subtotal: 0,
+          total: 0,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      if (data) {
+        await loadFolderContents(currentFolderId);
+        setActiveSpreadsheetId(data.id);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create spreadsheet");
+    }
+  }
+
+  async function deleteSpreadsheet(id: string) {
+    try {
+      const { error } = await supabase
+        .from("project_spreadsheets")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      if (activeSpreadsheetId === id) setActiveSpreadsheetId(null);
+      setSpreadsheets((prev) => prev.filter((s) => s.id !== id));
+      toast.success("Spreadsheet deleted");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete spreadsheet");
     }
   }
 
@@ -1607,6 +1736,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     if (!target) return "";
     if (target.type === "file") return target.record.file_name;
     if (target.type === "folder") return target.record.name;
+    if (target.type === "spreadsheet") return target.record.title || "Untitled Spreadsheet";
     return target.record.title || "Untitled Note";
   };
 
@@ -1614,6 +1744,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
     setMenuOpenDocId(null);
     setMenuOpenFolderId(null);
     setMenuOpenNoteId(null);
+    setMenuOpenSpreadsheetId(null);
     setRenameTarget(target);
     setRenameValue(getRenameTargetName(target));
   }
@@ -1656,6 +1787,17 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         setFolders((prev) => prev.map((folder) => (folder.id === data.id ? data : folder)));
         setFolderStack((prev) =>
           prev.map((folder) => (folder.id === data.id ? data : folder)),
+        );
+      } else if (renameTarget.type === "spreadsheet") {
+        const { data, error } = await supabase
+          .from("project_spreadsheets")
+          .update({ title: trimmed })
+          .eq("id", renameTarget.record.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setSpreadsheets((prev) =>
+          prev.map((s) => (s.id === data.id ? (data as ProjectSpreadsheet) : s)),
         );
       } else {
         const { data, error } = await supabase
@@ -1837,6 +1979,84 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               event.stopPropagation();
               setMenuOpenNoteId(null);
               deleteNote(note.id);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+          >
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSpreadsheetCard = (sheet: ProjectSpreadsheet) => (
+    <div
+      key={`sheet-${sheet.id}`}
+      draggable
+      onDragStart={() => setDragItem({ id: sheet.id, type: "spreadsheet" })}
+      onDragEnd={() => setDragItem(null)}
+      onClick={() => setActiveSpreadsheetId(sheet.id)}
+      onDoubleClick={() => setActiveSpreadsheetId(sheet.id)}
+      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-2xl transition-all cursor-pointer group"
+    >
+      <div className="flex items-start justify-between mb-4 gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-green-100 text-green-700 flex items-center justify-center">
+            <FileSpreadsheet size={18} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              {sheet.title || "Untitled Spreadsheet"}
+            </p>
+            <p className="text-xs text-gray-500">
+              {sheet.template_id ? TEMPLATE_LABELS[sheet.template_id] : "Blank spreadsheet"} •{" "}
+              {new Date(sheet.updated_at).toLocaleString()}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-right">
+          <span className="text-xs text-green-600 dark:text-green-400">Click to open</span>
+          <button
+            type="button"
+            aria-label="Spreadsheet actions"
+            className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenDocId(null);
+              setMenuOpenFolderId(null);
+              setMenuOpenNoteId(null);
+              setMenuOpenSpreadsheetId((prev) => (prev === sheet.id ? null : sheet.id));
+            }}
+          >
+            <MoreVertical size={18} />
+          </button>
+        </div>
+      </div>
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {sheet.sections.length === 0
+          ? "No sections yet"
+          : `${sheet.sections.length} section${sheet.sections.length !== 1 ? "s" : ""}`}
+      </p>
+      {menuOpenSpreadsheetId === sheet.id && (
+        <div className="absolute top-3 right-3 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 w-44 py-2">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              openRename({ type: "spreadsheet", record: sheet });
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+          >
+            <Pencil size={16} />
+            Rename
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenSpreadsheetId(null);
+              deleteSpreadsheet(sheet.id);
             }}
             className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
           >
@@ -2031,7 +2251,8 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   type DriveItem =
     | { type: "folder"; record: ProjectFolder; timestamp: number }
     | { type: "note"; record: ProjectNote; timestamp: number }
-    | { type: "file"; record: ProjectDocument; timestamp: number };
+    | { type: "file"; record: ProjectDocument; timestamp: number }
+    | { type: "spreadsheet"; record: ProjectSpreadsheet; timestamp: number };
 
   const driveItems = useMemo(() => {
     const items: DriveItem[] = [];
@@ -2045,16 +2266,21 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       const timestamp = note.updated_at ? new Date(note.updated_at).getTime() : Date.now();
       items.push({ type: "note", record: note, timestamp });
     });
+    spreadsheets.forEach((sheet) => {
+      const timestamp = sheet.updated_at ? new Date(sheet.updated_at).getTime() : Date.now();
+      items.push({ type: "spreadsheet", record: sheet, timestamp });
+    });
     documents.forEach((doc) => {
       const timestamp = doc.created_at ? new Date(doc.created_at).getTime() : Date.now();
       items.push({ type: "file", record: doc, timestamp });
     });
     return items.sort((a, b) => b.timestamp - a.timestamp);
-  }, [folders, notes, documents]);
+  }, [folders, notes, spreadsheets, documents]);
 
   const renderDriveCard = (item: DriveItem) => {
     if (item.type === "folder") return renderFolderCard(item.record);
     if (item.type === "note") return renderNoteCard(item.record);
+    if (item.type === "spreadsheet") return renderSpreadsheetCard(item.record);
     return renderFileCard(item.record);
   };
 
@@ -2121,7 +2347,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
               New
             </button>
             {showNewMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 py-2 z-20">
+              <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-2xl border border-gray-200 py-2 z-20">
                 <button
                   type="button"
                   onClick={() => {
@@ -2143,6 +2369,18 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                 >
                   <StickyNote size={16} />
                   New Note
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setShowSpreadsheetTemplateModal(true);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                >
+                  <FileSpreadsheet size={16} />
+                  New Spreadsheet
                 </button>
               </div>
             )}
@@ -2282,7 +2520,9 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                 ? "Rename file"
                 : renameTarget.type === "folder"
                   ? "Rename folder"
-                  : "Rename note"}
+                  : renameTarget.type === "spreadsheet"
+                    ? "Rename spreadsheet"
+                    : "Rename note"}
             </h3>
             <p className="text-sm text-gray-500 mb-4">
               Enter a new name for “{getRenameTargetName(renameTarget)}”.
@@ -2535,6 +2775,172 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
           </div>
         </div>
       )}
+
+      {/* ── Spreadsheet template picker ──────────────────────────── */}
+      {showSpreadsheetTemplateModal && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center px-4"
+          onClick={() => setShowSpreadsheetTemplateModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                New Spreadsheet
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSpreadsheetTemplateModal(false)}
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {/* Blank spreadsheet */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSpreadsheetTemplateModal(false);
+                  createSpreadsheet();
+                }}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+              >
+                <div className="w-full h-28 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
+                  <FileSpreadsheet size={40} className="text-green-600" />
+                </div>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Blank spreadsheet
+                </span>
+              </button>
+              {/* Purchase Order template */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSpreadsheetTemplateModal(false);
+                  createSpreadsheet("purchase_order");
+                }}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+              >
+                <div className="w-full h-28 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 flex flex-col p-3 gap-1.5 overflow-hidden">
+                  <div className="h-2 bg-blue-400 rounded w-3/4" />
+                  <div className="h-1 bg-blue-200 rounded w-full" />
+                  <div className="h-1 bg-blue-200 rounded w-5/6" />
+                  <div className="h-1 bg-blue-200 rounded w-full" />
+                  <div className="h-1 bg-blue-200 rounded w-4/5" />
+                  <div className="h-1 bg-blue-200 rounded w-full" />
+                </div>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Purchase Order
+                </span>
+              </button>
+              {/* Invoice template */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSpreadsheetTemplateModal(false);
+                  createSpreadsheet("invoice");
+                }}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+              >
+                <div className="w-full h-28 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 flex flex-col p-3 gap-1.5 overflow-hidden">
+                  <div className="h-2 bg-red-400 rounded w-2/3" />
+                  <div className="h-1 bg-red-200 rounded w-full" />
+                  <div className="h-1 bg-red-200 rounded w-4/5" />
+                  <div className="h-1 bg-red-200 rounded w-full" />
+                  <div className="h-1 bg-red-200 rounded w-3/4" />
+                  <div className="h-1 bg-red-200 rounded w-full" />
+                </div>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Invoice
+                </span>
+              </button>
+              {/* Time Sheet template */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSpreadsheetTemplateModal(false);
+                  createSpreadsheet("timesheet");
+                }}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+              >
+                <div className="w-full h-28 rounded-lg bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 flex flex-col p-3 gap-1.5 overflow-hidden">
+                  <div className="h-2 bg-purple-400 rounded w-3/5" />
+                  <div className="h-1 bg-purple-200 rounded w-full" />
+                  <div className="h-1 bg-purple-200 rounded w-full" />
+                  <div className="h-1 bg-purple-200 rounded w-full" />
+                  <div className="h-1 bg-purple-200 rounded w-full" />
+                  <div className="h-1 bg-purple-200 rounded w-full" />
+                </div>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Weekly Time Sheet
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Active spreadsheet placeholder (Phase 2 will replace with SpreadsheetEditor) ── */}
+      {activeSpreadsheetId && (() => {
+        const sheet = spreadsheets.find((s) => s.id === activeSpreadsheetId);
+        if (!sheet) return null;
+        return (
+          <div className="fixed inset-0 bg-gray-50 dark:bg-gray-950 z-30 flex flex-col">
+            <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0">
+                  <FileSpreadsheet size={16} />
+                </div>
+                <input
+                  type="text"
+                  className="text-lg font-semibold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 min-w-0 w-64"
+                  value={sheet.title}
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    setSpreadsheets((prev) =>
+                      prev.map((s) => (s.id === sheet.id ? { ...s, title: val } : s)),
+                    );
+                    await supabase
+                      .from("project_spreadsheets")
+                      .update({ title: val })
+                      .eq("id", sheet.id);
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">
+                  {sheet.template_id ? TEMPLATE_LABELS[sheet.template_id] : "Blank spreadsheet"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveSpreadsheetId(null)}
+                  className="p-2 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  aria-label="Close spreadsheet"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-sm">
+                <div className="w-16 h-16 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-4">
+                  <FileSpreadsheet size={32} />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
+                  {sheet.title}
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  The spreadsheet editor is being built in Phase 2. Your spreadsheet is saved and
+                  will be fully editable soon.
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {tableHoverState &&
         createPortal(
