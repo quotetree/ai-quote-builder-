@@ -182,6 +182,7 @@ import {
   SpreadsheetSection,
   SpreadsheetTemplateId,
 } from "@/types/database";
+import SpreadsheetEditor from "@/components/SpreadsheetEditor";
 import toast from "react-hot-toast";
 
 interface DrivePanelProps {
@@ -2883,62 +2884,24 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         </div>
       )}
 
-      {/* ── Active spreadsheet placeholder (Phase 2 will replace with SpreadsheetEditor) ── */}
+      {/* ── Active spreadsheet editor ─────────────────────────────────── */}
       {activeSpreadsheetId && (() => {
         const sheet = spreadsheets.find((s) => s.id === activeSpreadsheetId);
         if (!sheet) return null;
         return (
-          <div className="fixed inset-0 bg-gray-50 dark:bg-gray-950 z-30 flex flex-col">
-            <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0">
-                  <FileSpreadsheet size={16} />
-                </div>
-                <input
-                  type="text"
-                  className="text-lg font-semibold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 min-w-0 w-64"
-                  value={sheet.title}
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    setSpreadsheets((prev) =>
-                      prev.map((s) => (s.id === sheet.id ? { ...s, title: val } : s)),
-                    );
-                    await supabase
-                      .from("project_spreadsheets")
-                      .update({ title: val })
-                      .eq("id", sheet.id);
-                  }}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400">
-                  {sheet.template_id ? TEMPLATE_LABELS[sheet.template_id] : "Blank spreadsheet"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setActiveSpreadsheetId(null)}
-                  className="p-2 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  aria-label="Close spreadsheet"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-sm">
-                <div className="w-16 h-16 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-4">
-                  <FileSpreadsheet size={32} />
-                </div>
-                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                  {sheet.title}
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  The spreadsheet editor is being built in Phase 2. Your spreadsheet is saved and
-                  will be fully editable soon.
-                </p>
-              </div>
-            </div>
-          </div>
+          <SpreadsheetEditor
+            spreadsheet={sheet}
+            onClose={() => setActiveSpreadsheetId(null)}
+            onDelete={(id) => {
+              setActiveSpreadsheetId(null);
+              deleteSpreadsheet(id);
+            }}
+            onUpdate={(updated) =>
+              setSpreadsheets((prev) =>
+                prev.map((s) => (s.id === updated.id ? updated : s)),
+              )
+            }
+          />
         );
       })()}
 
