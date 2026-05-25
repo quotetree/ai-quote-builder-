@@ -15,6 +15,14 @@ interface QuoteItem {
   line_total: number;
 }
 
+interface SimpleMarkup {
+  calculated_amount: number;
+  base_total: number;
+  base_applies_to?: string;
+  base_excluded?: string[];
+  audited?: unknown;
+}
+
 interface QuoteData {
   id: string;
   quote_number: string;
@@ -26,6 +34,7 @@ interface QuoteData {
   discount_amount: number | null;
   total_price: number | null;
   charges: ChargeConfig[] | null;
+  baked_markups?: SimpleMarkup[] | null;
   organization_id: string;
   items: QuoteItem[];
 }
@@ -86,6 +95,25 @@ const safeNumber = (value: unknown): number => {
 };
 
 const roundToCents = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
+
+function calcItemMarkup(
+  item: { product_name: string | null; line_total: number },
+  markups: SimpleMarkup[]
+): number {
+  if (!Array.isArray(markups) || markups.length === 0) return 0;
+  const simpleMarkups = markups.filter(
+    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
+  );
+  if (simpleMarkups.length === 0) return 0;
+  return simpleMarkups.reduce((total, m) => {
+    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
+    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
+      return total;
+    }
+    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
+    return total + share;
+  }, 0);
+}
 
 function getTaxInfo(quote: QuoteData) {
   const fallbackRate = safeNumber(quote.tax_rate);
@@ -198,24 +226,30 @@ export default function QuoteBlock({ quoteId, preloadedData }: QuoteBlockProps) 
   const { quote, profile } = data;
   const items: QuoteItem[] = quote.items ?? [];
   const { amount: taxAmount } = getTaxInfo(quote);
+  const bakedMarkups: SimpleMarkup[] = Array.isArray(quote.baked_markups) ? quote.baked_markups : [];
 
   // Build line rows using the same markup-hiding logic as the PDF
   const lineRows = items.map((item) => {
-    const salesPrice =
-      item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
     const discountPercent = safeNumber(item.discount_percent);
+    const markupAmount = roundToCents(calcItemMarkup(item, bakedMarkups));
+    const displayTotal = item.line_total + markupAmount;
+    // Back-calculate sales price and list price from the markup-inclusive total
+    // so that: salesPrice × qty = displayTotal and listPrice × (1 - disc) = salesPrice
+    const displaySalesPrice =
+      item.quantity > 0 ? displayTotal / item.quantity : item.unit_price;
     const displayListPrice =
       discountPercent > 0 && discountPercent < 1
-        ? salesPrice / (1 - discountPercent)
-        : salesPrice;
+        ? displaySalesPrice / (1 - discountPercent)
+        : displaySalesPrice;
 
     return {
       name: item.product_name || item.product_number || "—",
       listPrice: displayListPrice,
       discount: discountPercent,
-      salesPrice,
+      salesPrice: displaySalesPrice,
       quantity: item.quantity,
       lineTotal: item.line_total,
+      markupAmount,
     };
   });
 
@@ -292,7 +326,7 @@ export default function QuoteBlock({ quoteId, preloadedData }: QuoteBlockProps) 
                   {formatQuantity(row.quantity)}
                 </td>
                 <td className="px-2 py-1.5 border border-gray-200 text-right font-medium">
-                  {formatCurrency(row.lineTotal)}
+                  {formatCurrency(row.lineTotal + row.markupAmount)}
                 </td>
               </tr>
             ))

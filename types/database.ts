@@ -191,6 +191,29 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface ChatAttachment {
+  id: string;
+  project_id: string;
+  uploaded_by: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  storage_path: string;
+  extracted_text: string | null;
+  vision_summary: string | null;
+  parse_status: 'pending' | 'processing' | 'ready' | 'error';
+  parse_error: string | null;
+  source: 'plan_upload' | 'drive_reference';
+  project_document_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanChatSource {
+  title: string;
+  url: string;
+}
+
 export interface ProductSuggestion {
   product_id?: string; // Product ID from price book
   product_name: string;
@@ -302,6 +325,13 @@ export interface ProjectDocument {
   storage_path: string;
   uploaded_by: string | null;
   folder_id?: string | null;
+  extracted_text?: string | null;
+  vision_summary?: string | null;
+  search_text?: string | null;
+  parse_status?: 'pending' | 'processing' | 'ready' | 'error' | 'skipped';
+  parse_error?: string | null;
+  indexed_at?: string | null;
+  updated_at?: string | null;
   created_at: string;
 }
 
@@ -344,6 +374,8 @@ export interface SpreadsheetRow {
   product_code: string;
   list_price: number;
   sales_price: number;
+  /** Discount percentage as a whole number (e.g. 10 = 10%). 0 means no discount. */
+  discount: number;
   quantity: number;
 }
 
@@ -584,3 +616,18 @@ export interface StripeInvoice {
   invoice_pdf: string | null;
 }
 
+
+// ============================================
+// SPREADSHEET TEMPLATE TYPES
+// ============================================
+
+export interface SpreadsheetTemplate {
+  id: string;
+  user_id: string;
+  title: string;
+  sections: SpreadsheetSection[];
+  charges: ChargeConfig[];
+  baked_markups: BakedMarkupConfig[];
+  created_at: string;
+  updated_at: string;
+}

@@ -81,6 +81,29 @@ const safeNumber = (value: unknown): number => {
 
 const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
+/**
+ * For spreadsheet-sourced quotes: proportionally allocate each SimpleMarkup's
+ * calculated_amount to an eligible line item based on its share of base_total.
+ */
+function calcItemMarkup(
+  item: { product_name: string; line_total: number },
+  markups: any[]
+): number {
+  if (!Array.isArray(markups) || markups.length === 0) return 0;
+  const simpleMarkups = markups.filter(
+    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
+  );
+  if (simpleMarkups.length === 0) return 0;
+  return simpleMarkups.reduce((total, m) => {
+    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
+    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
+      return total;
+    }
+    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
+    return total + share;
+  }, 0);
+}
+
 const getTaxInfo = (quote: any) => {
   const fallbackRate = safeNumber(quote?.tax_rate);
   const fallbackAmount = safeNumber(quote?.tax_amount);
@@ -122,6 +145,7 @@ function buildQuotePDF(opts: {
   tax_amount: number;
   total_price: number;
   charges?: any[];
+  baked_markups?: any[];
   isMock?: boolean;
 }) {
   const doc = new jsPDF();
@@ -188,20 +212,25 @@ function buildQuotePDF(opts: {
 
   const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
 
+  const bakedMarkups = opts.baked_markups ?? [];
   const tableData = opts.items.map((item) => {
-    const salesPrice = item.quantity > 0 ? item.line_total / item.quantity : item.unit_price;
     const discountPercent = safeNumber(item.discount_percent);
+    const itemMarkup = roundToCents(calcItemMarkup(item, bakedMarkups));
+    const displayTotal = item.line_total + itemMarkup;
+    // Back-calculate sales price and list price from the markup-inclusive total
+    // so that: salesPrice × qty = displayTotal and listPrice × (1 - disc) = salesPrice
+    const displaySalesPrice = item.quantity > 0 ? displayTotal / item.quantity : displayTotal;
     const displayListPrice =
       discountPercent > 0 && discountPercent < 1
-        ? salesPrice / (1 - discountPercent)
-        : salesPrice;
+        ? displaySalesPrice / (1 - discountPercent)
+        : displaySalesPrice;
     return [
       item.product_name || "-",
       formatCurrency(displayListPrice),
       formatPercent(item.discount_percent),
-      formatCurrency(salesPrice),
+      formatCurrency(displaySalesPrice),
       formatQuantity(item.quantity),
-      formatCurrency(item.line_total),
+      formatCurrency(displayTotal),
     ];
   });
 
@@ -379,6 +408,7 @@ export async function POST(req: NextRequest) {
       tax_amount: safeNumber(quote.tax_amount),
       total_price: safeNumber(quote.total_price),
       charges: quote.charges,
+      baked_markups: Array.isArray(quote.baked_markups) ? quote.baked_markups : [],
     });
 
     const pdfBuffer = Buffer.from(doc.output("arraybuffer"));

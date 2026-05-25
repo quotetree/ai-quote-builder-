@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Middleware buffers request bodies (default 10MB); attachments allow up to 20MB.
+    proxyClientMaxBodySize: "25mb",
+  },
   images: {
     remotePatterns: [
       {

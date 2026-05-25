@@ -157,6 +157,7 @@ import {
   Pencil,
   Folder,
   StickyNote,
+  BookmarkMinus,
   Bold,
   Italic,
   Underline,
@@ -171,6 +172,7 @@ import {
   AlignCenter,
   AlignRight,
   ChevronDown,
+  Copy,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
@@ -181,12 +183,15 @@ import {
   ProjectSpreadsheet,
   SpreadsheetSection,
   SpreadsheetTemplateId,
+  SpreadsheetTemplate,
 } from "@/types/database";
 import SpreadsheetEditor from "@/components/SpreadsheetEditor";
 import toast from "react-hot-toast";
 
 interface DrivePanelProps {
   projectId: string;
+  /** Notifies parent when user opens/closes a spreadsheet (AI chat context). */
+  onActiveSpreadsheetChange?: (spreadsheetId: string | null) => void;
 }
 
 type DirectoryFile = File & { webkitRelativePath?: string };
@@ -246,6 +251,7 @@ const makeRow = (): SpreadsheetSection["rows"][number] => ({
   product_code: "",
   list_price: 0,
   sales_price: 0,
+  discount: 0,
   quantity: 1,
 });
 
@@ -257,7 +263,7 @@ const makeSection = (label: string, rowCount = 3): SpreadsheetSection => ({
 
 function buildTemplatesections(templateId?: SpreadsheetTemplateId): SpreadsheetSection[] {
   if (!templateId) {
-    return [makeSection("Product or service")];
+    return [makeSection("Untitled section")];
   }
   if (templateId === "purchase_order") {
     return [
@@ -518,7 +524,7 @@ const sanitizeFileName = (value: string | null | undefined, fallback: string) =>
 
 const NOTE_HIGHLIGHT_COLOR = "#fff3b0";
 
-export default function DrivePanel({ projectId }: DrivePanelProps) {
+export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: DrivePanelProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -543,9 +549,23 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
   const [newFolderName, setNewFolderName] = useState("");
   const [activeNote, setActiveNote] = useState<NoteEditorState | null>(null);
   const [spreadsheets, setSpreadsheets] = useState<ProjectSpreadsheet[]>([]);
-  const [showSpreadsheetTemplateModal, setShowSpreadsheetTemplateModal] = useState(false);
+  const [userTemplates, setUserTemplates] = useState<SpreadsheetTemplate[]>([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [confirmDeleteTemplateId, setConfirmDeleteTemplateId] = useState<string | null>(null);
+  const [newFromTemplateModal, setNewFromTemplateModal] = useState<{ template: SpreadsheetTemplate } | null>(null);
+  const [newSpreadsheetName, setNewSpreadsheetName] = useState("");
+  const [creatingFromTemplate, setCreatingFromTemplate] = useState(false);
   const [menuOpenSpreadsheetId, setMenuOpenSpreadsheetId] = useState<string | null>(null);
   const [activeSpreadsheetId, setActiveSpreadsheetId] = useState<string | null>(null);
+  useEffect(() => {
+    onActiveSpreadsheetChange?.(activeSpreadsheetId);
+  }, [activeSpreadsheetId, onActiveSpreadsheetChange]);
+
+  const [spreadsheetEditContext, setSpreadsheetEditContext] = useState<{
+    quoteId: string;
+    quoteNumber: string;
+    version: number;
+  } | null>(null);
   const [dragItem, setDragItem] = useState<DragItem | null>(null);
   const currentFolderId =
     folderStack.length > 0 ? folderStack[folderStack.length - 1].id : null;
@@ -895,8 +915,44 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
 
   useEffect(() => {
     loadFolderContents(currentFolderId);
+    loadUserTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, currentFolderId]);
+
+  const anyMenuOpen =
+    !!menuOpenDocId || !!menuOpenFolderId || !!menuOpenNoteId || !!menuOpenSpreadsheetId || showNewMenu;
+
+  const closeAllMenus = () => {
+    setMenuOpenDocId(null);
+    setMenuOpenFolderId(null);
+    setMenuOpenNoteId(null);
+    setMenuOpenSpreadsheetId(null);
+    setShowNewMenu(false);
+  };
+
+  // Open linked spreadsheet when editing a spreadsheet-sourced quote
+  useEffect(() => {
+    const handleEditSpreadsheetQuote = (e: Event) => {
+      const { spreadsheetId, quoteId, quoteNumber, version } = (e as CustomEvent).detail;
+      setSpreadsheetEditContext({ quoteId, quoteNumber, version });
+      setActiveSpreadsheetId(spreadsheetId);
+    };
+    window.addEventListener("editSpreadsheetQuoteStarted", handleEditSpreadsheetQuote as EventListener);
+    return () => window.removeEventListener("editSpreadsheetQuoteStarted", handleEditSpreadsheetQuote as EventListener);
+  }, []);
+
+  // Log → Add New Quote: create spreadsheet and open editor
+  useEffect(() => {
+    const handleNewSpreadsheetQuote = (e: Event) => {
+      const detail = (e as CustomEvent<{ quoteName?: string; projectId?: string }>).detail;
+      if (!detail?.projectId || detail.projectId !== projectId) return;
+      void createSpreadsheetWithTitle(detail.quoteName ?? "Untitled Spreadsheet");
+    };
+    window.addEventListener("newSpreadsheetQuoteStarted", handleNewSpreadsheetQuote as EventListener);
+    return () =>
+      window.removeEventListener("newSpreadsheetQuoteStarted", handleNewSpreadsheetQuote as EventListener);
+  }, [projectId, currentFolderId]);
+
 
   useEffect(() => {
     if (!activeNote) return;
@@ -937,6 +993,19 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
 
 
   const breadcrumb = useMemo(() => folderStack, [folderStack]);
+
+  const loadUserTemplates = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("spreadsheet_templates")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      setUserTemplates((data as SpreadsheetTemplate[]) || []);
+    } catch {
+      // non-blocking — templates are optional
+    }
+  }, [supabase]);
 
   async function loadFolderContents(folderId: string | null) {
     try {
@@ -1222,6 +1291,42 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create spreadsheet");
+    } finally {
+      setCreatingFromTemplate(false);
+    }
+  }
+
+
+  async function createSpreadsheetWithTitle(title: string) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const initialSections = buildTemplatesections(undefined);
+      const sheetTitle = title.trim() || "Untitled Spreadsheet";
+      const { data, error } = await supabase
+        .from("project_spreadsheets")
+        .insert({
+          project_id: projectId,
+          user_id: user.id,
+          folder_id: currentFolderId,
+          title: sheetTitle,
+          template_id: null,
+          sections: initialSections,
+          charges: [],
+          baked_markups: [],
+          subtotal: 0,
+          total: 0,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      if (data) {
+        await loadFolderContents(currentFolderId);
+        setActiveSpreadsheetId(data.id);
+        toast.success(`Opened "${sheetTitle}"`);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create spreadsheet");
     }
   }
 
@@ -1237,6 +1342,111 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       toast.success("Spreadsheet deleted");
     } catch (error: any) {
       toast.error(error.message || "Failed to delete spreadsheet");
+    }
+  }
+
+  async function saveAsTemplate(sheet: ProjectSpreadsheet) {
+    if (savingTemplate) return;
+    const name = window.prompt("Template name:", sheet.title);
+    if (name === null) return; // cancelled
+    const trimmed = name.trim() || sheet.title;
+    setSavingTemplate(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const { data, error } = await supabase
+        .from("spreadsheet_templates")
+        .insert({
+          user_id: user.id,
+          title: trimmed,
+          sections: sheet.sections,
+          charges: sheet.charges,
+          baked_markups: sheet.baked_markups,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      if (data) setUserTemplates((prev) => [...prev, data as SpreadsheetTemplate]);
+      toast.success(`Template "${trimmed}" saved`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save template");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function deleteUserTemplate(templateId: string) {
+    try {
+      const { error } = await supabase
+        .from("spreadsheet_templates")
+        .delete()
+        .eq("id", templateId);
+      if (error) throw error;
+      setUserTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      toast.success("Template removed");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete template");
+    }
+  }
+
+  async function createFromUserTemplate(template: SpreadsheetTemplate, customTitle?: string) {
+    setCreatingFromTemplate(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const { data, error } = await supabase
+        .from("project_spreadsheets")
+        .insert({
+          project_id: projectId,
+          user_id: user.id,
+          folder_id: currentFolderId,
+          title: (customTitle || "").trim() || template.title,
+          template_id: null,
+          sections: template.sections,
+          charges: template.charges,
+          baked_markups: template.baked_markups,
+          subtotal: 0,
+          total: 0,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      if (data) {
+        await loadFolderContents(currentFolderId);
+        setActiveSpreadsheetId(data.id);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create spreadsheet");
+    }
+  }
+
+  async function duplicateSpreadsheet(sheet: ProjectSpreadsheet) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { data, error } = await supabase
+        .from("project_spreadsheets")
+        .insert({
+          project_id: sheet.project_id,
+          user_id: user.id,
+          folder_id: sheet.folder_id,
+          title: `${sheet.title} - Copy`,
+          template_id: sheet.template_id,
+          sections: sheet.sections,
+          charges: sheet.charges,
+          baked_markups: sheet.baked_markups,
+          subtotal: sheet.subtotal,
+          total: sheet.total,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) setSpreadsheets((prev) => [...prev, data as ProjectSpreadsheet]);
+      toast.success("Spreadsheet duplicated");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to duplicate spreadsheet");
     }
   }
 
@@ -1588,6 +1798,11 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
       }
 
       if (successCount > 0) {
+        void fetch("/api/ai/drive-index", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, maxDocs: 12 }),
+        }).catch(() => {});
         toast.success(
           `Uploaded ${successCount} file${successCount === 1 ? "" : "s"}`,
         );
@@ -2060,6 +2275,18 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
             onClick={(event) => {
               event.stopPropagation();
               setMenuOpenSpreadsheetId(null);
+              duplicateSpreadsheet(sheet);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2"
+          >
+            <Copy size={16} />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpenSpreadsheetId(null);
               deleteSpreadsheet(sheet.id);
             }}
             className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
@@ -2292,6 +2519,10 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
 
   return (
     <div className="h-full bg-gray-50 dark:bg-gray-950 p-6">
+      {/* Transparent backdrop — closes any open card menu when clicking outside */}
+      {anyMenuOpen && (
+        <div className="fixed inset-0 z-20" onClick={closeAllMenus} />
+      )}
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between mb-6">
         <div className="space-y-1">
           <h2 className="text-2xl font-bold">Project Documents</h2>
@@ -2374,31 +2605,122 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
                   <StickyNote size={16} />
                   New Note
                 </button>
-                <div className="my-1 border-t border-gray-100" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowNewMenu(false);
-                    setShowSpreadsheetTemplateModal(true);
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                >
-                  <FileSpreadsheet size={16} />
-                  New Spreadsheet
-                </button>
+
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {uploading && uploadProgress?.name && (
+      {/* ── Spreadsheet template strip ────────────────────────── */}
+      {!activeSpreadsheetId && (
+        <div className="mb-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-3">
+            New Spreadsheet
+          </p>
+          {/* pt-3 gives room so the delete badge on user cards isn't clipped */}
+          <div className="flex gap-3 overflow-x-auto pb-2 pt-3 -mx-1 px-1">
+            {/* Blank */}
+            <button
+              type="button"
+              onClick={() => createSpreadsheet()}
+              className="flex-shrink-0 flex flex-col items-center gap-2 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-green-500 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group w-[112px]"
+            >
+              <div className="w-full h-[72px] rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
+                <FileSpreadsheet size={28} className="text-green-600" />
+              </div>
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300 text-center leading-tight">Blank spreadsheet</span>
+            </button>
+
+            {/* User-saved templates */}
+            {userTemplates.map((tmpl) => (
+              <div key={tmpl.id} className="relative flex-shrink-0 group/tmpl w-[112px]">
+                {/* Card */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirmDeleteTemplateId === tmpl.id) {
+                      setConfirmDeleteTemplateId(null);
+                      return;
+                    }
+                    setNewSpreadsheetName(tmpl.title);
+                    setNewFromTemplateModal({ template: tmpl });
+                  }}
+                  className="w-full flex flex-col items-center gap-2 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-green-500 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+                >
+                  <div className="w-full h-[72px] rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col p-2.5 gap-1 overflow-hidden">
+                    {(tmpl.sections || []).slice(0, 4).map((sec, i) => (
+                      <div key={i} className="flex flex-col gap-0.5">
+                        <div className="h-1 bg-amber-400 rounded w-3/4" />
+                        <div className="h-0.5 bg-amber-200 rounded w-full" />
+                      </div>
+                    ))}
+                    {(tmpl.sections || []).length === 0 && (
+                      <div className="h-1 bg-amber-300 rounded w-1/2" />
+                    )}
+                  </div>
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300 text-center leading-tight line-clamp-2">{tmpl.title}</span>
+                </button>
+
+                {/* Delete badge — positioned inside card bounds, top-right */}
+                {confirmDeleteTemplateId !== tmpl.id && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDeleteTemplateId(tmpl.id);
+                    }}
+                    className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-400 hover:text-red-500 hover:border-red-400 hidden group-hover/tmpl:flex items-center justify-center shadow-sm transition-all"
+                    aria-label="Delete template"
+                  >
+                    <BookmarkMinus size={11} />
+                  </button>
+                )}
+
+                {/* Inline confirm overlay */}
+                {confirmDeleteTemplateId === tmpl.id && (
+                  <div className="absolute inset-0 rounded-xl bg-white/95 dark:bg-gray-900/95 border-2 border-red-300 dark:border-red-700 flex flex-col items-center justify-center gap-2 p-2 z-10">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 text-center leading-tight">
+                      Delete this template?
+                    </p>
+                    <div className="flex gap-1.5 w-full">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteUserTemplate(tmpl.id);
+                          setConfirmDeleteTemplateId(null);
+                        }}
+                        className="flex-1 py-1 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-medium transition-colors"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteTemplateId(null);
+                        }}
+                        className="flex-1 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!activeSpreadsheetId && uploading && uploadProgress?.name && (
         <p className="text-sm text-gray-500 mb-4">
           Uploading <span className="font-medium">{uploadProgress.name}</span>
         </p>
       )}
 
-      {loading ? (
+      {!activeSpreadsheetId && (loading ? (
         <div className="flex items-center justify-center h-[60vh]">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
@@ -2419,7 +2741,7 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {driveItems.map((item) => renderDriveCard(item))}
         </div>
-      )}
+      ))}
 
       {previewState.doc && (
         <div
@@ -2780,107 +3102,67 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         </div>
       )}
 
-      {/* ── Spreadsheet template picker ──────────────────────────── */}
-      {showSpreadsheetTemplateModal && (
+
+            {/* ── Create-from-template naming modal ─────────────────────── */}
+      {newFromTemplateModal && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center px-4"
-          onClick={() => setShowSpreadsheetTemplateModal(false)}
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={() => setNewFromTemplateModal(null)}
         >
           <div
-            className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl p-6"
-            onClick={(event) => event.stopPropagation()}
+            className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-green-700 shadow-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                New Spreadsheet
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                Create New Spreadsheet
               </h3>
               <button
                 type="button"
-                onClick={() => setShowSpreadsheetTemplateModal(false)}
-                className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800"
+                onClick={() => setNewFromTemplateModal(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {/* Blank spreadsheet */}
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+              Spreadsheet Name
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={newSpreadsheetName}
+              onChange={(e) => setNewSpreadsheetName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newSpreadsheetName.trim()) {
+                  const tmpl = newFromTemplateModal.template;
+                  setNewFromTemplateModal(null);
+                  createFromUserTemplate(tmpl, newSpreadsheetName);
+                }
+                if (e.key === "Escape") setNewFromTemplateModal(null);
+              }}
+              placeholder={`e.g., ${newFromTemplateModal.template.title} — Project A`}
+              className="w-full px-4 py-3 rounded-xl border-2 border-green-600 focus:outline-none focus:ring-2 focus:ring-green-300 dark:bg-gray-800 dark:border-green-700 dark:text-gray-100 text-gray-900 text-sm mb-5"
+            />
+            <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setShowSpreadsheetTemplateModal(false);
-                  createSpreadsheet();
-                }}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+                onClick={() => setNewFromTemplateModal(null)}
+                className="px-5 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
               >
-                <div className="w-full h-28 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
-                  <FileSpreadsheet size={40} className="text-green-600" />
-                </div>
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Blank spreadsheet
-                </span>
+                Cancel
               </button>
-              {/* Purchase Order template */}
               <button
                 type="button"
+                disabled={!newSpreadsheetName.trim() || creatingFromTemplate}
                 onClick={() => {
-                  setShowSpreadsheetTemplateModal(false);
-                  createSpreadsheet("purchase_order");
+                  const tmpl = newFromTemplateModal.template;
+                  setNewFromTemplateModal(null);
+                  createFromUserTemplate(tmpl, newSpreadsheetName);
                 }}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
+                className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
               >
-                <div className="w-full h-28 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 flex flex-col p-3 gap-1.5 overflow-hidden">
-                  <div className="h-2 bg-blue-400 rounded w-3/4" />
-                  <div className="h-1 bg-blue-200 rounded w-full" />
-                  <div className="h-1 bg-blue-200 rounded w-5/6" />
-                  <div className="h-1 bg-blue-200 rounded w-full" />
-                  <div className="h-1 bg-blue-200 rounded w-4/5" />
-                  <div className="h-1 bg-blue-200 rounded w-full" />
-                </div>
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Purchase Order
-                </span>
-              </button>
-              {/* Invoice template */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSpreadsheetTemplateModal(false);
-                  createSpreadsheet("invoice");
-                }}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
-              >
-                <div className="w-full h-28 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 flex flex-col p-3 gap-1.5 overflow-hidden">
-                  <div className="h-2 bg-red-400 rounded w-2/3" />
-                  <div className="h-1 bg-red-200 rounded w-full" />
-                  <div className="h-1 bg-red-200 rounded w-4/5" />
-                  <div className="h-1 bg-red-200 rounded w-full" />
-                  <div className="h-1 bg-red-200 rounded w-3/4" />
-                  <div className="h-1 bg-red-200 rounded w-full" />
-                </div>
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Invoice
-                </span>
-              </button>
-              {/* Time Sheet template */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSpreadsheetTemplateModal(false);
-                  createSpreadsheet("timesheet");
-                }}
-                className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
-              >
-                <div className="w-full h-28 rounded-lg bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 flex flex-col p-3 gap-1.5 overflow-hidden">
-                  <div className="h-2 bg-purple-400 rounded w-3/5" />
-                  <div className="h-1 bg-purple-200 rounded w-full" />
-                  <div className="h-1 bg-purple-200 rounded w-full" />
-                  <div className="h-1 bg-purple-200 rounded w-full" />
-                  <div className="h-1 bg-purple-200 rounded w-full" />
-                  <div className="h-1 bg-purple-200 rounded w-full" />
-                </div>
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Weekly Time Sheet
-                </span>
+                {creatingFromTemplate ? "Creating…" : "Start Spreadsheet"}
               </button>
             </div>
           </div>
@@ -2894,16 +3176,24 @@ export default function DrivePanel({ projectId }: DrivePanelProps) {
         return (
           <SpreadsheetEditor
             spreadsheet={sheet}
-            onClose={() => setActiveSpreadsheetId(null)}
+            onClose={() => {
+              setActiveSpreadsheetId(null);
+              setSpreadsheetEditContext(null);
+            }}
             onDelete={(id) => {
               setActiveSpreadsheetId(null);
+              setSpreadsheetEditContext(null);
               deleteSpreadsheet(id);
             }}
+            editQuoteId={spreadsheetEditContext?.quoteId}
+            editVersion={spreadsheetEditContext?.version}
+            editQuoteNumber={spreadsheetEditContext?.quoteNumber}
             onUpdate={(updated) =>
               setSpreadsheets((prev) =>
                 prev.map((s) => (s.id === updated.id ? updated : s)),
               )
             }
+            onSaveAsTemplate={() => saveAsTemplate(sheet)}
           />
         );
       })()}

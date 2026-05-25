@@ -135,6 +135,11 @@ export default function DashboardPage() {
       }
 
       if (successCount > 0) {
+        void fetch("/api/ai/drive-index", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, maxDocs: 12 }),
+        }).catch(() => {});
         toast.success(
           `Uploaded ${successCount} file${successCount === 1 ? "" : "s"} to drive`,
         );

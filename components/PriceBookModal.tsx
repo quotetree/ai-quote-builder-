@@ -14,13 +14,14 @@ import Link from "next/link";
 interface PriceBookModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialView?: ViewMode;
 }
 
 type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping" | "product-detail";
 
 const NONE_PRODUCT_FAMILY_LABEL = "-None-";
 
-export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps) {
+export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBookModalProps) {
   const {
     products,
     loading,
@@ -72,8 +73,12 @@ export default function PriceBookModal({ isOpen, onClose }: PriceBookModalProps)
   );
 
   useEffect(() => {
-    if (!isOpen) {
-      // Reset all modal state when closing to show fresh list view on next open
+    if (isOpen) {
+      // Jump to the requested view when opening (e.g. "new-product" from spreadsheet Add new)
+      setViewMode(initialView ?? "list");
+      setEditingProduct(null);
+    } else {
+      // Reset all modal state when closing
       setSearchQuery("");
       setViewMode("list");
       setEditingProduct(null);

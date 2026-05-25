@@ -28,7 +28,7 @@ Generate professional quotes through natural chat conversations, manage your pri
 - ✅ **Sidebar Navigation** - Toggle sidebar with search, price book access, and project list
 - ✅ **Project Management** - Create and organize projects by product families
 - ✅ **3-Panel Workspace** - Chat, Drive, and Log panels in one interface
-- ✅ **AI Chat Interface** - Conversational quote generation with OpenAI GPT-4
+- ✅ **AI Assistant (Scope + Plan)** - Side-panel chat: Scope for proposal writing, Plan for bid strategy with attachments and optional web search
 - ✅ **Price Book** - CRUD operations for products with CSV bulk upload
 - ✅ **Quote Log** - Version control for all generated quotes
 - ✅ **PDF Export** - Professional, branded PDF quote downloads
@@ -39,10 +39,10 @@ Generate professional quotes through natural chat conversations, manage your pri
 ### User Workflow
 
 1. **Create Project** → Name your project and select product families
-2. **Chat with AI** → Describe scope of work, AI asks clarifying questions
-3. **Generate Quote** → AI creates quote with line items and pricing
-4. **Review & Refine** → Make adjustments conversationally
-5. **Commit to Log** → Save quote version to project log
+2. **Drive + Spreadsheet** → Build the quote in the spreadsheet (source of truth for pricing)
+3. **Chat (Scope mode)** → Generate scope, exclusions, assumptions, and summary from spreadsheet context
+4. **Chat (Plan mode)** → Ask strategy questions; attach PDFs/images (analyzed when you send); optional Tavily web search
+5. **Log** → Add New Quote opens a spreadsheet in Drive; version history for committed quotes
 6. **Download PDF** → Export professional quote for client
 
 ---
@@ -104,6 +104,7 @@ NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 OPENAI_API_KEY=your-openai-api-key
+TAVILY_API_KEY=your-tavily-api-key
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
@@ -133,6 +134,7 @@ In your Supabase project dashboard:
 - Run `supabase/migrations/20241113_create_drive_folders_notes.sql` and
   `supabase/migrations/20241113_add_project_document_update_policy.sql` to add
   nested folders, notes, and document rename permissions
+- Run `supabase/migrations/20260525100000_create_chat_attachments.sql` for Plan mode file uploads (or `supabase db push`)
 
 6. **Run the development server**
 
@@ -156,7 +158,8 @@ quote-tree-ai/
 │   │   ├── pricebook/            # Price book management
 │   │   └── layout.tsx            # Dashboard layout with sidebar
 │   ├── api/                       # API routes
-│   │   ├── chat/                 # AI chat endpoint
+│   │   ├── ai/                   # Scope, Plan, context, attachments
+│   │   ├── chat/                 # Legacy endpoint (410 — retired)
 │   │   └── quotes/
 │   │       └── pdf/              # PDF generation
 │   ├── auth/                      # Authentication pages
@@ -169,9 +172,9 @@ quote-tree-ai/
 │   └── globals.css                # Global styles
 ├── components/                     # React components
 │   ├── Sidebar.tsx                # Navigation sidebar
-│   ├── ProjectWorkspace.tsx       # 3-panel workspace container
-│   ├── ChatPanel.tsx              # AI chat interface
-│   ├── DrivePanel.tsx             # Document management
+│   ├── ProjectWorkspace.tsx       # Drive + Log + chat rail
+│   ├── project-chat/              # Scope + Plan assistant panels
+│   ├── DrivePanel.tsx             # Spreadsheets & documents
 │   └── LogPanel.tsx               # Quote version log
 ├── lib/                           # Utilities
 │   ├── supabase/                  # Supabase clients
@@ -235,6 +238,9 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # OpenAI
 OPENAI_API_KEY=sk-your-openai-key
+
+# Tavily (optional — enables web search in Plan chat)
+TAVILY_API_KEY=tvly-your-tavily-key
 
 # Site URL
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
@@ -303,6 +309,7 @@ Add these in **Settings → Environment Variables**:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OPENAI_API_KEY`
+- `TAVILY_API_KEY` (optional — Plan mode web search)
 - `NEXT_PUBLIC_SITE_URL` (your Vercel domain)
 - `NEXT_PUBLIC_SHARE_BASE_URL` (optional share link domain)
 

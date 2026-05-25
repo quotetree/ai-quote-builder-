@@ -27,6 +27,30 @@ const safeNumber = (value: unknown): number => {
 
 const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
+/**
+ * For a spreadsheet-sourced quote, proportionally allocate each SimpleMarkup's
+ * calculated_amount across eligible line items (by their share of base_total).
+ */
+function calcItemMarkup(
+  item: { product_name: string | null; line_total: number },
+  markups: any[]
+): number {
+  if (!Array.isArray(markups) || markups.length === 0) return 0;
+  // Only process SimpleMarkup entries (have calculated_amount at top level, no audited wrapper)
+  const simpleMarkups = markups.filter(
+    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
+  );
+  if (simpleMarkups.length === 0) return 0;
+  return simpleMarkups.reduce((total, m) => {
+    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
+    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
+      return total;
+    }
+    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
+    return total + share;
+  }, 0);
+}
+
 const getMarkupAmount = (quote: QuoteWithExtras): number => {
   const markups = quote.baked_markups ?? quote.bakedMarkups;
   if (!Array.isArray(markups) || markups.length === 0) return 0;
@@ -42,6 +66,12 @@ const getMarkupAmount = (quote: QuoteWithExtras): number => {
     const directTotal = safeNumber(markup?.totalMarkup ?? markup?.total_markup);
     if (directTotal > 0) {
       return sum + directTotal;
+    }
+
+    // SimpleMarkup format (spreadsheet-sourced quotes)
+    const calculatedAmount = safeNumber(markup?.calculated_amount);
+    if (calculatedAmount > 0) {
+      return sum + calculatedAmount;
     }
 
     if (Array.isArray(markup?.targets)) {
@@ -711,7 +741,22 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const handleEditQuote = async (quote: Quote) => {
     try {
       console.log('[LogPanel] Starting edit for quote:', quote.id);
-      
+
+      // ── Spreadsheet-sourced quote: open in Drive instead of chat ──────────
+      if (quote.spreadsheet_id) {
+        window.dispatchEvent(new CustomEvent('editSpreadsheetQuoteStarted', {
+          detail: {
+            quoteId: quote.id,
+            quoteNumber: quote.quote_number,
+            version: quote.version_number,
+            quoteName: quote.quote_name,
+            spreadsheetId: quote.spreadsheet_id,
+          }
+        }));
+        return;
+      }
+
+      // ── Chat-sourced quote: original flow ─────────────────────────────────
       // Import the edit session controller dynamically
       const { startEditSession, rehydrateEditSession } = await import("@/lib/editSessionController");
       
@@ -853,19 +898,18 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       return;
     }
 
-    // Dispatch event to switch to chat tab and clear chat
-    window.dispatchEvent(new CustomEvent('newQuoteStarted', {
-      detail: {
-        quoteName: newQuoteNameInput.trim(),
-        projectId
-      }
-    }));
+    const quoteName = newQuoteNameInput.trim();
 
-    // Close modal and reset input
+    window.dispatchEvent(
+      new CustomEvent("newSpreadsheetQuoteStarted", {
+        detail: { quoteName, projectId },
+      }),
+    );
+
     setShowNewQuoteModal(false);
     setNewQuoteNameInput("");
-    
-    toast.success(`Ready to create "${newQuoteNameInput.trim()}"`);
+
+    toast.success(`Creating spreadsheet for "${quoteName}"`);
   };
 
   if (loading) {
@@ -1175,20 +1219,30 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 <div>
                   <h4 className="font-semibold mb-3">Line Items</h4>
                   <div className="space-y-2">
-                    {selectedQuote.items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
-                      >
-                        <div>
-                          <p className="font-medium">{item.product_name}</p>
-                          <p className="text-sm text-gray-500">
-                            Qty: {item.quantity} × ${item.unit_price.toLocaleString()}
-                          </p>
+                    {selectedQuote.items.map((item) => {
+                      const bakedMarkups = (selectedQuote as any).baked_markups ?? (selectedQuote as any).bakedMarkups ?? [];
+                      const itemMarkup = roundToCents(calcItemMarkup(item, bakedMarkups));
+                      const displayTotal = item.line_total + itemMarkup;
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex justify-between items-start p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+                        >
+                          <div>
+                            <p className="font-medium">{item.product_name}</p>
+                            <p className="text-sm text-gray-500">
+                              Qty: {item.quantity} × ${item.unit_price.toLocaleString()}
+                            </p>
+                            {itemMarkup > 0.005 && (
+                              <p className="text-xs text-gray-400 italic mt-0.5">
+                                Includes Markup: +${formatCurrency(itemMarkup)}
+                              </p>
+                            )}
+                          </div>
+                          <p className="font-semibold">${formatCurrency(displayTotal)}</p>
                         </div>
-                        <p className="font-semibold">${item.line_total.toLocaleString()}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
