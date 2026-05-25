@@ -552,7 +552,9 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
   const [userTemplates, setUserTemplates] = useState<SpreadsheetTemplate[]>([]);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [confirmDeleteTemplateId, setConfirmDeleteTemplateId] = useState<string | null>(null);
-  const [newFromTemplateModal, setNewFromTemplateModal] = useState<{ template: SpreadsheetTemplate } | null>(null);
+  const [newSpreadsheetModal, setNewSpreadsheetModal] = useState<
+    { mode: "blank" } | { mode: "template"; template: SpreadsheetTemplate }
+  | null>(null);
   const [newSpreadsheetName, setNewSpreadsheetName] = useState("");
   const [creatingFromTemplate, setCreatingFromTemplate] = useState(false);
   const [menuOpenSpreadsheetId, setMenuOpenSpreadsheetId] = useState<string | null>(null);
@@ -2623,7 +2625,10 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
             {/* Blank */}
             <button
               type="button"
-              onClick={() => createSpreadsheet()}
+              onClick={() => {
+                setNewSpreadsheetName("");
+                setNewSpreadsheetModal({ mode: "blank" });
+              }}
               className="flex-shrink-0 flex flex-col items-center gap-2 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-green-500 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group w-[112px]"
             >
               <div className="w-full h-[72px] rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
@@ -2644,7 +2649,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
                       return;
                     }
                     setNewSpreadsheetName(tmpl.title);
-                    setNewFromTemplateModal({ template: tmpl });
+                    setNewSpreadsheetModal({ mode: "template", template: tmpl });
                   }}
                   className="w-full flex flex-col items-center gap-2 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-green-500 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 transition-all group"
                 >
@@ -3103,11 +3108,11 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       )}
 
 
-            {/* ── Create-from-template naming modal ─────────────────────── */}
-      {newFromTemplateModal && (
+            {/* ── New spreadsheet naming modal (blank or from template) ── */}
+      {newSpreadsheetModal && (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-          onClick={() => setNewFromTemplateModal(null)}
+          onClick={() => setNewSpreadsheetModal(null)}
         >
           <div
             className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-green-700 shadow-2xl w-full max-w-md p-6"
@@ -3119,7 +3124,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
               </h3>
               <button
                 type="button"
-                onClick={() => setNewFromTemplateModal(null)}
+                onClick={() => setNewSpreadsheetModal(null)}
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >
                 <X size={18} />
@@ -3135,19 +3140,27 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
               onChange={(e) => setNewSpreadsheetName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && newSpreadsheetName.trim()) {
-                  const tmpl = newFromTemplateModal.template;
-                  setNewFromTemplateModal(null);
-                  createFromUserTemplate(tmpl, newSpreadsheetName);
+                  const modal = newSpreadsheetModal;
+                  setNewSpreadsheetModal(null);
+                  if (modal.mode === "blank") {
+                    void createSpreadsheetWithTitle(newSpreadsheetName);
+                  } else {
+                    createFromUserTemplate(modal.template, newSpreadsheetName);
+                  }
                 }
-                if (e.key === "Escape") setNewFromTemplateModal(null);
+                if (e.key === "Escape") setNewSpreadsheetModal(null);
               }}
-              placeholder={`e.g., ${newFromTemplateModal.template.title} — Project A`}
+              placeholder={
+                newSpreadsheetModal.mode === "blank"
+                  ? "e.g., Kitchen remodel estimate"
+                  : `e.g., ${newSpreadsheetModal.template.title} — Project A`
+              }
               className="w-full px-4 py-3 rounded-xl border-2 border-green-600 focus:outline-none focus:ring-2 focus:ring-green-300 dark:bg-gray-800 dark:border-green-700 dark:text-gray-100 text-gray-900 text-sm mb-5"
             />
             <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setNewFromTemplateModal(null)}
+                onClick={() => setNewSpreadsheetModal(null)}
                 className="px-5 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
               >
                 Cancel
@@ -3156,9 +3169,13 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
                 type="button"
                 disabled={!newSpreadsheetName.trim() || creatingFromTemplate}
                 onClick={() => {
-                  const tmpl = newFromTemplateModal.template;
-                  setNewFromTemplateModal(null);
-                  createFromUserTemplate(tmpl, newSpreadsheetName);
+                  const modal = newSpreadsheetModal;
+                  setNewSpreadsheetModal(null);
+                  if (modal.mode === "blank") {
+                    void createSpreadsheetWithTitle(newSpreadsheetName);
+                  } else {
+                    createFromUserTemplate(modal.template, newSpreadsheetName);
+                  }
                 }}
                 className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
               >
