@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -43,6 +43,52 @@ interface SpreadsheetEditorProps {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const AUTOSAVE_DELAY = 900;
+const TITLE_INPUT_MAX_WIDTH_PX = 448; // ~28rem
+
+function SpreadsheetTitleField({
+  value,
+  onChange,
+  saving,
+  saved,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  saving: boolean;
+  saved: boolean;
+}) {
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [inputWidth, setInputWidth] = useState(48);
+
+  useLayoutEffect(() => {
+    const measured = measureRef.current?.offsetWidth ?? 48;
+    setInputWidth(Math.min(Math.max(measured + 4, 32), TITLE_INPUT_MAX_WIDTH_PX));
+  }, [value]);
+
+  return (
+    <div className="relative inline-flex items-center gap-2">
+      <span
+        ref={measureRef}
+        className="pointer-events-none absolute left-0 top-0 opacity-0 whitespace-pre text-lg font-semibold leading-none"
+        aria-hidden
+      >
+        {value || " "}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Spreadsheet title"
+        style={{ width: inputWidth }}
+        className="text-lg font-semibold leading-none bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 focus:ring-0 shrink-0"
+      />
+      {(saving || saved) && (
+        <span className="text-xs text-gray-400 whitespace-nowrap shrink-0">
+          {saving ? "Saving…" : "Saved"}
+        </span>
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -945,20 +991,18 @@ export default function SpreadsheetEditor({
 
       {/* ── Title bar ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="inline-flex items-center gap-3 min-w-0 shrink">
           <div className="w-8 h-8 rounded-lg bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0">
             <FileSpreadsheet size={16} />
           </div>
-          <input
-            type="text"
+          <SpreadsheetTitleField
             value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            aria-label="Spreadsheet title"
-            className="text-lg font-semibold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 min-w-0 w-64 focus:ring-0"
+            onChange={handleTitleChange}
+            saving={saving}
+            saved={saved}
           />
-          <span className="text-xs text-gray-400 flex-shrink-0 w-14">
-            {saving ? "Saving…" : saved ? "Saved" : ""}
-          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
           {templateMode && (
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
               <FileSpreadsheet size={12} />
@@ -971,8 +1015,6 @@ export default function SpreadsheetEditor({
               Editing v{editVersion} → v{editVersion + 1}
             </div>
           )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
           {!templateMode && onSaveAsTemplate && (
             <button
               type="button"

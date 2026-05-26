@@ -9,6 +9,12 @@ import { Product, Quote, QuoteItem } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 import toast from "react-hot-toast";
 import type { ProposalSignatureStatus } from "@/components/proposal-template/proposalTemplateTypes";
+import {
+  downloadProfitMarginPDF,
+  generateProfitMarginPDF,
+  profitMarginPdfFilename,
+} from "@/lib/profitMarginPdf";
+import { isSpreadsheetSourcedQuote } from "@/lib/spreadsheetFromQuote";
 
 type QuoteWithExtras = Quote & {
   baked_markups?: any[];
@@ -478,6 +484,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [originalProfitPlanningItems, setOriginalProfitPlanningItems] = useState<ProfitPlanningItem[]>([]);
   const [hasUnsavedProfitChanges, setHasUnsavedProfitChanges] = useState(false);
   const [isSavingProfitEdits, setIsSavingProfitEdits] = useState(false);
+  const [isDownloadingProfitPdf, setIsDownloadingProfitPdf] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState<string | null>(null);
   const [showRenameModal, setShowRenameModal] = useState<string | null>(null);
   const [newQuoteName, setNewQuoteName] = useState("");
@@ -495,6 +502,28 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       fetchQuotes(projectId);
     }
   }, [projectId]);
+
+  useEffect(() => {
+    const handleSpreadsheetLinked = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        quoteId: string;
+        spreadsheetId: string;
+        projectId?: string;
+      };
+      if (detail.projectId && detail.projectId !== projectId) return;
+
+      setSelectedQuote((prev) =>
+        prev?.id === detail.quoteId
+          ? { ...prev, spreadsheet_id: detail.spreadsheetId }
+          : prev,
+      );
+      if (projectId) void fetchQuotes(projectId);
+    };
+
+    window.addEventListener("quoteSpreadsheetLinked", handleSpreadsheetLinked as EventListener);
+    return () =>
+      window.removeEventListener("quoteSpreadsheetLinked", handleSpreadsheetLinked as EventListener);
+  }, [projectId, fetchQuotes]);
 
   // Load proposal signature statuses whenever the quote list changes
   useEffect(() => {
@@ -738,19 +767,53 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     setShowProfitBreakdown(true);
   };
 
+  const handleDownloadProfitMarginPDF = async () => {
+    if (!selectedQuote || !profitSnapshot) {
+      toast.error("No profit breakdown data available");
+      return;
+    }
+
+    setIsDownloadingProfitPdf(true);
+    try {
+      const blob = await generateProfitMarginPDF({
+        quoteName: selectedQuote.quote_name,
+        quoteNumber: selectedQuote.quote_number,
+        rows: profitSnapshot.rows.map((row) => ({
+          productName: row.productName,
+          listPrice: row.listPrice,
+          salesPrice: row.salesPrice,
+          discountPct: row.discountPct,
+          quantity: row.quantity,
+          lineRevenue: row.lineRevenue,
+          lineMarginPct: row.lineMarginPct,
+          lineProfit: row.lineProfit,
+        })),
+        totals: profitSnapshot.totals,
+      });
+      downloadProfitMarginPDF(blob, profitMarginPdfFilename(selectedQuote.quote_name));
+      toast.success("Profit margin PDF downloaded");
+    } catch (error) {
+      console.error("[LogPanel] Profit margin PDF error:", error);
+      toast.error("Failed to download profit margin PDF");
+    } finally {
+      setIsDownloadingProfitPdf(false);
+    }
+  };
+
   const handleEditQuote = async (quote: Quote) => {
     try {
       console.log('[LogPanel] Starting edit for quote:', quote.id);
 
-      // ── Spreadsheet-sourced quote: open in Drive instead of chat ──────────
-      if (quote.spreadsheet_id) {
+      // ── Spreadsheet-sourced quote: open in Drive (recreates sheet if deleted) ─
+      if (isSpreadsheetSourcedQuote(quote)) {
         window.dispatchEvent(new CustomEvent('editSpreadsheetQuoteStarted', {
           detail: {
             quoteId: quote.id,
             quoteNumber: quote.quote_number,
             version: quote.version_number,
             quoteName: quote.quote_name,
-            spreadsheetId: quote.spreadsheet_id,
+            spreadsheetId: quote.spreadsheet_id ?? null,
+            projectId,
           }
         }));
         return;
@@ -1246,6 +1309,19 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   </div>
                 </div>
               )}
+              {!showProfitBreakdown && canOpenProfitBreakdown && (
+                <div className="flex justify-end mt-6 pt-4 border-t border-gray-200 dark:border-gray-800">
+                  <button
+                    type="button"
+                    onClick={handleDownloadProfitMarginPDF}
+                    disabled={isDownloadingProfitPdf}
+                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Download size={16} />
+                    {isDownloadingProfitPdf ? "Generating…" : "Download PDF"}
+                  </button>
+                </div>
+              )}
               {showProfitBreakdown && profitSnapshot && (
                 <ProfitBreakdownView
                   rows={profitSnapshot.rows}
@@ -1256,6 +1332,8 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   hasUnsavedChanges={hasUnsavedProfitChanges}
                   onSaveEdits={handleSaveProfitEdits}
                   isSaving={isSavingProfitEdits}
+                  onDownloadPDF={handleDownloadProfitMarginPDF}
+                  isDownloadingPdf={isDownloadingProfitPdf}
                 />
               )}
             </div>
@@ -1403,9 +1481,22 @@ type ProfitBreakdownViewProps = {
   hasUnsavedChanges: boolean;
   onSaveEdits: () => void;
   isSaving: boolean;
+  onDownloadPDF: () => void;
+  isDownloadingPdf: boolean;
 };
 
-function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChange, onClose, hasUnsavedChanges, onSaveEdits, isSaving }: ProfitBreakdownViewProps) {
+function ProfitBreakdownView({
+  rows,
+  totals,
+  onListPriceChange,
+  onSalesPriceChange,
+  onClose,
+  hasUnsavedChanges,
+  onSaveEdits,
+  isSaving,
+  onDownloadPDF,
+  isDownloadingPdf,
+}: ProfitBreakdownViewProps) {
   // Track editing state for each field to allow free typing without constant reformatting
   const [editingFields, setEditingFields] = React.useState<Record<string, string>>({});
 
@@ -1616,7 +1707,7 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
         </div>
       </div>
 
-      <div className="flex justify-end gap-3 mt-6">
+      <div className="flex justify-end items-center gap-3 mt-6">
         {hasUnsavedChanges && (
           <button
             type="button"
@@ -1630,10 +1721,19 @@ function ProfitBreakdownView({ rows, totals, onListPriceChange, onSalesPriceChan
                 Saving...
               </>
             ) : (
-              'Save Edit'
+              "Save Edit"
             )}
           </button>
         )}
+        <button
+          type="button"
+          onClick={onDownloadPDF}
+          disabled={isDownloadingPdf || rows.length === 0}
+          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download size={16} />
+          {isDownloadingPdf ? "Generating…" : "Download PDF"}
+        </button>
         <button
           type="button"
           onClick={onClose}

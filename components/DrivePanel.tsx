@@ -953,14 +953,41 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
 
   // Open linked spreadsheet when editing a spreadsheet-sourced quote
   useEffect(() => {
-    const handleEditSpreadsheetQuote = (e: Event) => {
-      const { spreadsheetId, quoteId, quoteNumber, version } = (e as CustomEvent).detail;
+    const handleEditSpreadsheetQuote = async (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        spreadsheetId?: string | null;
+        quoteId: string;
+        quoteNumber: string;
+        version: number;
+        projectId?: string;
+      };
+      const { quoteId, quoteNumber, version, projectId: eventProjectId } = detail;
+      if (eventProjectId && eventProjectId !== projectId) return;
+
       setSpreadsheetEditContext({ quoteId, quoteNumber, version });
-      setActiveSpreadsheetId(spreadsheetId);
+
+      try {
+        const { ensureSpreadsheetForQuote } = await import("@/lib/spreadsheetFromQuote");
+        const sheet = await ensureSpreadsheetForQuote(supabase, quoteId);
+
+        setSpreadsheets((prev) =>
+          prev.some((s) => s.id === sheet.id) ? prev : [sheet, ...prev],
+        );
+        setActiveSpreadsheetId(sheet.id);
+
+        window.dispatchEvent(
+          new CustomEvent("quoteSpreadsheetLinked", {
+            detail: { quoteId, spreadsheetId: sheet.id, projectId },
+          }),
+        );
+      } catch (error: any) {
+        console.error("[DrivePanel] Failed to open quote spreadsheet:", error);
+        toast.error(error?.message || "Could not open spreadsheet for this quote");
+      }
     };
     window.addEventListener("editSpreadsheetQuoteStarted", handleEditSpreadsheetQuote as EventListener);
     return () => window.removeEventListener("editSpreadsheetQuoteStarted", handleEditSpreadsheetQuote as EventListener);
-  }, []);
+  }, [projectId, supabase]);
 
   // Log → Add New Quote: create spreadsheet and open editor
   useEffect(() => {

@@ -240,7 +240,42 @@ export function useQuotes(projectId?: string) {
 
       // Generate new quote number with leading zeros (Q-0001, Q-0002, etc.)
       const quoteNumber = `Q-${String(nextNumber).padStart(4, '0')}`;
-      
+      const duplicateQuoteName = `${originalQuote.quote_name} - Copy`;
+
+      // Duplicate linked spreadsheet so edit opens the copy, not the original
+      let duplicatedSpreadsheetId: string | null = null;
+      if (originalQuote.spreadsheet_id) {
+        const { data: originalSpreadsheet, error: sheetFetchError } = await supabase
+          .from("project_spreadsheets")
+          .select("*")
+          .eq("id", originalQuote.spreadsheet_id)
+          .single();
+
+        if (sheetFetchError) throw sheetFetchError;
+
+        if (originalSpreadsheet) {
+          const { data: newSpreadsheet, error: sheetInsertError } = await supabase
+            .from("project_spreadsheets")
+            .insert({
+              project_id: originalSpreadsheet.project_id,
+              user_id: user.id,
+              folder_id: originalSpreadsheet.folder_id,
+              title: duplicateQuoteName,
+              template_id: originalSpreadsheet.template_id,
+              sections: originalSpreadsheet.sections,
+              charges: originalSpreadsheet.charges,
+              baked_markups: originalSpreadsheet.baked_markups,
+              subtotal: originalSpreadsheet.subtotal,
+              total: originalSpreadsheet.total,
+            })
+            .select()
+            .single();
+
+          if (sheetInsertError) throw sheetInsertError;
+          duplicatedSpreadsheetId = newSpreadsheet?.id ?? null;
+        }
+      }
+
       // Create the duplicated quote with a new name
       const { data: newQuote, error: quoteError } = await supabase
         .from("quotes")
@@ -248,7 +283,7 @@ export function useQuotes(projectId?: string) {
           project_id: originalQuote.project_id,
           user_id: user.id,
           quote_number: quoteNumber,
-          quote_name: `${originalQuote.quote_name} - Copy`,
+          quote_name: duplicateQuoteName,
           version_number: 1,
           status: 'draft', // Always start as draft
           scope_of_work: originalQuote.scope_of_work,
@@ -260,6 +295,7 @@ export function useQuotes(projectId?: string) {
           total_price: originalQuote.total_price,
           profit_margin: originalQuote.profit_margin,
           expiration_date: originalQuote.expiration_date,
+          spreadsheet_id: duplicatedSpreadsheetId,
           // Copy additional fields if they exist
           ...(originalQuote.baked_markups && { baked_markups: originalQuote.baked_markups }),
           ...(originalQuote.charges && { charges: originalQuote.charges }),
