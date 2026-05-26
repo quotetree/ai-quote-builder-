@@ -21,6 +21,7 @@ import type {
 import { useProducts } from "@/hooks/useProducts";
 import PriceBookModal from "@/components/PriceBookModal";
 import toast from "react-hot-toast";
+import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -588,7 +589,7 @@ export default function SpreadsheetEditor({
       latestTitle: string,
       latestCharges: TaxCharge[],
       latestMarkups: SimpleMarkup[],
-    ) => {
+    ): Promise<boolean> => {
       const sub = latestSections.reduce(
         (acc, s) => acc + s.rows.reduce((a, r) => a + rowAmount(r), 0),
         0,
@@ -631,8 +632,10 @@ export default function SpreadsheetEditor({
           if (data) onUpdate?.(data as ProjectSpreadsheet);
         }
         setSaved(true);
+        return true;
       } catch {
         toast.error(templateMode ? "Failed to autosave template" : "Failed to autosave spreadsheet");
+        return false;
       } finally {
         setSaving(false);
       }
@@ -761,6 +764,19 @@ export default function SpreadsheetEditor({
 
   const [submitting, setSubmitting] = useState(false);
 
+  const saveTemplate = async () => {
+    setSubmitting(true);
+    try {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+      const ok = await persist(sections, title, taxCharges, markups);
+      if (!ok) return;
+      toast.success("Template saved");
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submitToQuoteLog = async () => {
     const lineItems = sections.flatMap((s) =>
       s.rows.filter((r) => r.product_name?.trim()),
@@ -793,25 +809,54 @@ export default function SpreadsheetEditor({
 
       let quoteNumber: string;
       let quoteId: string;
+      let savedVersion: number | null = null;
 
-      if (editQuoteId && editVersion && editQuoteNumber) {
-        // ── Version update: create a new version of the existing quote ────
-        const { data: quote, error: quoteError } = await supabase
+      // Resolve an existing quote: explicit edit context, or spreadsheet link
+      let existingQuoteId = editQuoteId ?? null;
+      let existingVersion = editVersion ?? null;
+      let existingQuoteNumber = editQuoteNumber ?? null;
+
+      if (!existingQuoteId) {
+        const { data: linked } = await supabase
           .from("quotes")
-          .insert({
+          .select("id, quote_number, version_number")
+          .eq("spreadsheet_id", spreadsheet.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (linked) {
+          existingQuoteId = linked.id;
+          existingVersion = linked.version_number ?? 1;
+          existingQuoteNumber = linked.quote_number;
+        }
+      }
+
+      if (existingQuoteId) {
+        // ── Update existing quote in place (same row, no duplicate in log) ──
+        const baseVersion = existingVersion ?? 1;
+        const newVersion = baseVersion + 1;
+
+        const { error: quoteError } = await supabase
+          .from("quotes")
+          .update({
             ...quotePayload,
-            project_id: spreadsheet.project_id,
-            user_id: user.id,
-            quote_number: editQuoteNumber,
-            version_number: editVersion + 1,
-            parent_quote_id: editQuoteId,
+            version_number: newVersion,
           })
-          .select()
-          .single();
+          .eq("id", existingQuoteId);
 
         if (quoteError) throw quoteError;
-        quoteNumber = editQuoteNumber;
-        quoteId = quote.id;
+
+        const { error: deleteItemsError } = await supabase
+          .from("quote_items")
+          .delete()
+          .eq("quote_id", existingQuoteId);
+
+        if (deleteItemsError) throw deleteItemsError;
+
+        quoteId = existingQuoteId;
+        quoteNumber = existingQuoteNumber ?? "";
+        savedVersion = newVersion;
       } else {
         // ── New quote ─────────────────────────────────────────────────────
         const { count } = await supabase
@@ -835,9 +880,9 @@ export default function SpreadsheetEditor({
 
         if (quoteError) throw quoteError;
         quoteId = quote.id;
+        savedVersion = 1;
       }
 
-      // Insert quote items
       const quoteItems = lineItems.map((row, index) => ({
         quote_id: quoteId,
         product_id: row.product_id ?? null,
@@ -857,14 +902,16 @@ export default function SpreadsheetEditor({
 
       if (itemsError) throw itemsError;
 
+      await updateProjectTimestamp(spreadsheet.project_id);
+
       window.dispatchEvent(
         new CustomEvent("quoteCreated", {
           detail: { projectId: spreadsheet.project_id, quoteId },
         }),
       );
 
-      const label = editQuoteId
-        ? `${quoteNumber} v${editVersion! + 1} saved successfully!`
+      const label = savedVersion && savedVersion > 1
+        ? `${quoteNumber} v${savedVersion} saved successfully!`
         : `Quote ${quoteNumber} saved successfully!`;
       toast.success(label);
       onClose();
@@ -934,9 +981,13 @@ export default function SpreadsheetEditor({
 
   const deleteRow = (sectionId: string, rowId: string) =>
     updateSections(
-      sections.map((s) =>
-        s.id !== sectionId ? s : { ...s, rows: s.rows.filter((r) => r.id !== rowId) },
-      ),
+      sections.map((s) => {
+        if (s.id !== sectionId) return s;
+        if (s.rows.length <= 1) {
+          return { ...s, rows: [emptyRow()] };
+        }
+        return { ...s, rows: s.rows.filter((r) => r.id !== rowId) };
+      }),
     );
 
   // ── Row drag-and-drop (within same section) ───────────────────────────────
@@ -1009,10 +1060,11 @@ export default function SpreadsheetEditor({
               Editing template
             </div>
           )}
-          {editQuoteId && editVersion && (
+          {editQuoteId && (
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
               <FileSpreadsheet size={12} />
-              Editing v{editVersion} → v{editVersion + 1}
+              Editing {editQuoteNumber ?? "quote"}
+              {editVersion != null ? ` (v${editVersion})` : ""}
             </div>
           )}
           {!templateMode && onSaveAsTemplate && (
@@ -1262,14 +1314,20 @@ export default function SpreadsheetEditor({
             </div>
           </div>
 
-          {/* Submit button */}
+          {/* Save / Submit */}
           <button
             type="button"
-            onClick={submitToQuoteLog}
+            onClick={templateMode ? saveTemplate : submitToQuoteLog}
             disabled={submitting}
             className="px-6 py-1.5 rounded-xl bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors shadow-sm flex-shrink-0"
           >
-            {submitting ? "Saving…" : editQuoteId ? `Save as v${(editVersion ?? 1) + 1}` : "Submit"}
+            {submitting
+              ? "Saving…"
+              : templateMode
+                ? "Save"
+                : editQuoteId
+                  ? "Save changes"
+                  : "Submit"}
           </button>
         </div>
       </div>
