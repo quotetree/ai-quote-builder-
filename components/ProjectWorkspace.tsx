@@ -269,6 +269,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
               projectId={projectId}
               projectName={currentProjectName}
               activeSpreadsheetId={activeSpreadsheetId}
+              onClose={selectDriveTab}
               className="w-[min(380px,38vw)] shrink-0"
             />
           )}

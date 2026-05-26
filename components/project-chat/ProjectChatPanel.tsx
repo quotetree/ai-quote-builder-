@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, Compass, ChevronDown, RotateCcw } from "lucide-react";
+import { FileText, Compass, ChevronDown, RotateCcw, X } from "lucide-react";
 import ScopeModePanel from "./ScopeModePanel";
 import PlanModePanel, { type ModeChatPanelHandle } from "./PlanModePanel";
 
@@ -12,6 +12,7 @@ interface ProjectChatPanelProps {
   projectName: string;
   activeSpreadsheetId?: string | null;
   className?: string;
+  onClose?: () => void;
 }
 
 export default function ProjectChatPanel({
@@ -19,6 +20,7 @@ export default function ProjectChatPanel({
   projectName,
   activeSpreadsheetId = null,
   className = "",
+  onClose,
 }: ProjectChatPanelProps) {
   const [mode, setMode] = useState<ChatAssistantMode>("plan");
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
@@ -78,15 +80,28 @@ export default function ProjectChatPanel({
           </p>
           <p className="text-sm font-semibold text-gray-900 truncate">{projectName}</p>
         </div>
-        <button
-          type="button"
-          onClick={handleClearChat}
-          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600"
-          title="Clear conversation"
-        >
-          <RotateCcw size={14} className="shrink-0" aria-hidden />
-          Clear chat
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={handleClearChat}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600"
+            title="Clear conversation"
+          >
+            <RotateCcw size={14} className="shrink-0" aria-hidden />
+            Clear chat
+          </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center justify-center rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+              aria-label="Close chat"
+              title="Close chat"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
       </header>
 
       {contextError && (

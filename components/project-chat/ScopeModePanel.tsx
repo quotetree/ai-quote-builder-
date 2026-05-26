@@ -220,12 +220,6 @@ const ScopeModePanel = forwardRef<ModeChatPanelHandle, ScopeModePanelProps>(
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {loadingMessages && (
-          <p className="text-xs text-gray-500 flex items-center gap-2">
-            <Loader2 size={14} className="animate-spin" /> Loading conversation…
-          </p>
-        )}
-
         {error && (
           <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
         )}
