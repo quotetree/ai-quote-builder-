@@ -15,6 +15,7 @@ import type {
   ProjectSpreadsheet,
   SpreadsheetSection,
   SpreadsheetRow,
+  SpreadsheetTemplate,
   Product,
 } from "@/types/database";
 import { useProducts } from "@/hooks/useProducts";
@@ -26,8 +27,11 @@ import toast from "react-hot-toast";
 interface SpreadsheetEditorProps {
   spreadsheet: ProjectSpreadsheet;
   onClose: () => void;
-  onDelete: (id: string) => void;
-  onUpdate: (updated: ProjectSpreadsheet) => void;
+  onDelete?: (id: string) => void;
+  onUpdate?: (updated: ProjectSpreadsheet) => void;
+  /** When set, autosave writes to spreadsheet_templates instead of project_spreadsheets */
+  templateMode?: boolean;
+  onTemplateUpdate?: (updated: SpreadsheetTemplate) => void;
   /** When set, the editor is in "edit existing quote" mode */
   editQuoteId?: string;
   editVersion?: number;
@@ -437,6 +441,8 @@ export default function SpreadsheetEditor({
   onClose,
   onDelete,
   onUpdate,
+  templateMode = false,
+  onTemplateUpdate,
   onSaveAsTemplate,
   editQuoteId,
   editVersion,
@@ -547,29 +553,45 @@ export default function SpreadsheetEditor({
         latestMarkups.reduce((a, m) => a + (m.calculated_amount ?? 0), 0);
       setSaving(true);
       try {
-        const { data, error } = await supabase
-          .from("project_spreadsheets")
-          .update({
-            title: latestTitle,
-            sections: latestSections,
-            charges: latestCharges,
-            baked_markups: latestMarkups as unknown as never,
-            subtotal: sub,
-            total: tot,
-          })
-          .eq("id", spreadsheet.id)
-          .select()
-          .single();
-        if (error) throw error;
-        if (data) onUpdate(data as ProjectSpreadsheet);
+        if (templateMode) {
+          const { data, error } = await supabase
+            .from("spreadsheet_templates")
+            .update({
+              title: latestTitle,
+              sections: latestSections,
+              charges: latestCharges,
+              baked_markups: latestMarkups as unknown as never,
+            })
+            .eq("id", spreadsheet.id)
+            .select()
+            .single();
+          if (error) throw error;
+          if (data) onTemplateUpdate?.(data as SpreadsheetTemplate);
+        } else {
+          const { data, error } = await supabase
+            .from("project_spreadsheets")
+            .update({
+              title: latestTitle,
+              sections: latestSections,
+              charges: latestCharges,
+              baked_markups: latestMarkups as unknown as never,
+              subtotal: sub,
+              total: tot,
+            })
+            .eq("id", spreadsheet.id)
+            .select()
+            .single();
+          if (error) throw error;
+          if (data) onUpdate?.(data as ProjectSpreadsheet);
+        }
         setSaved(true);
       } catch {
-        toast.error("Failed to autosave spreadsheet");
+        toast.error(templateMode ? "Failed to autosave template" : "Failed to autosave spreadsheet");
       } finally {
         setSaving(false);
       }
     },
-    [spreadsheet.id, supabase, onUpdate],
+    [spreadsheet.id, supabase, onUpdate, onTemplateUpdate, templateMode],
   );
 
   const scheduleSave = useCallback(
@@ -937,6 +959,12 @@ export default function SpreadsheetEditor({
           <span className="text-xs text-gray-400 flex-shrink-0 w-14">
             {saving ? "Saving…" : saved ? "Saved" : ""}
           </span>
+          {templateMode && (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
+              <FileSpreadsheet size={12} />
+              Editing template
+            </div>
+          )}
           {editQuoteId && editVersion && (
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
               <FileSpreadsheet size={12} />
@@ -945,7 +973,7 @@ export default function SpreadsheetEditor({
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {onSaveAsTemplate && (
+          {!templateMode && onSaveAsTemplate && (
             <button
               type="button"
               onClick={onSaveAsTemplate}
@@ -956,18 +984,20 @@ export default function SpreadsheetEditor({
               Save as template
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm("Delete this spreadsheet? This cannot be undone.")) {
-                onDelete(spreadsheet.id);
-              }
-            }}
-            className="p-2 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-            aria-label="Delete spreadsheet"
-          >
-            <Trash2 size={16} />
-          </button>
+          {!templateMode && onDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm("Delete this spreadsheet? This cannot be undone.")) {
+                  onDelete(spreadsheet.id);
+                }
+              }}
+              className="p-2 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              aria-label="Delete spreadsheet"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}

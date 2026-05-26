@@ -289,6 +289,24 @@ function buildTemplatesections(templateId?: SpreadsheetTemplateId): SpreadsheetS
   ];
 }
 
+function templateToEditorSpreadsheet(template: SpreadsheetTemplate): ProjectSpreadsheet {
+  return {
+    id: template.id,
+    project_id: "",
+    user_id: template.user_id,
+    folder_id: null,
+    title: template.title,
+    template_id: null,
+    sections: template.sections,
+    charges: template.charges,
+    baked_markups: template.baked_markups,
+    subtotal: 0,
+    total: 0,
+    created_at: template.created_at,
+    updated_at: template.updated_at,
+  };
+}
+
 const OFFICE_MIME_TYPES = new Set([
   "application/msword",
   "application/vnd.ms-word.document.macroenabled.12",
@@ -556,9 +574,10 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
     { mode: "blank" } | { mode: "template"; template: SpreadsheetTemplate }
   | null>(null);
   const [newSpreadsheetName, setNewSpreadsheetName] = useState("");
-  const [creatingFromTemplate, setCreatingFromTemplate] = useState(false);
   const [menuOpenSpreadsheetId, setMenuOpenSpreadsheetId] = useState<string | null>(null);
   const [activeSpreadsheetId, setActiveSpreadsheetId] = useState<string | null>(null);
+  const [activeEditingTemplate, setActiveEditingTemplate] = useState<SpreadsheetTemplate | null>(null);
+  const spreadsheetEditorOpen = !!activeSpreadsheetId || !!activeEditingTemplate;
   useEffect(() => {
     onActiveSpreadsheetChange?.(activeSpreadsheetId);
   }, [activeSpreadsheetId, onActiveSpreadsheetChange]);
@@ -1072,6 +1091,21 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
     }
   }
 
+  function closeNewSpreadsheetModal() {
+    setNewSpreadsheetModal(null);
+    setNewSpreadsheetName("");
+  }
+
+  function openCreatedSpreadsheet(data: ProjectSpreadsheet) {
+    setSpreadsheets((prev) => {
+      if (prev.some((s) => s.id === data.id)) return prev;
+      return [data, ...prev];
+    });
+    setActiveSpreadsheetId(data.id);
+    setActiveEditingTemplate(null);
+    void loadFolderContents(currentFolderId);
+  }
+
   const breadcrumbsUi = (
     <div className="flex flex-wrap items-center gap-1 text-sm text-gray-500">
       <button
@@ -1288,13 +1322,10 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         .single();
       if (error) throw error;
       if (data) {
-        await loadFolderContents(currentFolderId);
-        setActiveSpreadsheetId(data.id);
+        openCreatedSpreadsheet(data as ProjectSpreadsheet);
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create spreadsheet");
-    } finally {
-      setCreatingFromTemplate(false);
     }
   }
 
@@ -1323,8 +1354,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         .single();
       if (error) throw error;
       if (data) {
-        await loadFolderContents(currentFolderId);
-        setActiveSpreadsheetId(data.id);
+        openCreatedSpreadsheet(data as ProjectSpreadsheet);
         toast.success(`Opened "${sheetTitle}"`);
       }
     } catch (error: any) {
@@ -1392,7 +1422,6 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
   }
 
   async function createFromUserTemplate(template: SpreadsheetTemplate, customTitle?: string) {
-    setCreatingFromTemplate(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -1414,8 +1443,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         .single();
       if (error) throw error;
       if (data) {
-        await loadFolderContents(currentFolderId);
-        setActiveSpreadsheetId(data.id);
+        openCreatedSpreadsheet(data as ProjectSpreadsheet);
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to create spreadsheet");
@@ -2615,7 +2643,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       </div>
 
       {/* ── Spreadsheet template strip ────────────────────────── */}
-      {!activeSpreadsheetId && (
+      {!spreadsheetEditorOpen && (
         <div className="mb-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-3">
             New Spreadsheet
@@ -2719,13 +2747,13 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         </div>
       )}
 
-      {!activeSpreadsheetId && uploading && uploadProgress?.name && (
+      {!spreadsheetEditorOpen && uploading && uploadProgress?.name && (
         <p className="text-sm text-gray-500 mb-4">
           Uploading <span className="font-medium">{uploadProgress.name}</span>
         </p>
       )}
 
-      {!activeSpreadsheetId && (loading ? (
+      {!spreadsheetEditorOpen && (loading ? (
         <div className="flex items-center justify-center h-[60vh]">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
@@ -3112,7 +3140,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       {newSpreadsheetModal && (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
-          onClick={() => setNewSpreadsheetModal(null)}
+          onClick={closeNewSpreadsheetModal}
         >
           <div
             className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-green-700 shadow-2xl w-full max-w-md p-6"
@@ -3124,7 +3152,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
               </h3>
               <button
                 type="button"
-                onClick={() => setNewSpreadsheetModal(null)}
+                onClick={closeNewSpreadsheetModal}
                 className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >
                 <X size={18} />
@@ -3141,14 +3169,15 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
               onKeyDown={(e) => {
                 if (e.key === "Enter" && newSpreadsheetName.trim()) {
                   const modal = newSpreadsheetModal;
-                  setNewSpreadsheetModal(null);
+                  const title = newSpreadsheetName;
+                  closeNewSpreadsheetModal();
                   if (modal.mode === "blank") {
-                    void createSpreadsheetWithTitle(newSpreadsheetName);
+                    void createSpreadsheetWithTitle(title);
                   } else {
-                    createFromUserTemplate(modal.template, newSpreadsheetName);
+                    void createFromUserTemplate(modal.template, title);
                   }
                 }
-                if (e.key === "Escape") setNewSpreadsheetModal(null);
+                if (e.key === "Escape") closeNewSpreadsheetModal();
               }}
               placeholder={
                 newSpreadsheetModal.mode === "blank"
@@ -3157,29 +3186,37 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
               }
               className="w-full px-4 py-3 rounded-xl border-2 border-green-600 focus:outline-none focus:ring-2 focus:ring-green-300 dark:bg-gray-800 dark:border-green-700 dark:text-gray-100 text-gray-900 text-sm mb-5"
             />
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex items-center justify-end gap-2">
+              {newSpreadsheetModal.mode === "template" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const modal = newSpreadsheetModal;
+                    closeNewSpreadsheetModal();
+                    setActiveEditingTemplate(modal.template);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-700 text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30 dark:text-green-400 dark:border-green-600 text-sm font-medium whitespace-nowrap transition-colors"
+                >
+                  <Pencil size={14} />
+                  Edit Template
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setNewSpreadsheetModal(null)}
-                className="px-5 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!newSpreadsheetName.trim() || creatingFromTemplate}
+                disabled={!newSpreadsheetName.trim()}
                 onClick={() => {
                   const modal = newSpreadsheetModal;
-                  setNewSpreadsheetModal(null);
+                  const title = newSpreadsheetName;
+                  closeNewSpreadsheetModal();
                   if (modal.mode === "blank") {
-                    void createSpreadsheetWithTitle(newSpreadsheetName);
+                    void createSpreadsheetWithTitle(title);
                   } else {
-                    createFromUserTemplate(modal.template, newSpreadsheetName);
+                    void createFromUserTemplate(modal.template, title);
                   }
                 }}
-                className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium whitespace-nowrap transition-colors"
               >
-                {creatingFromTemplate ? "Creating…" : "Start Spreadsheet"}
+                Start Spreadsheet
               </button>
             </div>
           </div>
@@ -3187,6 +3224,20 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       )}
 
       {/* ── Active spreadsheet editor ─────────────────────────────────── */}
+      {activeEditingTemplate && (
+        <SpreadsheetEditor
+          spreadsheet={templateToEditorSpreadsheet(activeEditingTemplate)}
+          templateMode
+          onClose={() => setActiveEditingTemplate(null)}
+          onTemplateUpdate={(updated) => {
+            setActiveEditingTemplate(updated);
+            setUserTemplates((prev) =>
+              prev.map((t) => (t.id === updated.id ? updated : t)),
+            );
+          }}
+        />
+      )}
+
       {activeSpreadsheetId && (() => {
         const sheet = spreadsheets.find((s) => s.id === activeSpreadsheetId);
         if (!sheet) return null;
