@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2, Layout, ArrowLeft } from "lucide-react";
-import ProposalTemplateModal from "@/components/proposal-template/ProposalTemplateModal";
+import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2, ArrowLeft, Layout } from "lucide-react";
+import ProposalTemplateModal, {
+  type ProposalAutoSaveStatus,
+} from "@/components/proposal-template/ProposalTemplateModal";
 import { useQuotes } from "@/hooks/useQuotes";
 import { useProducts } from "@/hooks/useProducts";
 import { Product, Quote, QuoteItem } from "@/types/database";
@@ -493,6 +495,13 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   const [newQuoteNameInput, setNewQuoteNameInput] = useState("");
   const [proposalQuoteId, setProposalQuoteId] = useState<string | null>(null);
   const [proposalQuoteName, setProposalQuoteName] = useState<string>("");
+  const [editChoiceQuote, setEditChoiceQuote] = useState<Quote | null>(null);
+  const [downloadChoiceQuote, setDownloadChoiceQuote] = useState<Quote | null>(null);
+  const [downloadMenuPosition, setDownloadMenuPosition] = useState({ top: 0, right: 0 });
+  const [proposalAutoSave, setProposalAutoSave] = useState<ProposalAutoSaveStatus>({
+    saving: false,
+    saved: true,
+  });
 
   // Signature status per quote (quoteId → ProposalSignatureStatus)
   const [signaturesMap, setSignaturesMap] = useState<Record<string, ProposalSignatureStatus>>({});
@@ -882,7 +891,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     }
   };
 
-  const handleDownloadPDF = async (quote: Quote) => {
+  const handleDownloadQuotePDF = async (quote: Quote) => {
     try {
       const response = await fetch("/api/quotes/pdf", {
         method: "POST",
@@ -899,11 +908,64 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       a.download = `${quote.quote_number}_${quote.quote_name}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      
-      toast.success("PDF downloaded");
-    } catch (error) {
-      toast.error("Failed to download PDF");
+
+      toast.success("Quote PDF downloaded");
+    } catch {
+      toast.error("Failed to download quote PDF");
     }
+  };
+
+  const handleDownloadProposalPDF = async (quote: Quote) => {
+    const toastId = toast.loading("Generating proposal PDF…");
+    try {
+      const response = await fetch("/api/generate-proposal-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId: quote.id, quoteName: quote.quote_name }),
+      });
+
+      if (!response.ok) {
+        let msg = "Failed to generate proposal PDF";
+        try {
+          const j = await response.json();
+          if (j?.error) msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        if (response.status === 403) {
+          msg = "No proposal yet. Open Edit Proposal and save a proposal first.";
+        }
+        throw new Error(msg);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = quote.quote_name.replace(/[^\w\-. ]/g, "").trim() || "proposal";
+      a.download = `${safeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Proposal PDF downloaded", { id: toastId });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to download proposal PDF";
+      toast.error(msg, { id: toastId });
+    }
+  };
+
+  const openDownloadChoice = (quote: Quote, e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setDownloadMenuPosition({
+      top: rect.top - 4,
+      right: window.innerWidth - rect.right,
+    });
+    setDownloadChoiceQuote(quote);
+  };
+
+  const openEditProposal = (quote: Quote) => {
+    setProposalQuoteId(quote.id);
+    setProposalQuoteName(quote.quote_name);
   };
 
   const handleDuplicateQuote = async (quoteId: string) => {
@@ -1000,7 +1062,14 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             Back to Quotes
           </button>
           <span className="text-gray-300 dark:text-gray-600 select-none">|</span>
-          <span className="text-sm text-gray-500 dark:text-gray-400 truncate">{proposalQuoteName}</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400 truncate min-w-0">
+            {proposalQuoteName}
+          </span>
+          {(proposalAutoSave.saving || proposalAutoSave.saved) && (
+            <span className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0">
+              {proposalAutoSave.saving ? "Saving…" : "Saved"}
+            </span>
+          )}
         </div>
         {/* Inline proposal builder — reuses ProposalTemplateModal with inline + quoteId */}
         <div className="flex-1 overflow-hidden">
@@ -1010,7 +1079,11 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             quoteId={proposalQuoteId}
             quoteName={proposalQuoteName}
             projectId={projectId}
-            onClose={() => setProposalQuoteId(null)}
+            onAutoSaveStatusChange={setProposalAutoSave}
+            onClose={() => {
+              setProposalQuoteId(null);
+              setProposalAutoSave({ saving: false, saved: true });
+            }}
           />
         </div>
       </div>
@@ -1100,22 +1173,20 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex gap-2 items-center">
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownloadPDF(quote);
-                          }}
+                          onClick={(e) => openDownloadChoice(quote, e)}
                           className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                          title="Download PDF"
+                          title="Download"
                         >
                           <Download size={16} />
                         </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleEditQuote(quote);
+                            if (quote.is_editing) return;
+                            setEditChoiceQuote(quote);
                           }}
                           className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={quote.is_editing ? "Quote is being edited" : "Edit Quote"}
+                          title={quote.is_editing ? "Quote is being edited" : "Edit"}
                           disabled={quote.is_editing}
                         >
                           <Edit size={16} />
@@ -1126,7 +1197,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                               e.stopPropagation();
                               const rect = e.currentTarget.getBoundingClientRect();
                               setMenuPosition({
-                                top: rect.bottom + 4,
+                                top: rect.top - 4,
                                 right: window.innerWidth - rect.right,
                               });
                               setShowActionsMenu(showActionsMenu === quote.id ? null : quote.id);
@@ -1143,6 +1214,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                                 zIndex: 9999,
                                 top: `${menuPosition.top}px`,
                                 right: `${menuPosition.right}px`,
+                                transform: "translateY(-100%)",
                               }}
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -1154,7 +1226,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                                 className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
                               >
                                 <Copy size={16} className="flex-shrink-0" />
-                                <span>Duplicate Quote</span>
+                                <span>Duplicate</span>
                               </button>
                               <button
                                 onClick={(e) => {
@@ -1166,19 +1238,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                                 className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
                               >
                                 <FileEdit size={16} className="flex-shrink-0" />
-                                <span>Rename Quote</span>
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setProposalQuoteId(quote.id);
-                                  setProposalQuoteName(quote.quote_name);
-                                  setShowActionsMenu(null);
-                                }}
-                                className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3"
-                              >
-                                <Layout size={16} className="flex-shrink-0" />
-                                <span>Build Proposal</span>
+                                <span>Rename</span>
                               </button>
                               <button
                                 onClick={(e) => {
@@ -1188,7 +1248,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                                 className="w-full px-4 py-2.5 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
                               >
                                 <Trash2 size={16} className="flex-shrink-0" />
-                                <span>Delete Quote</span>
+                                <span>Delete</span>
                               </button>
                             </div>
                           )}
@@ -1403,6 +1463,100 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit choice: quote vs proposal */}
+      {editChoiceQuote && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setEditChoiceQuote(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-sm w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Edit</h3>
+              <button
+                onClick={() => setEditChoiceQuote(null)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 truncate">
+              {editChoiceQuote.quote_number} — {editChoiceQuote.quote_name}
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const q = editChoiceQuote;
+                  setEditChoiceQuote(null);
+                  void handleEditQuote(q);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+              >
+                <Edit size={18} className="text-gray-500 flex-shrink-0" />
+                Edit Quote
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openEditProposal(editChoiceQuote);
+                  setEditChoiceQuote(null);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+              >
+                <Layout size={18} className="text-green-600 flex-shrink-0" />
+                Edit Proposal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Download choice: quote vs proposal */}
+      {downloadChoiceQuote && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={() => setDownloadChoiceQuote(null)}
+          />
+          <div
+            className="fixed bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-2 min-w-[180px]"
+            style={{
+              zIndex: 9999,
+              top: `${downloadMenuPosition.top}px`,
+              right: `${downloadMenuPosition.right}px`,
+              transform: "translateY(-100%)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const q = downloadChoiceQuote;
+                setDownloadChoiceQuote(null);
+                void handleDownloadQuotePDF(q);
+              }}
+              className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              Download Quote
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const q = downloadChoiceQuote;
+                setDownloadChoiceQuote(null);
+                void handleDownloadProposalPDF(q);
+              }}
+              className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              Download Proposal
+            </button>
+          </div>
+        </>
       )}
 
       {/* New Quote Modal */}

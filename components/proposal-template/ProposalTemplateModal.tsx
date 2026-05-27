@@ -15,6 +15,7 @@ import ProposalFieldManager from "./ProposalFieldManager";
 import ProposalExportRenderer from "./ProposalExportRenderer";
 import ProposalRecipientsPanel from "./ProposalRecipientsPanel";
 import ProposalShareLinkModal from "./ProposalShareLinkModal";
+import ProposalGeneratorModal, { ProposalOption } from "./ProposalGeneratorModal";
 
 type ActiveTab = "editor" | "view" | "recipients";
 
@@ -109,6 +110,45 @@ function replacePlaceholdersInPages(
   return result;
 }
 
+function proposalHasContent(pages: TemplatePage[]): boolean {
+  return pages.some(
+    (p) =>
+      Boolean(p.backgroundImage) ||
+      (Array.isArray(p.elements) && p.elements.length > 0)
+  );
+}
+
+/** Deep-clone proposal pages from another quote, remapping quote-linked pages to the target quote. */
+function cloneProposalPagesForQuote(
+  pages: TemplatePage[],
+  sourceQuoteId: string,
+  targetQuoteId: string,
+  targetQuoteName: string,
+  targetQuoteNumber: string
+): TemplatePage[] {
+  return pages.map((page) => {
+    const remapQuote =
+      page.quoteId === sourceQuoteId || page.quoteId === QUOTE_PLACEHOLDER_ID;
+    return {
+      ...page,
+      id: crypto.randomUUID(),
+      elements: page.elements.map((el) => ({ ...el, id: crypto.randomUUID() })),
+      ...(remapQuote
+        ? {
+            quoteId: targetQuoteId,
+            quoteName: targetQuoteName,
+            quoteNumber: targetQuoteNumber,
+          }
+        : {}),
+    };
+  });
+}
+
+export interface ProposalAutoSaveStatus {
+  saving: boolean;
+  saved: boolean;
+}
+
 interface ProposalTemplateModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -120,9 +160,21 @@ interface ProposalTemplateModalProps {
   quoteName?: string;
   /** When provided, quotes from this project are loaded for the quote element picker. */
   projectId?: string;
+  /** Inline proposal builder: reports autosave state for the header "Saving…" / "Saved" label. */
+  onAutoSaveStatusChange?: (status: ProposalAutoSaveStatus) => void;
 }
 
-export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId, quoteName, projectId }: ProposalTemplateModalProps) {
+const PROPOSAL_AUTOSAVE_DELAY_MS = 800;
+
+export default function ProposalTemplateModal({
+  isOpen,
+  onClose,
+  inline,
+  quoteId,
+  quoteName,
+  projectId,
+  onAutoSaveStatusChange,
+}: ProposalTemplateModalProps) {
   const supabase = useMemo(() => createClient(), []);
   const { organizationId } = useOrganizationRole();
 
@@ -164,8 +216,13 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
   const [recipients, setRecipients] = useState<ProposalRecipient[]>([]);
   // Tracks whether recipients have been loaded from DB — skips auto-save on initial population
   const recipientsLoadedRef = useRef(false);
-  // "idle" | "saving" | "saved"
-  const [recipientsAutoSave, setRecipientsAutoSave] = useState<"idle" | "saving" | "saved">("idle");
+  // Tracks whether pages have been loaded or persisted — skips page auto-save until then
+  const pagesLoadedRef = useRef(false);
+  const [proposalSaving, setProposalSaving] = useState(false);
+  const [proposalSaved, setProposalSaved] = useState(true);
+  const autosaveReadyRef = useRef(false);
+  /** JSON snapshot after load — skip autosave until content diverges from this. */
+  const pristineSnapshotRef = useRef<string | null>(null);
   // Share-link modal
   const [shareLinkOpen, setShareLinkOpen] = useState(false);
   // Signature status (refreshed after links are generated or on load)
@@ -195,6 +252,14 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
   const [changeQuotePageIndex, setChangeQuotePageIndex] = useState<number | null>(null);
   const [changeQuotePageOldId, setChangeQuotePageOldId] = useState<string>("");
   const [changeQuotePageSearch, setChangeQuotePageSearch] = useState("");
+  const [showProposalGenerator, setShowProposalGenerator] = useState(false);
+  const [orgProposals, setOrgProposals] = useState<ProposalOption[]>([]);
+  const [loadingOrgProposals, setLoadingOrgProposals] = useState(false);
+  const [currentQuoteMeta, setCurrentQuoteMeta] = useState<{
+    quote_number: string;
+    quote_name: string;
+    project_name: string;
+  } | null>(null);
   const {
     pages,
     activePageIndex,
@@ -384,6 +449,13 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
     const load = async () => {
       setInitializing(true);
       setTemplateId(null);
+      setShowProposalGenerator(false);
+      pagesLoadedRef.current = false;
+      autosaveReadyRef.current = false;
+      pristineSnapshotRef.current = null;
+      setProposalSaved(true);
+      setProposalSaving(false);
+      let deferAutosave = false;
       try {
         if (quoteId) {
           // ── Quote-specific proposal ──
@@ -407,6 +479,28 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
             setRecipients(parsedRecipients);
             // Mark as loaded so the auto-save effect doesn't fire for this initial set
             recipientsLoadedRef.current = true;
+
+            // Empty row (e.g. created before pages were persisted) — re-show generator
+            if (!proposalHasContent(parsed)) {
+              const { data: q } = await supabase
+                .from("quotes")
+                .select("quote_number, quote_name, projects(project_name)")
+                .eq("id", quoteId)
+                .single();
+              if (q) {
+                const proj = q.projects as { project_name?: string } | null;
+                setCurrentQuoteMeta({
+                  quote_number: q.quote_number ?? "",
+                  quote_name: q.quote_name ?? "",
+                  project_name: proj?.project_name ?? "",
+                });
+              }
+              deferAutosave = true;
+              setShowProposalGenerator(true);
+              return;
+            }
+
+            pagesLoadedRef.current = true;
 
             // If there are placeholder pages, await the real quote PNG generation
             // before releasing the loading state so the user never sees a flash
@@ -435,6 +529,11 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
               resetPages(parsed);
             }
 
+            pristineSnapshotRef.current = JSON.stringify({
+              pages: parsed,
+              recipients: parsedRecipients,
+            });
+
             // Load existing signature status, signer links, and completed-doc URLs
             const { data: sig } = await supabase
               .from("proposal_signatures")
@@ -456,40 +555,24 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
               setAuditTrailUrl((sig as Record<string, unknown> | null)?.audit_trail_url as string ?? null);
             }
           } else if (mounted) {
-            // No record yet — seed from org template so content is pre-populated
-            const { data: orgTpl } = await supabase
-              .from("proposal_templates")
-              .select("pages")
-              .eq("organization_id", organizationId)
-              .maybeSingle();
-            const seedPages: TemplatePage[] = Array.isArray(orgTpl?.pages) ? orgTpl!.pages : [];
-
-            // Same flash-prevention as above: await PNG generation when the seed
-            // template contains placeholder quote pages.
-            const seedHasPlaceholders = seedPages.some((p) => p.quoteId === QUOTE_PLACEHOLDER_ID);
-            if (seedHasPlaceholders && organizationId) {
-              try {
-                const { data: q } = await supabase
-                  .from("quotes")
-                  .select("quote_number, quote_name")
-                  .eq("id", quoteId)
-                  .single();
-                if (q && mounted) {
-                  const { urls, heights } = await uploadQuotePNGs(quoteId, organizationId, supabase);
-                  if (mounted) {
-                    resetPages(replacePlaceholdersInPages(seedPages, urls, heights, quoteId, q.quote_name, q.quote_number));
-                  }
-                } else if (seedPages.length > 0 && mounted) {
-                  resetPages(seedPages);
-                }
-              } catch (err) {
-                console.warn("[load] Placeholder replacement (seed) failed:", err);
-                if (seedPages.length > 0 && mounted) resetPages(seedPages);
-              }
-            } else if (seedPages.length > 0) {
-              resetPages(seedPages);
+            // First-time proposal — show generator picker instead of auto-seeding
+            const { data: q } = await supabase
+              .from("quotes")
+              .select("quote_number, quote_name, projects(project_name)")
+              .eq("id", quoteId)
+              .single();
+            if (q) {
+              const proj = q.projects as { project_name?: string } | null;
+              setCurrentQuoteMeta({
+                quote_number: q.quote_number ?? "",
+                quote_name: q.quote_name ?? "",
+                project_name: proj?.project_name ?? "",
+              });
             }
-            // templateId stays null; first Save will insert a new quote_proposals row
+            setRecipients([]);
+            recipientsLoadedRef.current = true;
+            deferAutosave = true;
+            setShowProposalGenerator(true);
           }
         } else {
           // ── Org-level template (original path — unchanged) ──
@@ -510,13 +593,250 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
       } catch (err: any) {
         console.warn("Could not load proposal:", err?.message ?? err);
       } finally {
-        if (mounted) setInitializing(false);
+        if (mounted) {
+          setInitializing(false);
+          if (quoteId && !deferAutosave) {
+            autosaveReadyRef.current = true;
+            setProposalSaved(true);
+            setProposalSaving(false);
+          }
+        }
       }
     };
 
     load();
     return () => { mounted = false; };
   }, [isOpen, organizationId, quoteId, supabase, resetPages]);
+
+  const persistQuoteProposal = useCallback(
+    async (
+      pagesToSave: TemplatePage[],
+      recipientsToSave: ProposalRecipient[]
+    ): Promise<boolean> => {
+      if (!quoteId || !organizationId) return false;
+      try {
+        const payload = {
+          pages: pagesToSave,
+          recipients: recipientsToSave,
+          updated_at: new Date().toISOString(),
+        };
+        if (templateId) {
+          const { error } = await supabase
+            .from("quote_proposals")
+            .update(payload)
+            .eq("id", templateId);
+          if (error) throw error;
+        } else {
+          const { data, error } = await supabase
+            .from("quote_proposals")
+            .insert({
+              quote_id: quoteId,
+              organization_id: organizationId,
+              ...payload,
+            })
+            .select("id")
+            .single();
+          if (error) throw error;
+          if (data) setTemplateId(data.id);
+        }
+        pagesLoadedRef.current = true;
+        return true;
+      } catch (err) {
+        console.error("[persistQuoteProposal]", err);
+        return false;
+      }
+    },
+    [quoteId, organizationId, templateId, supabase]
+  );
+
+  const applyOrgTemplateSeed = useCallback(async () => {
+    if (!quoteId || !organizationId) return;
+    setInitializing(true);
+    try {
+      const { data: orgTpl } = await supabase
+        .from("proposal_templates")
+        .select("pages")
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      const seedPages: TemplatePage[] = Array.isArray(orgTpl?.pages) ? orgTpl!.pages : [];
+
+      const { data: q } = await supabase
+        .from("quotes")
+        .select("quote_number, quote_name")
+        .eq("id", quoteId)
+        .single();
+
+      const seedHasPlaceholders = seedPages.some((p) => p.quoteId === QUOTE_PLACEHOLDER_ID);
+      let finalPages: TemplatePage[] = seedPages;
+      if (seedHasPlaceholders && q) {
+        const { urls, heights } = await uploadQuotePNGs(quoteId, organizationId, supabase);
+        finalPages = replacePlaceholdersInPages(
+          seedPages,
+          urls,
+          heights,
+          quoteId,
+          q.quote_name,
+          q.quote_number
+        );
+      }
+
+      resetPages(finalPages);
+      setRecipients([]);
+      recipientsLoadedRef.current = true;
+      setShowProposalGenerator(false);
+
+      const saved = await persistQuoteProposal(finalPages, []);
+      if (!saved) {
+        toast.error("Proposal loaded but could not be saved. Use Save before leaving.");
+      } else {
+        autosaveReadyRef.current = true;
+        pristineSnapshotRef.current = JSON.stringify({ pages: finalPages, recipients: [] });
+        setProposalSaved(true);
+        setProposalSaving(false);
+      }
+    } catch (err) {
+      console.warn("[applyOrgTemplateSeed]", err);
+      toast.error("Could not load proposal template");
+    } finally {
+      setInitializing(false);
+    }
+  }, [quoteId, organizationId, supabase, resetPages, persistQuoteProposal]);
+
+  const applyFromExistingProposal = useCallback(
+    async (sourceProposalId: string) => {
+      if (!quoteId || !organizationId) return;
+      setInitializing(true);
+      try {
+        const { data: source, error } = await supabase
+          .from("quote_proposals")
+          .select("pages, quote_id, quotes(quote_number, quote_name)")
+          .eq("id", sourceProposalId)
+          .single();
+        if (error || !source) throw error ?? new Error("Proposal not found");
+
+        const sourcePages: TemplatePage[] = Array.isArray(source.pages) ? source.pages : [];
+        const sourceQuoteId = source.quote_id as string;
+
+        const { data: targetQ } = await supabase
+          .from("quotes")
+          .select("quote_number, quote_name")
+          .eq("id", quoteId)
+          .single();
+        if (!targetQ) throw new Error("Quote not found");
+
+        let cloned = cloneProposalPagesForQuote(
+          sourcePages,
+          sourceQuoteId,
+          quoteId,
+          targetQ.quote_name ?? "",
+          targetQ.quote_number ?? ""
+        );
+
+        const hasPlaceholders = cloned.some((p) => p.quoteId === QUOTE_PLACEHOLDER_ID);
+        if (hasPlaceholders) {
+          const { urls, heights } = await uploadQuotePNGs(quoteId, organizationId, supabase);
+          cloned = replacePlaceholdersInPages(
+            cloned,
+            urls,
+            heights,
+            quoteId,
+            targetQ.quote_name,
+            targetQ.quote_number
+          );
+        }
+
+        resetPages(cloned);
+        setRecipients([]);
+        recipientsLoadedRef.current = true;
+        setShowProposalGenerator(false);
+
+        const saved = await persistQuoteProposal(cloned, []);
+        if (!saved) {
+          toast.error("Proposal copied but could not be saved. Use Save before leaving.");
+        } else {
+          autosaveReadyRef.current = true;
+          pristineSnapshotRef.current = JSON.stringify({ pages: cloned, recipients: [] });
+          setProposalSaved(true);
+          setProposalSaving(false);
+        }
+
+        const srcQuotes = source.quotes as { quote_number?: string } | null;
+        toast.success(
+          srcQuotes?.quote_number
+            ? `Started from proposal #${srcQuotes.quote_number}`
+            : "Proposal copied"
+        );
+      } catch (err) {
+        console.warn("[applyFromExistingProposal]", err);
+        toast.error("Could not copy proposal");
+      } finally {
+        setInitializing(false);
+      }
+    },
+    [quoteId, organizationId, supabase, resetPages, persistQuoteProposal]
+  );
+
+  // Fill project name for current quote when not returned from the quotes join
+  useEffect(() => {
+    if (!showProposalGenerator || !projectId || currentQuoteMeta?.project_name) return;
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase
+        .from("projects")
+        .select("project_name")
+        .eq("id", projectId)
+        .maybeSingle();
+      if (mounted && data?.project_name) {
+        setCurrentQuoteMeta((prev) =>
+          prev ? { ...prev, project_name: data.project_name } : prev
+        );
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [showProposalGenerator, projectId, currentQuoteMeta?.project_name, supabase]);
+
+  // Load org proposals for the first-time generator picker
+  useEffect(() => {
+    if (!showProposalGenerator || !organizationId || !quoteId) return;
+    let mounted = true;
+    (async () => {
+      setLoadingOrgProposals(true);
+      try {
+        const { data } = await supabase
+          .from("quote_proposals")
+          .select("id, quote_id, quotes!inner(quote_number, quote_name, projects(project_name))")
+          .eq("organization_id", organizationId)
+          .neq("quote_id", quoteId)
+          .order("updated_at", { ascending: false });
+        if (mounted && data) {
+          setOrgProposals(
+            data.map((row) => {
+              const q = row.quotes as {
+                quote_number?: string;
+                quote_name?: string;
+                projects?: { project_name?: string } | null;
+              };
+              return {
+                id: row.id as string,
+                quote_id: row.quote_id as string,
+                quote_name: q?.quote_name ?? "",
+                project_name: q?.projects?.project_name ?? "",
+              };
+            })
+          );
+        }
+      } catch (err) {
+        console.warn("[org proposals]", err);
+      } finally {
+        if (mounted) setLoadingOrgProposals(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [showProposalGenerator, organizationId, quoteId, supabase]);
 
   // Load available quotes for the quote element picker
   useEffect(() => {
@@ -626,45 +946,38 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
     }
   }, [customVariables, organizationId]);
 
-  // Auto-save recipients to DB whenever they change (debounced 800 ms)
+  // Auto-save proposal (pages + recipients) whenever content changes
   useEffect(() => {
     if (!quoteId || !organizationId) return;
-
-    // Skip the very first population from the DB load
+    if (!autosaveReadyRef.current) return;
+    if (!pagesLoadedRef.current) return;
     if (!recipientsLoadedRef.current) return;
+    if (!proposalHasContent(pages)) return;
 
-    setRecipientsAutoSave("saving");
+    const snapshot = JSON.stringify({ pages, recipients });
+    if (pristineSnapshotRef.current !== null && snapshot === pristineSnapshotRef.current) {
+      return;
+    }
+    pristineSnapshotRef.current = null;
+
+    setProposalSaved(false);
+    setProposalSaving(true);
 
     const timer = setTimeout(async () => {
-      try {
-        if (templateId) {
-          const { error } = await supabase
-            .from("quote_proposals")
-            .update({ recipients, updated_at: new Date().toISOString() })
-            .eq("id", templateId);
-          if (error) throw error;
-        } else {
-          // Proposal row doesn't exist yet — create it with current pages + recipients
-          const { data, error } = await supabase
-            .from("quote_proposals")
-            .insert({ quote_id: quoteId, organization_id: organizationId, pages, recipients })
-            .select("id")
-            .single();
-          if (error) throw error;
-          if (data) setTemplateId(data.id);
-        }
-        setRecipientsAutoSave("saved");
-        // Clear the "Saved" indicator after 2 s
-        setTimeout(() => setRecipientsAutoSave("idle"), 2000);
-      } catch (err) {
-        console.error("[auto-save recipients] Failed:", err);
-        setRecipientsAutoSave("idle");
+      const ok = await persistQuoteProposal(pages, recipients);
+      setProposalSaving(false);
+      if (ok) {
+        setProposalSaved(true);
       }
-    }, 800);
+    }, PROPOSAL_AUTOSAVE_DELAY_MS);
 
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recipients]);
+  }, [pages, recipients, quoteId, organizationId, persistQuoteProposal]);
+
+  useEffect(() => {
+    if (!quoteId || !onAutoSaveStatusChange) return;
+    onAutoSaveStatusChange({ saving: proposalSaving, saved: proposalSaved });
+  }, [quoteId, proposalSaving, proposalSaved, onAutoSaveStatusChange]);
 
   // Close send dropdown on outside click
   useEffect(() => {
@@ -737,22 +1050,12 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
     setLoading(true);
     try {
       if (quoteId) {
-        // ── Save to quote_proposals (per-quote) ──
-        if (templateId) {
-          const { error } = await supabase
-            .from("quote_proposals")
-            .update({ pages, recipients, updated_at: new Date().toISOString() })
-            .eq("id", templateId);
-          if (error) throw error;
-        } else {
-          const { data, error } = await supabase
-            .from("quote_proposals")
-            .insert({ quote_id: quoteId, organization_id: organizationId, pages, recipients })
-            .select("id")
-            .single();
-          if (error) throw error;
-          setTemplateId(data.id);
-        }
+        const ok = await persistQuoteProposal(pages, recipients);
+        if (!ok) throw new Error("Failed to save proposal");
+        autosaveReadyRef.current = true;
+        pristineSnapshotRef.current = JSON.stringify({ pages, recipients });
+        setProposalSaved(true);
+        setProposalSaving(false);
         toast.success("Proposal saved!");
       } else {
         // ── Save to proposal_templates (org-level, original path — unchanged) ──
@@ -793,28 +1096,8 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
    * Returns true on success, false on failure.
    */
   const doSilentSave = async (): Promise<boolean> => {
-    if (!organizationId || !quoteId) return false;
-    try {
-      if (templateId) {
-        const { error } = await supabase
-          .from("quote_proposals")
-          .update({ pages, recipients, updated_at: new Date().toISOString() })
-          .eq("id", templateId);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("quote_proposals")
-          .insert({ quote_id: quoteId, organization_id: organizationId, pages, recipients })
-          .select("id")
-          .single();
-        if (error) throw error;
-        setTemplateId(data.id);
-      }
-      return true;
-    } catch (err) {
-      console.error("[doSilentSave] Failed:", err);
-      return false;
-    }
+    if (!proposalHasContent(pages)) return false;
+    return persistQuoteProposal(pages, recipients);
   };
 
   const handleDownloadPDF = async () => {
@@ -1399,16 +1682,10 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
               >
                 <Users size={15} />
                 Recipients
-                {recipients.length > 0 && recipientsAutoSave === "idle" && (
+                {recipients.length > 0 && (
                   <span className="ml-0.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-full w-4 h-4 flex items-center justify-center">
                     {recipients.length}
                   </span>
-                )}
-                {recipientsAutoSave === "saving" && (
-                  <span className="ml-0.5 text-xs text-gray-400 font-normal">saving…</span>
-                )}
-                {recipientsAutoSave === "saved" && (
-                  <span className="ml-0.5 text-xs text-green-600 font-normal">saved ✓</span>
                 )}
               </button>
             )}
@@ -1866,6 +2143,25 @@ export default function ProposalTemplateModal({ isOpen, onClose, inline, quoteId
               </div>
             </div>
           </div>
+        )}
+
+        {/* First-time proposal generator */}
+        {showProposalGenerator && quoteId && (
+          <ProposalGeneratorModal
+            currentProjectName={currentQuoteMeta?.project_name}
+            currentQuoteName={currentQuoteMeta?.quote_name ?? quoteName}
+            proposals={orgProposals}
+            loading={loadingOrgProposals || initializing}
+            onUseOrgTemplate={() => void applyOrgTemplateSeed()}
+            onSelectProposal={(id) => void applyFromExistingProposal(id)}
+            onClose={() => {
+              if (pages.length === 0 && !templateId) {
+                onClose();
+              } else {
+                setShowProposalGenerator(false);
+              }
+            }}
+          />
         )}
 
         {/* Edit document confirmation modal */}
