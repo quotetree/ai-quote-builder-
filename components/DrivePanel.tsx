@@ -1071,6 +1071,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         .from("project_documents")
         .select("*")
         .eq("project_id", projectId)
+        .neq("doc_source", "plan_upload")
         .order("created_at", { ascending: false });
       folderId
         ? docQuery.eq("folder_id", folderId)

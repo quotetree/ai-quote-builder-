@@ -35,13 +35,19 @@ interface ScopeMessageBubbleProps {
   role: "user" | "assistant";
   content: string;
   sources?: { title: string; url: string }[];
+  documentCitations?: { fileName: string; pageStart: number; pageEnd: number }[];
   attachments?: MessageAttachmentMeta[];
+}
+
+function formatPageRef(pageStart: number, pageEnd: number): string {
+  return pageStart === pageEnd ? `p. ${pageStart}` : `pp. ${pageStart}–${pageEnd}`;
 }
 
 export default function ScopeMessageBubble({
   role,
   content,
   sources,
+  documentCitations,
   attachments,
 }: ScopeMessageBubbleProps) {
   const isUser = role === "user";
@@ -61,6 +67,18 @@ export default function ScopeMessageBubble({
         ) : (
           <>
             {renderSimpleMarkdown(content)}
+            {documentCitations && documentCitations.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-1.5">Document references</p>
+                <ul className="space-y-1">
+                  {documentCitations.map((c, i) => (
+                    <li key={`${c.fileName}-${c.pageStart}-${i}`} className="text-xs text-gray-700">
+                      {c.fileName} — {formatPageRef(c.pageStart, c.pageEnd)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {sources && sources.length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-200">
                 <p className="text-xs font-semibold text-gray-600 mb-1.5">Sources</p>

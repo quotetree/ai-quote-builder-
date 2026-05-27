@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Loader2, X } from "lucide-react";
+import { FileText, Loader2, RotateCcw, X } from "lucide-react";
 
 export type PlanAttachmentPhase =
   | "local"
@@ -12,6 +12,7 @@ export type PlanAttachmentPhase =
 export interface PlanAttachmentChip {
   clientId: string;
   serverId?: string;
+  documentId?: string;
   file_name: string;
   mime_type: string;
   previewUrl?: string;
@@ -22,26 +23,28 @@ export interface PlanAttachmentChip {
 interface PlanAttachmentChipsProps {
   attachments: PlanAttachmentChip[];
   onRemove: (clientId: string) => void;
+  onRetry?: (clientId: string) => void;
 }
 
 const phaseLabel: Record<PlanAttachmentPhase, string> = {
-  local: "ready",
-  uploading: "uploading",
-  processing: "uploading",
-  ready: "ready",
-  error: "failed",
+  local: "Starting…",
+  uploading: "Uploading",
+  processing: "Processing",
+  ready: "Ready",
+  error: "Failed",
 };
 
 export default function PlanAttachmentChips({
   attachments,
   onRemove,
+  onRetry,
 }: PlanAttachmentChipsProps) {
   if (attachments.length === 0) return null;
 
   return (
     <div className="flex flex-wrap gap-2">
       {attachments.map((att) => {
-        const busy = att.phase === "uploading";
+        const busy = att.phase === "uploading" || att.phase === "processing";
 
         return (
           <div
@@ -79,6 +82,18 @@ export default function PlanAttachmentChips({
                 {phaseLabel[att.phase]}
               </p>
             </div>
+
+            {att.phase === "error" && onRetry && att.documentId && (
+              <button
+                type="button"
+                onClick={() => onRetry(att.clientId)}
+                className="text-gray-500 hover:text-green-700 shrink-0"
+                aria-label={`Retry processing ${att.file_name}`}
+                title="Retry processing"
+              >
+                <RotateCcw size={12} />
+              </button>
+            )}
 
             <button
               type="button"

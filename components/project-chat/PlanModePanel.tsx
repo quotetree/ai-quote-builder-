@@ -10,7 +10,15 @@ import {
 } from "react";
 import { Loader2, Send, Paperclip } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import type { ChatMessage, PlanChatSource } from "@/types/database";
+import type {
+  ChatMessage,
+  PlanChatSource,
+  PlanDocumentCitation,
+} from "@/types/database";
+import {
+  buildPlanPdfStoragePath,
+  validatePlanUpload,
+} from "@/lib/ai/planFileValidation";
 import ScopeMessageBubble from "./ScopeMessageBubble";
 import PlanAttachmentChips, {
   type PlanAttachmentChip,
@@ -87,15 +95,35 @@ function getMessageSources(msg: ChatMessage): PlanChatSource[] | undefined {
   );
 }
 
+function getMessageDocumentCitations(
+  msg: ChatMessage,
+): PlanDocumentCitation[] | undefined {
+  const raw = msg.metadata?.document_citations;
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter(
+    (c): c is PlanDocumentCitation =>
+      typeof c === "object" &&
+      c !== null &&
+      typeof (c as PlanDocumentCitation).fileName === "string" &&
+      typeof (c as PlanDocumentCitation).pageStart === "number" &&
+      typeof (c as PlanDocumentCitation).pageEnd === "number",
+  );
+}
+
 async function parsePlanNdjsonStream(
   body: ReadableStream<Uint8Array>,
   onChunk: (text: string) => void,
-): Promise<{ full: string; sources: PlanChatSource[] }> {
+): Promise<{
+  full: string;
+  sources: PlanChatSource[];
+  documentCitations: PlanDocumentCitation[];
+}> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
   let sources: PlanChatSource[] = [];
+  let documentCitations: PlanDocumentCitation[] = [];
 
   const processLine = (line: string) => {
     const trimmed = line.trim();
@@ -104,6 +132,7 @@ async function parsePlanNdjsonStream(
       type?: string;
       text?: string;
       sources?: PlanChatSource[];
+      documentCitations?: PlanDocumentCitation[];
       error?: string;
     };
     if (evt.type === "chunk" && evt.text) {
@@ -111,6 +140,7 @@ async function parsePlanNdjsonStream(
       onChunk(full);
     } else if (evt.type === "done") {
       sources = evt.sources ?? [];
+      documentCitations = evt.documentCitations ?? [];
     } else if (evt.type === "error") {
       throw new Error(evt.error || "Stream error");
     }
@@ -130,7 +160,7 @@ async function parsePlanNdjsonStream(
     processLine(buffer);
   }
 
-  return { full, sources };
+  return { full, sources, documentCitations };
 }
 
 async function readStreamError(res: Response): Promise<string> {
@@ -159,6 +189,9 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
   const [busy, setBusy] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingSources, setStreamingSources] = useState<PlanChatSource[]>([]);
+  const [streamingDocumentCitations, setStreamingDocumentCitations] = useState<
+    PlanDocumentCitation[]
+  >([]);
   const [pendingAttachments, setPendingAttachments] = useState<PlanAttachmentChip[]>([]);
   const pendingAttachmentsRef = useRef<PlanAttachmentChip[]>([]);
   const [attachmentCache, setAttachmentCache] = useState<Record<string, MessageAttachmentMeta>>({});
@@ -243,7 +276,118 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
     [],
   );
 
-  const uploadOneFile = useCallback(
+  const pollDocumentStatus = useCallback(
+    async (clientId: string, attachmentId: string) => {
+      updateAttachment(clientId, { phase: "processing", parse_error: null });
+
+      const deadline = Date.now() + 10 * 60 * 1000;
+      const startedAt = Date.now();
+      let longWaitNotified = false;
+
+      while (Date.now() < deadline) {
+        const res = await fetch(
+          `/api/ai/documents/status?attachmentId=${encodeURIComponent(attachmentId)}`,
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error ?? "Could not check document status");
+        }
+
+        const status = body.processingStatus as string;
+        if (status === "ready") {
+          updateAttachment(clientId, {
+            phase: "ready",
+            parse_error: null,
+          });
+          return;
+        }
+        if (status === "failed") {
+          throw new Error(
+            body.parseError ??
+              "Document processing failed. Try again or use a different PDF.",
+          );
+        }
+
+        // pending / processing — keep UI in sync until truly ready
+        updateAttachment(clientId, { phase: "processing" });
+
+        if (!longWaitNotified && Date.now() - startedAt > 2 * 60 * 1000) {
+          longWaitNotified = true;
+          setError((prev) =>
+            prev ??
+              "Large documents can take several minutes to process. You can keep waiting or ask questions once Ready appears.",
+          );
+        }
+
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+
+      throw new Error(
+        "Document processing is taking longer than expected. Try Retry or check back shortly.",
+      );
+    },
+    [updateAttachment],
+  );
+
+  const uploadPdfFile = useCallback(
+    async (clientId: string, file: File) => {
+      updateAttachment(clientId, { phase: "uploading" });
+      const storagePath = buildPlanPdfStoragePath(projectId, file.name);
+      const mimeType = file.type || "application/pdf";
+
+      const { error: uploadError } = await supabase.storage
+        .from("project-files")
+        .upload(storagePath, file, {
+          contentType: mimeType,
+          cacheControl: "3600",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      const res = await fetch("/api/ai/documents/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          storagePath,
+          fileName: file.name,
+          mimeType,
+          fileSize: file.size,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error ?? `Registration failed (${res.status})`);
+      }
+
+      const attachment = body.attachment as {
+        id: string;
+        file_name: string;
+        mime_type: string;
+      };
+      const documentId = body.documentId as string;
+
+      if (!attachment?.id) {
+        throw new Error("Upload succeeded but no attachment id returned");
+      }
+
+      updateAttachment(clientId, {
+        serverId: attachment.id,
+        documentId,
+        file_name: attachment.file_name,
+        mime_type: attachment.mime_type,
+        phase: "processing",
+      });
+
+      await pollDocumentStatus(clientId, attachment.id);
+    },
+    [projectId, supabase, updateAttachment, pollDocumentStatus],
+  );
+
+  const uploadLegacyFile = useCallback(
     async (clientId: string, file: File) => {
       updateAttachment(clientId, { phase: "uploading" });
 
@@ -251,38 +395,66 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
       formData.append("projectId", projectId);
       formData.append("file", file);
 
-      try {
-        const res = await fetch("/api/ai/attachments", {
-          method: "POST",
-          body: formData,
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(
-            body.error ||
-              (res.status === 413
-                ? `${file.name} is too large (max 20MB)`
-                : `Upload failed (${res.status})`),
-          );
-        }
+      const res = await fetch("/api/ai/attachments", {
+        method: "POST",
+        body: formData,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          body.error ||
+            (res.status === 413
+              ? `${file.name} is too large (max 20MB)`
+              : `Upload failed (${res.status})`),
+        );
+      }
 
-        const row = body.attachment as {
-          id: string;
-          file_name: string;
-          mime_type: string;
-          parse_status: string;
-          parse_error?: string | null;
-        };
+      const row = body.attachment as {
+        id: string;
+        file_name: string;
+        mime_type: string;
+        parse_status: string;
+        parse_error?: string | null;
+      };
 
-        if (!row?.id) throw new Error("Upload succeeded but no attachment id returned");
+      if (!row?.id) throw new Error("Upload succeeded but no attachment id returned");
 
+      updateAttachment(clientId, {
+        serverId: row.id,
+        file_name: row.file_name,
+        mime_type: row.mime_type,
+        phase: row.parse_status === "error" ? "error" : "ready",
+        parse_error: row.parse_error,
+      });
+    },
+    [projectId, updateAttachment],
+  );
+
+  const uploadOneFile = useCallback(
+    async (clientId: string, file: File, isPdfHint?: boolean) => {
+      updateAttachment(clientId, { phase: "uploading" });
+
+      const validation = validatePlanUpload(file);
+      if (!validation.ok) {
         updateAttachment(clientId, {
-          serverId: row.id,
-          file_name: row.file_name,
-          mime_type: row.mime_type,
-          phase: row.parse_status === "error" ? "error" : "ready",
-          parse_error: row.parse_error,
+          phase: "error",
+          parse_error: validation.error,
         });
+        setError((prev) => {
+          const msg = validation.error ?? "Invalid file";
+          return prev ? `${prev} ${msg}` : msg;
+        });
+        return;
+      }
+
+      try {
+        const usePdfPipeline =
+          validation.route === "pdf_pipeline" || isPdfHint === true;
+        if (usePdfPipeline) {
+          await uploadPdfFile(clientId, file);
+        } else {
+          await uploadLegacyFile(clientId, file);
+        }
       } catch (e) {
         updateAttachment(clientId, {
           phase: "error",
@@ -294,7 +466,39 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
         });
       }
     },
-    [projectId, updateAttachment],
+    [uploadPdfFile, uploadLegacyFile, updateAttachment],
+  );
+
+  const retryAttachmentProcessing = useCallback(
+    async (clientId: string) => {
+      const att = pendingAttachmentsRef.current.find((a) => a.clientId === clientId);
+      if (!att?.documentId || !att.serverId) return;
+
+      updateAttachment(clientId, { phase: "processing", parse_error: null });
+      setError(null);
+
+      try {
+        const res = await fetch("/api/ai/documents/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId,
+            documentId: att.documentId,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error ?? "Retry failed");
+        }
+        await pollDocumentStatus(clientId, att.serverId);
+      } catch (e) {
+        updateAttachment(clientId, {
+          phase: "error",
+          parse_error: e instanceof Error ? e.message : "Retry failed",
+        });
+      }
+    },
+    [projectId, pollDocumentStatus, updateAttachment],
   );
 
   const persistMessage = async (
@@ -333,8 +537,9 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
     const newItems: PlanAttachmentChip[] = [];
 
     for (const file of list) {
-      if (file.size > 20 * 1024 * 1024) {
-        issues.push(`${file.name} exceeds 20MB limit`);
+      const validation = validatePlanUpload(file);
+      if (!validation.ok) {
+        issues.push(validation.error ?? `${file.name} is not supported`);
         continue;
       }
 
@@ -343,15 +548,18 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
         ? URL.createObjectURL(file)
         : undefined;
 
+      const isPdf =
+        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
       newItems.push({
         clientId,
         file_name: file.name,
         mime_type: file.type || "application/octet-stream",
         previewUrl,
-        phase: "ready",
+        phase: "uploading",
       });
 
-      void uploadOneFile(clientId, file);
+      void uploadOneFile(clientId, file, isPdf);
     }
 
     if (newItems.length > 0) {
@@ -373,11 +581,11 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
     });
   };
 
-  const attachmentsStillUploading = pendingAttachments.some(
-    (a) => a.phase === "uploading" || (a.phase === "ready" && !a.serverId),
+  const attachmentsNotReady = pendingAttachments.some(
+    (a) => a.phase !== "ready" || !a.serverId,
   );
 
-  const waitForUploadServerIds = async (
+  const waitForAttachmentsReady = async (
     clientIds: string[],
     timeoutMs = 30_000,
   ): Promise<string[]> => {
@@ -394,14 +602,17 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
         throw new Error(failed.parse_error ?? `Upload failed for ${failed.file_name}`);
       }
 
-      if (tracked.length === clientIds.length && tracked.every((a) => a.serverId)) {
+      if (
+        tracked.length === clientIds.length &&
+        tracked.every((a) => a.serverId && a.phase === "ready")
+      ) {
         return tracked.map((a) => a.serverId!);
       }
 
       await new Promise((r) => setTimeout(r, 250));
     }
 
-    throw new Error("Files are still uploading. Wait a moment and try again.");
+    throw new Error("Files are still uploading or processing. Wait until Ready and try again.");
   };
 
   const sendMessage = async () => {
@@ -416,11 +627,12 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
     setInput("");
     setStreamingText("");
     setStreamingSources([]);
+    setStreamingDocumentCitations([]);
 
     try {
       let attachmentIds: string[] = [];
       if (uploadClientIds.length > 0) {
-        attachmentIds = await waitForUploadServerIds(uploadClientIds);
+        attachmentIds = await waitForAttachmentsReady(uploadClientIds);
       }
 
       setPendingAttachments([]);
@@ -479,17 +691,24 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
 
       if (!res.body) throw new Error("No response stream");
 
-      const { full, sources } = await parsePlanNdjsonStream(res.body, (chunk) => {
-        setStreamingText(chunk);
-        scrollToLatest();
-      });
+      const { full, sources, documentCitations } = await parsePlanNdjsonStream(
+        res.body,
+        (chunk) => {
+          setStreamingText(chunk);
+          scrollToLatest();
+        },
+      );
 
       setStreamingText("");
       setStreamingSources(sources);
+      setStreamingDocumentCitations(documentCitations);
       await persistMessage("assistant", full, {
         sources: sources.length > 0 ? sources : undefined,
+        document_citations:
+          documentCitations.length > 0 ? documentCitations : undefined,
       });
       setStreamingSources([]);
+      setStreamingDocumentCitations([]);
       await trackAIChatMessage(projectId, text.length);
       scrollToLatest();
 
@@ -563,6 +782,9 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
             sources={
               msg.role === "assistant" ? getMessageSources(msg) : undefined
             }
+            documentCitations={
+              msg.role === "assistant" ? getMessageDocumentCitations(msg) : undefined
+            }
           />
         ))}
 
@@ -571,6 +793,11 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
             role="assistant"
             content={streamingText}
             sources={streamingSources.length > 0 ? streamingSources : undefined}
+            documentCitations={
+              streamingDocumentCitations.length > 0
+                ? streamingDocumentCitations
+                : undefined
+            }
           />
         )}
 
@@ -585,6 +812,7 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
         <PlanAttachmentChips
           attachments={pendingAttachments}
           onRemove={removeAttachment}
+          onRetry={(id) => void retryAttachmentProcessing(id)}
         />
 
         <textarea
@@ -627,11 +855,13 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
           <button
             type="button"
             onClick={() => void sendMessage()}
-            disabled={busy || !input.trim()}
+            disabled={busy || !input.trim() || attachmentsNotReady}
             title={
-              attachmentsStillUploading
-                ? "Waiting for file upload to finish"
-                : undefined
+              attachmentsNotReady
+                ? "Wait until every attachment shows Ready (green) before sending"
+                : !input.trim()
+                  ? "Enter a message to send"
+                  : undefined
             }
             className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
           >

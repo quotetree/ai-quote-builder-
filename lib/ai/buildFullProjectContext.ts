@@ -5,6 +5,7 @@ import {
   loadProjectDriveContext,
 } from "@/lib/ai/projectDriveContext";
 import { loadPlanAttachmentContext } from "@/lib/ai/planAttachmentContext";
+import type { DocumentCitation } from "@/lib/ai/retrieveDocumentChunks";
 
 export interface FullProjectContextOptions {
   activeSpreadsheetId?: string | null;
@@ -20,6 +21,8 @@ export interface FullProjectContextResult {
   attachmentPrompt: string;
   combinedPrompt: string;
   driveIndex: { indexed: number; pending: number };
+  documentCitations: DocumentCitation[];
+  isRfpAnalysisMode: boolean;
 }
 
 /**
@@ -48,12 +51,16 @@ export async function buildFullProjectContext(
   );
 
   let attachmentPrompt = "";
+  let documentCitations: DocumentCitation[] = [];
+  let isRfpAnalysisMode = false;
   if (options.attachmentIds && options.attachmentIds.length > 0) {
-    attachmentPrompt = await loadPlanAttachmentContext(
-      supabase,
-      projectId,
-      options.attachmentIds,
-    );
+    const attachmentContext = await loadPlanAttachmentContext(supabase, projectId, {
+      attachmentIds: options.attachmentIds,
+      userMessage: options.userMessage,
+    });
+    attachmentPrompt = attachmentContext.promptText;
+    documentCitations = attachmentContext.documentCitations;
+    isRfpAnalysisMode = attachmentContext.isRfpAnalysisMode;
   }
 
   const combinedPrompt = [
@@ -70,5 +77,7 @@ export async function buildFullProjectContext(
     attachmentPrompt,
     combinedPrompt,
     driveIndex,
+    documentCitations,
+    isRfpAnalysisMode,
   };
 }

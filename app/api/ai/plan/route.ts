@@ -2,11 +2,16 @@ import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@/lib/supabase/server";
 import { buildFullProjectContext } from "@/lib/ai/buildFullProjectContext";
-import { ensureAttachmentsAnalyzed } from "@/lib/ai/planAttachmentContext";
+import {
+  checkAttachmentsReady,
+  ensureAttachmentsAnalyzed,
+} from "@/lib/ai/planAttachmentContext";
 import {
   PLAN_SYSTEM_PROMPT,
+  RFP_ESTIMATOR_SYSTEM_PROMPT,
   SEARCH_PRICE_BOOK_TOOL,
   WEB_SEARCH_TOOL,
+  type PlanDocumentCitation,
   type PlanSource,
 } from "@/lib/ai/planPrompts";
 import {
@@ -98,6 +103,19 @@ export async function POST(request: NextRequest) {
   }
 
   if (attachmentIds && attachmentIds.length > 0) {
+    const readiness = await checkAttachmentsReady(supabase, projectId, attachmentIds);
+    if (!readiness.ready) {
+      return new Response(
+        ndjsonLine({
+          type: "error",
+          error: readiness.error ?? "Attachments are not ready",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/x-ndjson" },
+        },
+      );
+    }
     await ensureAttachmentsAnalyzed(supabase, projectId, attachmentIds);
   }
 
@@ -116,6 +134,13 @@ export async function POST(request: NextRequest) {
   }
 
   const contextBlock = fullContext.combinedPrompt;
+  const documentCitations: PlanDocumentCitation[] = fullContext.documentCitations.map(
+    (c) => ({
+      fileName: c.fileName,
+      pageStart: c.pageStart,
+      pageEnd: c.pageEnd,
+    }),
+  );
 
   const historyMessages = (history ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
@@ -125,8 +150,12 @@ export async function POST(request: NextRequest) {
       content: m.content,
     }));
 
+  const systemPrompt = fullContext.isRfpAnalysisMode
+    ? `${PLAN_SYSTEM_PROMPT}\n\n${RFP_ESTIMATOR_SYSTEM_PROMPT}`
+    : PLAN_SYSTEM_PROMPT;
+
   const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: PLAN_SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     { role: "user", content: `--- PROJECT CONTEXT ---\n${contextBlock}` },
     ...historyMessages,
     { role: "user", content: message.trim() },
@@ -278,7 +307,15 @@ export async function POST(request: NextRequest) {
             }
           }
           controller.enqueue(
-            encoder.encode(ndjsonLine({ type: "done", sources, fullLength: full.length })),
+            encoder.encode(
+              ndjsonLine({
+                type: "done",
+                sources,
+                documentCitations:
+                  documentCitations.length > 0 ? documentCitations : undefined,
+                fullLength: full.length,
+              }),
+            ),
           );
         } catch (err) {
           console.error("[plan] stream error", err);

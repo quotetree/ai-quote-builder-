@@ -43,6 +43,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
+  const lowerName = (file.name || "").toLowerCase();
+  if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) {
+    return NextResponse.json(
+      {
+        error:
+          "PDFs must use the document upload flow. Refresh the page if this persists.",
+      },
+      { status: 400 },
+    );
+  }
+
   if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json({ error: "File exceeds 20MB limit" }, { status: 400 });
   }

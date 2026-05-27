@@ -214,6 +214,12 @@ export interface PlanChatSource {
   url: string;
 }
 
+export interface PlanDocumentCitation {
+  fileName: string;
+  pageStart: number;
+  pageEnd: number;
+}
+
 export interface ProductSuggestion {
   product_id?: string; // Product ID from price book
   product_name: string;
@@ -325,6 +331,12 @@ export interface ProjectDocument {
   storage_path: string;
   uploaded_by: string | null;
   folder_id?: string | null;
+  mime_type?: string | null;
+  upload_status?: 'uploading' | 'uploaded' | 'failed';
+  processing_status?: 'pending' | 'processing' | 'ready' | 'failed';
+  page_count?: number | null;
+  processing_progress?: { chunksInserted?: number; pageCount?: number } | null;
+  doc_source?: 'drive' | 'plan_upload';
   extracted_text?: string | null;
   vision_summary?: string | null;
   search_text?: string | null;
@@ -332,6 +344,30 @@ export interface ProjectDocument {
   parse_error?: string | null;
   indexed_at?: string | null;
   updated_at?: string | null;
+  created_at: string;
+}
+
+export interface DocumentChunkMetadata {
+  has_table?: boolean;
+  contains_quantities?: boolean;
+  contains_locations?: boolean;
+  contains_materials?: boolean;
+  contains_scope_language?: boolean;
+  contains_labor_requirements?: boolean;
+  contains_trade_terms?: boolean;
+  metadata_version?: number;
+}
+
+export interface DocumentChunk {
+  id: string;
+  document_id: string;
+  project_id: string;
+  page_start: number;
+  page_end: number;
+  chunk_index: number;
+  chunk_text: string;
+  token_count: number | null;
+  chunk_metadata?: DocumentChunkMetadata | null;
   created_at: string;
 }
 
