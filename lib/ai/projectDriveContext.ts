@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  isPdfMime,
+  MAX_DRIVE_INLINE_INDEX_BYTES,
+} from "@/lib/ai/documentProcessingConfig";
+import { enqueuePdfDocuments, getPdfProcessingStatus } from "@/lib/ai/enqueueDocumentProcessing";
 import { extractFileContent } from "@/lib/ai/extractFileContent";
+import { retrieveDocumentChunks } from "@/lib/ai/retrieveDocumentChunks";
+import { loadProjectSheetIndexSummary } from "@/lib/ai/plan/loadSheetIndexContext";
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_DOCS_PER_INDEX_RUN = 8;
 const MAX_DOCS_IN_CATALOG = 80;
 const MAX_NOTES_IN_CONTEXT = 15;
@@ -9,6 +15,7 @@ const MAX_CONTEXT_CHARS = 100_000;
 const EXCERPT_DEFAULT = 4_000;
 const EXCERPT_RELEVANT = 8_000;
 const MAX_DETAILED_DOCS = 12;
+const MAX_DRIVE_PDF_DOCS_FOR_RETRIEVAL = 5;
 
 export interface ProjectDocumentIndexRow {
   id: string;
@@ -17,6 +24,8 @@ export interface ProjectDocumentIndexRow {
   file_type: string;
   file_size: number;
   storage_path: string;
+  mime_type?: string | null;
+  processing_status?: string | null;
   extracted_text: string | null;
   vision_summary: string | null;
   search_text: string | null;
@@ -46,7 +55,9 @@ export function isAnalyzableDriveFile(mimeType: string, fileName: string): boole
   return false;
 }
 
-function needsIndexing(row: ProjectDocumentIndexRow): boolean {
+function needsLegacyIndexing(row: ProjectDocumentIndexRow): boolean {
+  const mime = row.mime_type ?? row.file_type;
+  if (isPdfMime(mime, row.file_name)) return false;
   if (row.parse_status === "processing") return false;
   if (row.parse_status === "ready" || row.parse_status === "skipped") {
     return !(row.search_text || row.extracted_text || row.vision_summary);
@@ -54,13 +65,13 @@ function needsIndexing(row: ProjectDocumentIndexRow): boolean {
   return row.parse_status === "pending" || row.parse_status === "error";
 }
 
-async function indexOneDocument(
+async function indexOneNonPdfDocument(
   supabase: SupabaseClient,
   row: ProjectDocumentIndexRow,
 ): Promise<void> {
   const now = new Date().toISOString();
 
-  if (row.file_size > MAX_FILE_BYTES) {
+  if (row.file_size > MAX_DRIVE_INLINE_INDEX_BYTES) {
     await supabase
       .from("project_documents")
       .update({
@@ -114,7 +125,8 @@ async function indexOneDocument(
   }
 
   const buffer = Buffer.from(await blob.arrayBuffer());
-  const extracted = await extractFileContent(buffer, row.file_type, row.file_name);
+  const mime = row.mime_type ?? row.file_type;
+  const extracted = await extractFileContent(buffer, mime, row.file_name);
   const searchText = buildSearchText(
     row.file_name,
     extracted.extractedText,
@@ -137,19 +149,20 @@ async function indexOneDocument(
 }
 
 /**
- * Index pending Drive documents for a single project (never crosses project_id).
+ * Schedule background PDF processing and index non-PDF Drive files inline.
+ * Does not block on full PDF chunking.
  */
 export async function ensureProjectDriveIndexed(
   supabase: SupabaseClient,
   projectId: string,
   options?: { maxDocs?: number; documentIds?: string[] },
-): Promise<{ indexed: number; pending: number }> {
+): Promise<{ indexed: number; pending: number; pdfEnqueued: number }> {
   const maxDocs = options?.maxDocs ?? MAX_DOCS_PER_INDEX_RUN;
 
   let query = supabase
     .from("project_documents")
     .select(
-      "id, project_id, file_name, file_type, file_size, storage_path, extracted_text, vision_summary, search_text, parse_status, parse_error, indexed_at, created_at",
+      "id, project_id, file_name, file_type, mime_type, file_size, storage_path, extracted_text, vision_summary, search_text, parse_status, parse_error, processing_status, indexed_at, created_at",
     )
     .eq("project_id", projectId)
     .order("created_at", { ascending: true })
@@ -159,33 +172,28 @@ export async function ensureProjectDriveIndexed(
     query = query.in("id", options.documentIds);
   }
 
-  const { data: rows, error } = await query;
-  if (error || !rows?.length) {
-    const { count } = await supabase
-      .from("project_documents")
-      .select("id", { count: "exact", head: true })
-      .eq("project_id", projectId)
-      .in("parse_status", ["pending", "processing"]);
-    return { indexed: 0, pending: count ?? 0 };
-  }
+  const { data: rows } = await query;
+  const docs = (rows ?? []) as ProjectDocumentIndexRow[];
 
-  const docs = rows as ProjectDocumentIndexRow[];
-  const toIndex = docs.filter(needsIndexing).slice(0, maxDocs);
+  const pdfEnqueue = await enqueuePdfDocuments(supabase, projectId, {
+    documentIds: options?.documentIds,
+    maxDocs,
+  });
+
+  const toIndex = docs.filter(needsLegacyIndexing).slice(0, maxDocs);
   let indexed = 0;
-
   for (const doc of toIndex) {
-    await indexOneDocument(supabase, doc);
+    await indexOneNonPdfDocument(supabase, doc);
     indexed += 1;
   }
 
-  const pending = docs.filter(
-    (d) =>
-      d.parse_status === "pending" ||
-      d.parse_status === "processing" ||
-      needsIndexing(d),
-  ).length;
+  const pdfStatus = await getPdfProcessingStatus(supabase, projectId);
+  const pending =
+    pdfStatus.pending +
+    pdfStatus.processing +
+    docs.filter((d) => needsLegacyIndexing(d)).length;
 
-  return { indexed, pending: Math.max(0, pending - indexed) };
+  return { indexed, pending: Math.max(0, pending - indexed), pdfEnqueued: pdfEnqueue.enqueued };
 }
 
 function scoreDocument(
@@ -222,6 +230,62 @@ function excerptForDoc(
   const body = parts.join("\n\n") || "(No extractable text — metadata only.)";
   if (body.length <= maxChars) return body;
   return `${body.slice(0, maxChars)}\n\n[Excerpt truncated…]`;
+}
+
+function pdfStatusLabel(doc: ProjectDocumentIndexRow): string {
+  const mime = doc.mime_type ?? doc.file_type;
+  if (!isPdfMime(mime, doc.file_name)) {
+    return doc.parse_status === "ready"
+      ? "indexed"
+      : doc.parse_status === "processing"
+        ? "indexing…"
+        : doc.parse_status === "skipped"
+          ? "metadata only"
+          : doc.parse_status === "error"
+            ? `index error: ${doc.parse_error ?? "unknown"}`
+            : "pending index";
+  }
+  switch (doc.processing_status) {
+    case "ready":
+      return "indexed (chunked)";
+    case "processing":
+      return "processing PDF…";
+    case "failed":
+      return `processing error: ${doc.parse_error ?? "unknown"}`;
+    default:
+      return "pending PDF processing";
+  }
+}
+
+async function loadDrivePdfChunkContext(
+  supabase: SupabaseClient,
+  projectId: string,
+  pdfDocs: ProjectDocumentIndexRow[],
+  userMessage?: string,
+): Promise<string> {
+  const readyPdfs = pdfDocs.filter((d) => d.processing_status === "ready");
+  if (readyPdfs.length === 0) return "";
+
+  const terms = queryTerms(userMessage);
+  const ranked = [...readyPdfs]
+    .map((doc) => ({ doc, score: scoreDocument(doc, terms) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_DRIVE_PDF_DOCS_FOR_RETRIEVAL);
+
+  const docIds = ranked.map((r) => r.doc.id);
+  const fileNames: Record<string, string> = {};
+  for (const r of ranked) fileNames[r.doc.id] = r.doc.file_name;
+
+  const retrieved = await retrieveDocumentChunks(
+    supabase,
+    projectId,
+    docIds,
+    userMessage ?? "",
+    fileNames,
+  );
+
+  if (!retrieved.promptText) return "";
+  return `### Drive PDF content (chunk retrieval)\n\n${retrieved.promptText}`;
 }
 
 async function loadProjectNotesBlock(
@@ -261,7 +325,7 @@ export async function loadProjectDriveContext(
   const { data: docs } = await supabase
     .from("project_documents")
     .select(
-      "id, project_id, file_name, file_type, file_size, storage_path, extracted_text, vision_summary, search_text, parse_status, parse_error, indexed_at, created_at",
+      "id, project_id, file_name, file_type, mime_type, file_size, storage_path, processing_status, extracted_text, vision_summary, search_text, parse_status, parse_error, indexed_at, created_at",
     )
     .eq("project_id", projectId)
     .order("created_at", { ascending: false })
@@ -269,6 +333,7 @@ export async function loadProjectDriveContext(
 
   const documents = (docs ?? []) as ProjectDocumentIndexRow[];
   const terms = queryTerms(userMessage);
+  const pdfStatus = await getPdfProcessingStatus(supabase, projectId);
 
   const lines: string[] = [
     "## Project Drive (this project only)",
@@ -277,23 +342,21 @@ export async function loadProjectDriveContext(
     "",
   ];
 
+  if (pdfStatus.pending + pdfStatus.processing > 0) {
+    lines.push(
+      `Note: ${pdfStatus.pending + pdfStatus.processing} PDF(s) still processing in background. Answers may improve when processing completes.`,
+      "",
+    );
+  }
+
   if (documents.length === 0) {
     lines.push("(No files in Drive yet.)", "");
   } else {
     lines.push("### File catalog");
     for (const doc of documents) {
-      const status =
-        doc.parse_status === "ready"
-          ? "indexed"
-          : doc.parse_status === "processing"
-            ? "indexing…"
-            : doc.parse_status === "skipped"
-              ? "metadata only"
-              : doc.parse_status === "error"
-                ? `index error: ${doc.parse_error ?? "unknown"}`
-                : "pending index";
+      const status = pdfStatusLabel(doc);
       const contentHint =
-        doc.vision_summary || doc.extracted_text
+        doc.processing_status === "ready" || doc.extracted_text || doc.vision_summary
           ? " — has searchable content"
           : "";
       lines.push(
@@ -303,11 +366,33 @@ export async function loadProjectDriveContext(
     lines.push("");
   }
 
-  const ranked = [...documents]
+  const pdfDocs = documents.filter((d) =>
+    isPdfMime(d.mime_type ?? d.file_type, d.file_name),
+  );
+  const nonPdfDocs = documents.filter(
+    (d) => !isPdfMime(d.mime_type ?? d.file_type, d.file_name),
+  );
+
+  const pdfChunkBlock = await loadDrivePdfChunkContext(
+    supabase,
+    projectId,
+    pdfDocs,
+    userMessage,
+  );
+  if (pdfChunkBlock) {
+    lines.push(pdfChunkBlock, "");
+  }
+
+  const sheetSummary = await loadProjectSheetIndexSummary(supabase, projectId, 30);
+  if (sheetSummary) {
+    lines.push(sheetSummary, "");
+  }
+
+  const ranked = [...nonPdfDocs]
     .map((doc) => ({ doc, score: scoreDocument(doc, terms) }))
     .sort((a, b) => b.score - a.score);
 
-  const withContent = documents.filter(
+  const withContent = nonPdfDocs.filter(
     (d) => d.parse_status === "ready" && (d.extracted_text || d.vision_summary),
   );
 

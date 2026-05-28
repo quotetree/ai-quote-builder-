@@ -9,7 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@aws-sdk/client-textract": "^3.1056.0",
     "@langchain/openai": "^0.3.14",
+    "@napi-rs/canvas": "^1.0.0",
     "@stripe/stripe-js": "^8.5.3",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.48.1",

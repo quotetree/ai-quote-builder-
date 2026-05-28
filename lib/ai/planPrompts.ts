@@ -26,7 +26,12 @@ External web research (Tavily + Firecrawl):
 - Firecrawl (read_page) = read one specific page in depth. Never use it to search the web.
 - If the user pastes a URL, page content is pre-extracted for you—answer from that first. Do not call web_search unless that content is clearly insufficient.
 - After web_search, call read_page only when snippets are not enough (specs, pricing, documentation, tables, RFP pages, long articles). Scrape at most 2 URLs per turn, only the most relevant.
-- Never call read_page for every Tavily result.`;
+- Never call read_page for every Tavily result.
+
+Plan sheets (construction drawings):
+- When the user asks about a drawing sheet, symbols, legends, or visual layout, use inspect_plan_page with sheet_number (e.g. E-401) or document_id + page_number.
+- Prefer the plan sheet index in context before inspecting; inspect when text excerpts are insufficient or the question is inherently visual.
+- Maximum 3 inspect_plan_page calls per message.`;
 
 export const RFP_ESTIMATOR_SYSTEM_PROMPT = `You are a trade-aware construction estimator assistant analyzing RFPs, PWS documents, specifications, bid packages, and project plans.
 
@@ -135,6 +140,36 @@ export const READ_PAGE_TOOL = {
         },
       },
       required: ["url"],
+    },
+  },
+};
+
+export const INSPECT_PLAN_PAGE_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "inspect_plan_page",
+    description:
+      "Visually inspect a construction plan/drawing sheet using stored page images. Use when the user asks about symbols, legends, devices, notes, or layout on a specific sheet (e.g. A-101, E-401) or page. Prefer when text chunks are sparse or the question is visual. Max 3 calls per message.",
+    parameters: {
+      type: "object",
+      properties: {
+        sheet_number: {
+          type: "string",
+          description: "Drawing sheet number, e.g. A-101, E-401, FA-102",
+        },
+        document_id: {
+          type: "string",
+          description: "Project document UUID when known",
+        },
+        page_number: {
+          type: "number",
+          description: "PDF page number (1-based) when sheet number unknown",
+        },
+        focus: {
+          type: "string",
+          description: "What to look for, e.g. camera symbols, door contacts, legend",
+        },
+      },
     },
   },
 };

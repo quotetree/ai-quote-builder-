@@ -335,7 +335,17 @@ export interface ProjectDocument {
   upload_status?: 'uploading' | 'uploaded' | 'failed';
   processing_status?: 'pending' | 'processing' | 'ready' | 'failed';
   page_count?: number | null;
-  processing_progress?: { chunksInserted?: number; pageCount?: number } | null;
+  processing_progress?: {
+    phase?: "pages" | "ocr" | "page_images" | "sheet_index" | "chunks" | "extractions";
+    pageCount?: number;
+    pagesWritten?: number;
+    ocrCompletedUpTo?: number;
+    imagesRenderedUpTo?: number;
+    sheetsDetectedUpTo?: number;
+    chunksInserted?: number;
+    extractionsComplete?: boolean;
+    planImagesEnabled?: boolean;
+  } | null;
   doc_source?: 'drive' | 'plan_upload';
   extracted_text?: string | null;
   vision_summary?: string | null;
@@ -368,6 +378,65 @@ export interface DocumentChunk {
   chunk_text: string;
   token_count: number | null;
   chunk_metadata?: DocumentChunkMetadata | null;
+  created_at: string;
+}
+
+export interface DocumentPage {
+  id: string;
+  document_id: string;
+  project_id: string;
+  page_number: number;
+  storage_path: string | null;
+  width_px: number | null;
+  height_px: number | null;
+  native_text: string | null;
+  ocr_text: string | null;
+  extraction_method: "native" | "ocr" | "hybrid" | "empty";
+  ocr_confidence: number | null;
+  sheet_number: string | null;
+  sheet_title: string | null;
+  discipline: string | null;
+  trade: string | null;
+  revision: string | null;
+  title_block_confidence: number | null;
+  title_block_bbox: Record<string, number> | null;
+  created_at: string;
+}
+
+export interface DocumentSheetIndex {
+  id: string;
+  document_id: string;
+  project_id: string;
+  sheet_number: string;
+  sheet_title: string | null;
+  discipline: string | null;
+  trade: string | null;
+  page_number: number;
+  revision: string | null;
+  confidence: number | null;
+  created_at: string;
+}
+
+export type DocumentExtractionType =
+  | "table"
+  | "schedule"
+  | "spec_section"
+  | "quantity"
+  | "entity";
+
+export interface DocumentExtraction {
+  id: string;
+  document_id: string;
+  project_id: string;
+  extraction_type: DocumentExtractionType;
+  page_start: number;
+  page_end: number;
+  title: string | null;
+  discipline: string | null;
+  payload: Record<string, unknown>;
+  confidence: number | null;
+  source_chunk_ids: string[] | null;
+  extraction_version: number;
   created_at: string;
 }
 

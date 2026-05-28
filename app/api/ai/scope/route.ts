@@ -76,7 +76,6 @@ export async function POST(request: NextRequest) {
   const fullContext = await buildFullProjectContext(supabase, projectId, {
     activeSpreadsheetId: activeSpreadsheetId ?? null,
     userMessage: userMessageForContext,
-    indexMaxDocs: 6,
   });
 
   if (!fullContext) {

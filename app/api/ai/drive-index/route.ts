@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   });
 
   console.log(
-    `[drive-index] ✅ project=${projectId} | indexed=${result.indexed} | pending=${result.pending}`,
+    `[drive-index] ✅ project=${projectId} | indexed=${result.indexed} | pdfEnqueued=${result.pdfEnqueued} | pending=${result.pending}`,
   );
 
   return NextResponse.json({ ok: true, ...result });

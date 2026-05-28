@@ -33,22 +33,12 @@ import {
   logRfpRetrievalDebug,
   type RfpRetrievalDebugPayload,
 } from "@/lib/ai/rfp/rfpRetrievalDebug";
+import { loadHybridCandidates } from "@/lib/ai/retrieval/hybridRetrieval";
+import { loadStructuredExtractions } from "@/lib/ai/loadStructuredExtractions";
 
 export interface RfpIntelligenceResult extends RetrievedChunkContext {
   isRfpAnalysisMode: boolean;
   intents: RfpIntent[];
-}
-
-interface ChunkRow {
-  id: string;
-  document_id: string;
-  project_id: string;
-  page_start: number;
-  page_end: number;
-  chunk_index: number;
-  chunk_text: string;
-  token_count: number | null;
-  chunk_metadata: DocumentChunkMetadata | null;
 }
 
 interface ScoredEntry {
@@ -155,6 +145,7 @@ export async function retrieveRfpIntelligence(
   options: {
     pageCounts?: number[];
     hasChunkedPdf?: boolean;
+    preferredPagesByDocId?: Record<string, number[]>;
   } = {},
 ): Promise<RfpIntelligenceResult> {
   if (documentIds.length === 0) {
@@ -180,6 +171,7 @@ export async function retrieveRfpIntelligence(
       documentIds,
       userMessage,
       fileNamesByDocId,
+      { preferredPagesByDocId: options.preferredPagesByDocId },
     );
     return {
       ...basic,
@@ -188,16 +180,16 @@ export async function retrieveRfpIntelligence(
     };
   }
 
-  const { data: chunks, error } = await supabase
-    .from("document_chunks")
-    .select(
-      "id, document_id, project_id, page_start, page_end, chunk_index, chunk_text, token_count, chunk_metadata",
-    )
-    .eq("project_id", projectId)
-    .in("document_id", documentIds)
-    .order("chunk_index", { ascending: true });
+  const hybridCandidates = await loadHybridCandidates(
+    supabase,
+    projectId,
+    documentIds,
+    userMessage,
+    fileNamesByDocId,
+    { preferredPagesByDocId: options.preferredPagesByDocId },
+  );
 
-  if (error || !chunks?.length) {
+  if (hybridCandidates.length === 0) {
     const basic = await retrieveDocumentChunks(
       supabase,
       projectId,
@@ -212,7 +204,7 @@ export async function retrieveRfpIntelligence(
     };
   }
 
-  const rows = (chunks as ChunkRow[]).map((row) => ({
+  const rows = hybridCandidates.map((row) => ({
     ...row,
     chunk_metadata: ensureChunkMetadata(row.chunk_metadata, row.chunk_text),
   })) as ScorableChunk[];
@@ -282,7 +274,20 @@ export async function retrieveRfpIntelligence(
     byProfile.set(entry.profile, list);
   }
 
-  const { promptText, citations } = buildStructuredPrompt(byProfile, fileNamesByDocId);
+  const { promptText: chunkPrompt, citations } = buildStructuredPrompt(
+    byProfile,
+    fileNamesByDocId,
+  );
+
+  const structuredBlock = await loadStructuredExtractions(
+    supabase,
+    projectId,
+    documentIds,
+    fileNamesByDocId,
+    { intents: classification.intents },
+  );
+
+  const promptText = [structuredBlock, chunkPrompt].filter(Boolean).join("\n\n");
 
   const totalTokens = trimmed.reduce(
     (sum, e) => sum + (e.chunk.token_count ?? Math.ceil(e.chunk.chunk_text.length / 4)),

@@ -16,7 +16,10 @@ RFP mode activates when a chunked PDF is attached and any of: filename matches R
 | `RFP_MAX_CHUNKS` | `35` | Max chunks in RFP retrieval |
 | `RFP_MAX_CONTEXT_TOKENS` | `32000` | Token budget for retrieved context |
 | `RFP_RETRIEVAL_DEBUG` | off | Force debug logs in production |
-| `ENABLE_CHUNK_EMBEDDINGS` | off | Optional vector embeddings (unchanged) |
+| `ENABLE_CHUNK_EMBEDDINGS` | off | Vector embeddings at ingest + hybrid semantic retrieval |
+| `HYBRID_SEMANTIC_WEIGHT` | `0.5` | Semantic score weight |
+| `HYBRID_KEYWORD_WEIGHT` | `0.3` | Keyword score weight |
+| `SEMANTIC_MATCH_THRESHOLD` | `0.25` | Minimum cosine similarity for pgvector RPC |
 
 Debug logs also print automatically when `NODE_ENV=development`.
 
@@ -26,4 +29,4 @@ New uploads store `chunk_metadata` and use table-aware chunking. Existing chunks
 
 ## Migration
 
-Apply `supabase/migrations/20260528100000_document_chunks_metadata.sql`.
+Apply migrations through `20260529000000_phase1_document_intelligence.sql` (includes `document_pages`, `document_extractions`, and `match_document_chunks` RPC).
