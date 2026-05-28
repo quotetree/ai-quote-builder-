@@ -335,7 +335,14 @@ export interface ProjectDocument {
   upload_status?: 'uploading' | 'uploaded' | 'failed';
   processing_status?: 'pending' | 'processing' | 'ready' | 'failed';
   page_count?: number | null;
-  processing_progress?: { chunksInserted?: number; pageCount?: number } | null;
+  processing_progress?: {
+    phase?: "pages" | "ocr" | "chunks" | "extractions";
+    pageCount?: number;
+    pagesWritten?: number;
+    ocrCompletedUpTo?: number;
+    chunksInserted?: number;
+    extractionsComplete?: boolean;
+  } | null;
   doc_source?: 'drive' | 'plan_upload';
   extracted_text?: string | null;
   vision_summary?: string | null;
@@ -368,6 +375,41 @@ export interface DocumentChunk {
   chunk_text: string;
   token_count: number | null;
   chunk_metadata?: DocumentChunkMetadata | null;
+  created_at: string;
+}
+
+export interface DocumentPage {
+  id: string;
+  document_id: string;
+  project_id: string;
+  page_number: number;
+  native_text: string | null;
+  ocr_text: string | null;
+  extraction_method: "native" | "ocr" | "hybrid" | "empty";
+  ocr_confidence: number | null;
+  created_at: string;
+}
+
+export type DocumentExtractionType =
+  | "table"
+  | "schedule"
+  | "spec_section"
+  | "quantity"
+  | "entity";
+
+export interface DocumentExtraction {
+  id: string;
+  document_id: string;
+  project_id: string;
+  extraction_type: DocumentExtractionType;
+  page_start: number;
+  page_end: number;
+  title: string | null;
+  discipline: string | null;
+  payload: Record<string, unknown>;
+  confidence: number | null;
+  source_chunk_ids: string[] | null;
+  extraction_version: number;
   created_at: string;
 }
 

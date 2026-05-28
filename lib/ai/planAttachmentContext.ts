@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractFileContent } from "@/lib/ai/extractFileContent";
 import type { DocumentCitation } from "@/lib/ai/retrieveDocumentChunks";
 import { retrieveRfpIntelligence } from "@/lib/ai/rfp/rfpIntelligenceRetrieval";
+import { loadStructuredExtractions } from "@/lib/ai/loadStructuredExtractions";
 import type { RfpIntent } from "@/lib/ai/rfp/rfpIntentClassifier";
 
 export interface ChatAttachmentRow {
@@ -216,6 +217,17 @@ export async function loadPlanAttachmentContext(
     rfpIntents = rfpResult.intents;
     if (rfpResult.promptText) blocks.push(rfpResult.promptText);
     documentCitations.push(...rfpResult.citations);
+
+    if (!isRfpAnalysisMode && chunkedDocIds.length > 0) {
+      const structured = await loadStructuredExtractions(
+        supabase,
+        projectId,
+        chunkedDocIds,
+        fileNamesByDocId,
+        { intents: rfpIntents },
+      );
+      if (structured) blocks.unshift(structured);
+    }
   }
 
   const legacyRows = rows.filter(

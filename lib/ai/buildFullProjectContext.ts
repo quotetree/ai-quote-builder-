@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildQuoteContext } from "@/lib/ai/buildQuoteContext";
 import {
-  ensureProjectDriveIndexed,
-  loadProjectDriveContext,
-} from "@/lib/ai/projectDriveContext";
+  getPdfProcessingStatus,
+} from "@/lib/ai/enqueueDocumentProcessing";
+import { loadProjectDriveContext } from "@/lib/ai/projectDriveContext";
 import { loadPlanAttachmentContext } from "@/lib/ai/planAttachmentContext";
 import type { DocumentCitation } from "@/lib/ai/retrieveDocumentChunks";
 
@@ -11,8 +11,6 @@ export interface FullProjectContextOptions {
   activeSpreadsheetId?: string | null;
   userMessage?: string;
   attachmentIds?: string[];
-  /** Index up to N pending Drive files before loading context (chat send). */
-  indexMaxDocs?: number;
 }
 
 export interface FullProjectContextResult {
@@ -20,13 +18,14 @@ export interface FullProjectContextResult {
   drivePrompt: string;
   attachmentPrompt: string;
   combinedPrompt: string;
-  driveIndex: { indexed: number; pending: number };
+  driveIndex: { indexed: number; pending: number; pdfEnqueued?: number };
   documentCitations: DocumentCitation[];
   isRfpAnalysisMode: boolean;
 }
 
 /**
  * Assemble quote, Drive, and optional chat-attachment context for a single project.
+ * PDF processing runs in background — never blocks on Drive indexing.
  */
 export async function buildFullProjectContext(
   supabase: SupabaseClient,
@@ -40,9 +39,11 @@ export async function buildFullProjectContext(
   );
   if (!quoteContext) return null;
 
-  const driveIndex = await ensureProjectDriveIndexed(supabase, projectId, {
-    maxDocs: options.indexMaxDocs ?? 6,
-  });
+  const pdfStatus = await getPdfProcessingStatus(supabase, projectId);
+  const driveIndex = {
+    indexed: pdfStatus.ready,
+    pending: pdfStatus.pending + pdfStatus.processing,
+  };
 
   const drivePrompt = await loadProjectDriveContext(
     supabase,

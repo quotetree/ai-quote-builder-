@@ -1828,16 +1828,28 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
 
           if (uploadError) throw uploadError;
 
+          const isPdf =
+            file.type === "application/pdf" ||
+            displayName.toLowerCase().endsWith(".pdf");
+
           const { data, error: dbError } = await supabase
             .from("project_documents")
             .insert({
               project_id: projectId,
               file_name: displayName,
               file_type: file.type || "application/octet-stream",
+              mime_type: file.type || "application/octet-stream",
               file_size: file.size,
               storage_path: storagePath,
               uploaded_by: user.id,
               folder_id: currentFolderId,
+              doc_source: "drive",
+              ...(isPdf
+                ? {
+                    processing_status: "pending",
+                    parse_status: "pending",
+                  }
+                : { parse_status: "pending" }),
             })
             .select()
             .single();
@@ -1846,6 +1858,15 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
           if (data) {
             successCount += 1;
             setDocuments((prev) => [data, ...prev]);
+            void fetch("/api/ai/drive-index", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId,
+                documentIds: [data.id],
+                maxDocs: 4,
+              }),
+            }).catch(() => {});
           }
         } catch (fileError: any) {
           failures.push(
@@ -1856,11 +1877,6 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       }
 
       if (successCount > 0) {
-        void fetch("/api/ai/drive-index", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, maxDocs: 12 }),
-        }).catch(() => {});
         toast.success(
           `Uploaded ${successCount} file${successCount === 1 ? "" : "s"}`,
         );

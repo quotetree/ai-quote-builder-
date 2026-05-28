@@ -3,7 +3,7 @@
 Phased plan to evolve QuoteTree Copilot from **RFP text Q&A over chunks** to **enterprise-grade document intelligence and takeoff readiness**.
 
 **Branch:** `plan/document-intelligence-phases`  
-**Status:** Planning — no implementation yet  
+**Status:** Phase 1 implemented on branch `plan/document-intelligence-phases`  
 **Related audit:** Document ingestion, OCR, retrieval, and AI pipeline audit (May 2026)
 
 ---

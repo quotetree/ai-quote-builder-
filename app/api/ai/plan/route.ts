@@ -128,7 +128,6 @@ export async function POST(request: NextRequest) {
     activeSpreadsheetId: activeSpreadsheetId ?? null,
     userMessage: message.trim(),
     attachmentIds,
-    indexMaxDocs: 8,
   });
 
   if (!fullContext) {
