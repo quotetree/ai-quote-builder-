@@ -336,12 +336,15 @@ export interface ProjectDocument {
   processing_status?: 'pending' | 'processing' | 'ready' | 'failed';
   page_count?: number | null;
   processing_progress?: {
-    phase?: "pages" | "ocr" | "chunks" | "extractions";
+    phase?: "pages" | "ocr" | "page_images" | "sheet_index" | "chunks" | "extractions";
     pageCount?: number;
     pagesWritten?: number;
     ocrCompletedUpTo?: number;
+    imagesRenderedUpTo?: number;
+    sheetsDetectedUpTo?: number;
     chunksInserted?: number;
     extractionsComplete?: boolean;
+    planImagesEnabled?: boolean;
   } | null;
   doc_source?: 'drive' | 'plan_upload';
   extracted_text?: string | null;
@@ -383,10 +386,34 @@ export interface DocumentPage {
   document_id: string;
   project_id: string;
   page_number: number;
+  storage_path: string | null;
+  width_px: number | null;
+  height_px: number | null;
   native_text: string | null;
   ocr_text: string | null;
   extraction_method: "native" | "ocr" | "hybrid" | "empty";
   ocr_confidence: number | null;
+  sheet_number: string | null;
+  sheet_title: string | null;
+  discipline: string | null;
+  trade: string | null;
+  revision: string | null;
+  title_block_confidence: number | null;
+  title_block_bbox: Record<string, number> | null;
+  created_at: string;
+}
+
+export interface DocumentSheetIndex {
+  id: string;
+  document_id: string;
+  project_id: string;
+  sheet_number: string;
+  sheet_title: string | null;
+  discipline: string | null;
+  trade: string | null;
+  page_number: number;
+  revision: string | null;
+  confidence: number | null;
   created_at: string;
 }
 

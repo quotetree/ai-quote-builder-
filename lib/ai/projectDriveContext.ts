@@ -6,6 +6,7 @@ import {
 import { enqueuePdfDocuments, getPdfProcessingStatus } from "@/lib/ai/enqueueDocumentProcessing";
 import { extractFileContent } from "@/lib/ai/extractFileContent";
 import { retrieveDocumentChunks } from "@/lib/ai/retrieveDocumentChunks";
+import { loadProjectSheetIndexSummary } from "@/lib/ai/plan/loadSheetIndexContext";
 
 const MAX_DOCS_PER_INDEX_RUN = 8;
 const MAX_DOCS_IN_CATALOG = 80;
@@ -380,6 +381,11 @@ export async function loadProjectDriveContext(
   );
   if (pdfChunkBlock) {
     lines.push(pdfChunkBlock, "");
+  }
+
+  const sheetSummary = await loadProjectSheetIndexSummary(supabase, projectId, 30);
+  if (sheetSummary) {
+    lines.push(sheetSummary, "");
   }
 
   const ranked = [...nonPdfDocs]

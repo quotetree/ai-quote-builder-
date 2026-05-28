@@ -145,6 +145,7 @@ export async function retrieveRfpIntelligence(
   options: {
     pageCounts?: number[];
     hasChunkedPdf?: boolean;
+    preferredPagesByDocId?: Record<string, number[]>;
   } = {},
 ): Promise<RfpIntelligenceResult> {
   if (documentIds.length === 0) {
@@ -170,6 +171,7 @@ export async function retrieveRfpIntelligence(
       documentIds,
       userMessage,
       fileNamesByDocId,
+      { preferredPagesByDocId: options.preferredPagesByDocId },
     );
     return {
       ...basic,
@@ -184,6 +186,7 @@ export async function retrieveRfpIntelligence(
     documentIds,
     userMessage,
     fileNamesByDocId,
+    { preferredPagesByDocId: options.preferredPagesByDocId },
   );
 
   if (hybridCandidates.length === 0) {

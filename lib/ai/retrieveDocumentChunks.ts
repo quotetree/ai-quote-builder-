@@ -42,6 +42,7 @@ export async function retrieveDocumentChunks(
   documentIds: string[],
   userMessage: string,
   fileNamesByDocId: Record<string, string>,
+  options?: { preferredPagesByDocId?: Record<string, number[]> },
 ): Promise<RetrievedChunkContext> {
   if (documentIds.length === 0) {
     return { promptText: "", citations: [] };
@@ -53,6 +54,7 @@ export async function retrieveDocumentChunks(
     documentIds,
     userMessage,
     fileNamesByDocId,
+    { preferredPagesByDocId: options?.preferredPagesByDocId },
   );
 
   if (candidates.length === 0) {

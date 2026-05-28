@@ -11,12 +11,18 @@ import { type ScrapeCache, scrapePageCached } from "@/lib/ai/firecrawlScrape";
 import {
   PLAN_SYSTEM_PROMPT,
   RFP_ESTIMATOR_SYSTEM_PROMPT,
+  INSPECT_PLAN_PAGE_TOOL,
   READ_PAGE_TOOL,
   SEARCH_PRICE_BOOK_TOOL,
   WEB_SEARCH_TOOL,
   type PlanDocumentCitation,
   type PlanSource,
 } from "@/lib/ai/planPrompts";
+import {
+  formatInspectPlanPageForTool,
+  inspectPlanPage,
+  type InspectPlanPageArgs,
+} from "@/lib/ai/plan/inspectPlanPage";
 import {
   formatPriceBookResultsForPrompt,
   searchPriceBook,
@@ -33,6 +39,7 @@ const MAX_TOOL_ITERATIONS = 8;
 const MAX_WEB_SEARCH_ROUNDS = 2;
 const MAX_PRICE_BOOK_SEARCH_ROUNDS = 4;
 const MAX_READ_PAGE_ROUNDS = 3;
+const MAX_INSPECT_PLAN_PAGE_ROUNDS = 3;
 const MAX_USER_URL_PRELOAD = 2;
 
 interface PlanRequestBody {
@@ -208,6 +215,9 @@ export async function POST(request: NextRequest) {
   ];
 
   const planTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [SEARCH_PRICE_BOOK_TOOL];
+  if (process.env.PLAN_PAGE_IMAGES_ENABLED === "true" || process.env.OPENAI_API_KEY) {
+    planTools.push(INSPECT_PLAN_PAGE_TOOL);
+  }
   if (process.env.TAVILY_API_KEY) {
     planTools.push(WEB_SEARCH_TOOL);
   }
@@ -218,6 +228,7 @@ export async function POST(request: NextRequest) {
   let webSearchRounds = 0;
   let priceBookSearchRounds = 0;
   let readPageRounds = 0;
+  let inspectPlanPageRounds = 0;
 
   try {
     let iterations = 0;
@@ -397,6 +408,73 @@ export async function POST(request: NextRequest) {
               role: "tool",
               tool_call_id: call.id,
               content: `Page read failed: ${err instanceof Error ? err.message : "unknown"}. Use Tavily snippets if available.`,
+            });
+          }
+          continue;
+        }
+
+        if (call.function.name === "inspect_plan_page") {
+          if (inspectPlanPageRounds >= MAX_INSPECT_PLAN_PAGE_ROUNDS) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: `Plan inspection limit reached (max ${MAX_INSPECT_PLAN_PAGE_ROUNDS} per message). Summarize from prior inspections and context.`,
+            });
+            continue;
+          }
+
+          let args: InspectPlanPageArgs = {};
+          try {
+            const raw = JSON.parse(call.function.arguments) as Record<string, unknown>;
+            args = {
+              sheetNumber:
+                typeof raw.sheet_number === "string"
+                  ? raw.sheet_number
+                  : typeof raw.sheetNumber === "string"
+                    ? raw.sheetNumber
+                    : undefined,
+              documentId:
+                typeof raw.document_id === "string"
+                  ? raw.document_id
+                  : typeof raw.documentId === "string"
+                    ? raw.documentId
+                    : undefined,
+              pageNumber:
+                typeof raw.page_number === "number"
+                  ? raw.page_number
+                  : typeof raw.pageNumber === "number"
+                    ? raw.pageNumber
+                    : undefined,
+              focus: typeof raw.focus === "string" ? raw.focus : undefined,
+            };
+          } catch {
+            /* empty */
+          }
+
+          if (!args.sheetNumber && !(args.documentId && args.pageNumber)) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content:
+                "inspect_plan_page requires sheet_number OR document_id + page_number.",
+            });
+            continue;
+          }
+
+          inspectPlanPageRounds += 1;
+
+          try {
+            const result = await inspectPlanPage(supabase, projectId, args);
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: formatInspectPlanPageForTool(result),
+            });
+          } catch (err) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: `Plan inspection failed: ${err instanceof Error ? err.message : "unknown"}`,
             });
           }
         }

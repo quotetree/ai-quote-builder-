@@ -9,6 +9,12 @@ import { extractStructuredArtifacts } from "@/lib/ai/extraction/extractStructure
 import { runOcrOnSparsePages } from "@/lib/ai/ocr/enrichPagesWithOcr";
 import { pagesToPdfPageText } from "@/lib/ai/ocr/rasterizePdfPage";
 import { extractPdfPages } from "@/lib/ai/pdfPageExtractor";
+import { runSheetIndexDetection } from "@/lib/ai/plan/buildSheetIndex";
+import {
+  shouldRenderPlanPageImages,
+  type PageTextSample,
+} from "@/lib/ai/plan/planPageConfig";
+import { renderPlanPageImages } from "@/lib/ai/plan/renderPlanPageImages";
 import { analyzeChunkMetadata } from "@/lib/ai/rfp/chunkMetadata";
 import { chunkDocumentPagesWithTables } from "@/lib/ai/rfp/tableAwareChunking";
 
@@ -110,7 +116,13 @@ async function upsertNativePages(
 async function loadPagesFromDb(
   supabase: SupabaseClient,
   documentId: string,
-): Promise<{ page_number: number; native_text: string | null; ocr_text: string | null }[]> {
+): Promise<
+  {
+    page_number: number;
+    native_text: string | null;
+    ocr_text: string | null;
+  }[]
+> {
   const { data } = await supabase
     .from("document_pages")
     .select("page_number, native_text, ocr_text")
@@ -154,9 +166,26 @@ async function runExtractionsPhase(
   if (error) throw new Error(error.message);
 }
 
+async function saveProgress(
+  supabase: SupabaseClient,
+  documentId: string,
+  progress: ProcessingProgress,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase
+    .from("project_documents")
+    .update({
+      processing_progress: progress,
+      updated_at: new Date().toISOString(),
+      ...extra,
+    })
+    .eq("id", documentId);
+  if (error) throw new Error(error.message);
+}
+
 /**
  * Process or resume PDF chunking for a project document.
- * Phases: pages → ocr → chunks → extractions
+ * Phases: pages → ocr → page_images → sheet_index → chunks → extractions
  */
 export async function processProjectDocument(
   supabase: SupabaseClient,
@@ -224,31 +253,26 @@ export async function processProjectDocument(
 
     const buffer = Buffer.from(await blob.arrayBuffer());
     let pageCount = progress.pageCount ?? 0;
+    let planImagesEnabled = progress.planImagesEnabled;
 
     if (phase === "pages") {
       await supabase.from("document_pages").delete().eq("document_id", documentId);
       await supabase.from("document_chunks").delete().eq("document_id", documentId);
       await supabase.from("document_extractions").delete().eq("document_id", documentId);
+      await supabase.from("document_sheet_index").delete().eq("document_id", documentId);
 
       const extracted = await extractPdfPages(buffer);
       pageCount = extracted.pageCount;
       await upsertNativePages(supabase, documentId, projectId, extracted.pages);
 
       phase = "ocr";
-      await supabase
-        .from("project_documents")
-        .update({
-          processing_progress: {
-            phase: "ocr",
-            pageCount,
-            pagesWritten: pageCount,
-            ocrCompletedUpTo: 0,
-            chunksInserted: 0,
-          },
-          page_count: pageCount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", documentId);
+      await saveProgress(supabase, documentId, {
+        phase: "ocr",
+        pageCount,
+        pagesWritten: pageCount,
+        ocrCompletedUpTo: 0,
+        chunksInserted: 0,
+      }, { page_count: pageCount });
     }
 
     if (phase === "ocr") {
@@ -264,34 +288,102 @@ export async function processProjectDocument(
       );
 
       if (ocrCompletedUpTo < pageCount && Date.now() >= deadline) {
-        await supabase
-          .from("project_documents")
-          .update({
-            processing_progress: {
-              phase: "ocr",
-              pageCount,
-              ocrCompletedUpTo,
-              chunksInserted: 0,
-            },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", documentId);
+        await saveProgress(supabase, documentId, {
+          phase: "ocr",
+          pageCount,
+          ocrCompletedUpTo,
+          chunksInserted: 0,
+        });
+        return { status: "processing", pageCount, needsContinuation: true };
+      }
+
+      const pageRows = await loadPagesFromDb(supabase, documentId);
+      planImagesEnabled = shouldRenderPlanPageImages(
+        row.file_name,
+        pageRows as PageTextSample[],
+      );
+
+      phase = planImagesEnabled ? "page_images" : "chunks";
+      await saveProgress(supabase, documentId, {
+        phase,
+        pageCount,
+        ocrCompletedUpTo: pageCount,
+        imagesRenderedUpTo: 0,
+        sheetsDetectedUpTo: 0,
+        chunksInserted: 0,
+        planImagesEnabled,
+      });
+    }
+
+    if (phase === "page_images") {
+      const imageStart = progress.imagesRenderedUpTo ?? 0;
+      const { imagesRenderedUpTo } = await renderPlanPageImages(
+        supabase,
+        projectId,
+        documentId,
+        buffer,
+        pageCount,
+        imageStart,
+        deadline,
+      );
+
+      if (imagesRenderedUpTo < pageCount && Date.now() >= deadline) {
+        await saveProgress(supabase, documentId, {
+          phase: "page_images",
+          pageCount,
+          ocrCompletedUpTo: pageCount,
+          imagesRenderedUpTo,
+          planImagesEnabled: true,
+          chunksInserted: 0,
+        });
+        return { status: "processing", pageCount, needsContinuation: true };
+      }
+
+      phase = "sheet_index";
+      await saveProgress(supabase, documentId, {
+        phase: "sheet_index",
+        pageCount,
+        ocrCompletedUpTo: pageCount,
+        imagesRenderedUpTo: pageCount,
+        sheetsDetectedUpTo: 0,
+        planImagesEnabled: true,
+        chunksInserted: 0,
+      });
+    }
+
+    if (phase === "sheet_index") {
+      const sheetStart = progress.sheetsDetectedUpTo ?? 0;
+      const { sheetsDetectedUpTo } = await runSheetIndexDetection(
+        supabase,
+        projectId,
+        documentId,
+        buffer,
+        pageCount,
+        sheetStart,
+        deadline,
+      );
+
+      if (sheetsDetectedUpTo < pageCount && Date.now() >= deadline) {
+        await saveProgress(supabase, documentId, {
+          phase: "sheet_index",
+          pageCount,
+          imagesRenderedUpTo: pageCount,
+          sheetsDetectedUpTo,
+          planImagesEnabled: true,
+          chunksInserted: 0,
+        });
         return { status: "processing", pageCount, needsContinuation: true };
       }
 
       phase = "chunks";
-      await supabase
-        .from("project_documents")
-        .update({
-          processing_progress: {
-            phase: "chunks",
-            pageCount,
-            ocrCompletedUpTo: pageCount,
-            chunksInserted: progress.chunksInserted ?? 0,
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", documentId);
+      await saveProgress(supabase, documentId, {
+        phase: "chunks",
+        pageCount,
+        imagesRenderedUpTo: pageCount,
+        sheetsDetectedUpTo: pageCount,
+        planImagesEnabled: planImagesEnabled ?? true,
+        chunksInserted: progress.chunksInserted ?? 0,
+      });
     }
 
     let chunkCursor = progress.chunksInserted ?? 0;
@@ -311,18 +403,15 @@ export async function processProjectDocument(
       }
 
       if (chunkCursor < allChunks.length) {
-        await supabase
-          .from("project_documents")
-          .update({
-            processing_progress: {
-              phase: "chunks",
-              pageCount,
-              ocrCompletedUpTo: pageCount,
-              chunksInserted: chunkCursor,
-            },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", documentId);
+        await saveProgress(supabase, documentId, {
+          phase: "chunks",
+          pageCount,
+          ocrCompletedUpTo: pageCount,
+          imagesRenderedUpTo: progress.imagesRenderedUpTo ?? pageCount,
+          sheetsDetectedUpTo: progress.sheetsDetectedUpTo ?? pageCount,
+          planImagesEnabled,
+          chunksInserted: chunkCursor,
+        });
         return {
           status: "processing",
           pageCount,
@@ -339,20 +428,23 @@ export async function processProjectDocument(
 
       const combinedText = allChunks.map((c) => c.chunk_text).join("\n").slice(0, 120_000);
 
-      await supabase
-        .from("project_documents")
-        .update({
-          processing_progress: {
-            phase: "extractions",
-            pageCount,
-            chunksInserted: allChunks.length,
-            extractionsComplete: false,
-          },
+      await saveProgress(
+        supabase,
+        documentId,
+        {
+          phase: "extractions",
+          pageCount,
+          chunksInserted: allChunks.length,
+          extractionsComplete: false,
+          planImagesEnabled,
+          imagesRenderedUpTo: progress.imagesRenderedUpTo,
+          sheetsDetectedUpTo: progress.sheetsDetectedUpTo,
+        },
+        {
           search_text: `${row.file_name}\n\n${searchPreview}`,
           extracted_text: combinedText,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", documentId);
+        },
+      );
 
       phase = "extractions";
     }
@@ -361,18 +453,13 @@ export async function processProjectDocument(
       if (Date.now() < deadline) {
         await runExtractionsPhase(supabase, documentId, projectId);
       } else {
-        await supabase
-          .from("project_documents")
-          .update({
-            processing_progress: {
-              phase: "extractions",
-              pageCount,
-              chunksInserted: chunkCursor,
-              extractionsComplete: false,
-            },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", documentId);
+        await saveProgress(supabase, documentId, {
+          phase: "extractions",
+          pageCount,
+          chunksInserted: chunkCursor,
+          extractionsComplete: false,
+          planImagesEnabled,
+        });
         return { status: "processing", pageCount, needsContinuation: true };
       }
     }
@@ -389,6 +476,9 @@ export async function processProjectDocument(
           pageCount,
           chunksInserted: chunkCursor,
           extractionsComplete: true,
+          planImagesEnabled,
+          imagesRenderedUpTo: progress.imagesRenderedUpTo ?? pageCount,
+          sheetsDetectedUpTo: progress.sheetsDetectedUpTo ?? pageCount,
         },
         indexed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

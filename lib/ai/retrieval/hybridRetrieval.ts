@@ -43,7 +43,10 @@ export async function loadHybridCandidates(
   documentIds: string[],
   userMessage: string,
   fileNamesByDocId: Record<string, string>,
-  options?: { loadAllFallback?: boolean },
+  options?: {
+    loadAllFallback?: boolean;
+    preferredPagesByDocId?: Record<string, number[]>;
+  },
 ): Promise<HybridChunkCandidate[]> {
   if (documentIds.length === 0) return [];
 
@@ -113,10 +116,19 @@ export async function loadHybridCandidates(
     const semanticScore = normSemantic.get(row.id) ?? 0;
     const keywordScoreVal = normKeyword.get(row.id) ?? 0;
     const metadataScoreVal = normMeta.get(row.id) ?? 0;
-    const hybridScore =
+    let hybridScore =
       weights.semantic * semanticScore +
       weights.keyword * keywordScoreVal +
       weights.metadata * metadataScoreVal;
+
+    const preferred = options?.preferredPagesByDocId?.[row.document_id];
+    if (preferred?.length) {
+      const onPage =
+        preferred.includes(row.page_start) ||
+        preferred.includes(row.page_end) ||
+        (row.page_start <= Math.max(...preferred) && row.page_end >= Math.min(...preferred));
+      if (onPage) hybridScore += 0.25;
+    }
 
     return {
       ...row,

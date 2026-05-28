@@ -5,15 +5,24 @@ export const MAX_DRIVE_INLINE_INDEX_BYTES = 25 * 1024 * 1024;
 export const MIN_NATIVE_TEXT_CHARS = 50;
 export const OCR_MAX_PAGES_DEFAULT = 200;
 
-export type ProcessingPhase = "pages" | "ocr" | "chunks" | "extractions";
+export type ProcessingPhase =
+  | "pages"
+  | "ocr"
+  | "page_images"
+  | "sheet_index"
+  | "chunks"
+  | "extractions";
 
 export interface ProcessingProgress {
   phase?: ProcessingPhase;
   pageCount?: number;
   pagesWritten?: number;
   ocrCompletedUpTo?: number;
+  imagesRenderedUpTo?: number;
+  sheetsDetectedUpTo?: number;
   chunksInserted?: number;
   extractionsComplete?: boolean;
+  planImagesEnabled?: boolean;
 }
 
 export function isPdfMime(mimeType: string, fileName: string): boolean {
