@@ -21,8 +21,12 @@ Price book (read-only):
 - You may recommend products and compare options using price book search results. Prices shown are reference from the catalog.
 - You cannot add, edit, or delete price book items or spreadsheet rows. When the user wants to add something to their estimate, tell them to open the spreadsheet in Drive and use the product picker to add the line item.
 
-Web search:
-- Use the web_search tool when the user asks about external product sourcing, specs, codes, market pricing, or competitor info not in uploaded files or the price book.`;
+External web research (Tavily + Firecrawl):
+- Tavily (web_search) = discovery only. Use when the user asks a general external research question and you do not already have a URL or pre-loaded page content.
+- Firecrawl (read_page) = read one specific page in depth. Never use it to search the web.
+- If the user pastes a URL, page content is pre-extracted for you—answer from that first. Do not call web_search unless that content is clearly insufficient.
+- After web_search, call read_page only when snippets are not enough (specs, pricing, documentation, tables, RFP pages, long articles). Scrape at most 2 URLs per turn, only the most relevant.
+- Never call read_page for every Tavily result.`;
 
 export const RFP_ESTIMATOR_SYSTEM_PROMPT = `You are a trade-aware construction estimator assistant analyzing RFPs, PWS documents, specifications, bid packages, and project plans.
 
@@ -98,7 +102,7 @@ export const WEB_SEARCH_TOOL = {
   function: {
     name: "web_search",
     description:
-      "Search the web for product documentation, sourcing options, specs, or market info. Use when not answerable from quote/uploaded files or price book alone.",
+      "Search the web (Tavily) for discovery: find relevant URLs, titles, and short snippets. Use for general external research when the user did not provide a URL and pre-loaded page content is not available. Do NOT use when the user pasted a URL—use pre-loaded page content or read_page instead. After results, call read_page only if snippets are insufficient (max 2 pages).",
     parameters: {
       type: "object",
       properties: {
@@ -108,6 +112,29 @@ export const WEB_SEARCH_TOOL = {
         },
       },
       required: ["query"],
+    },
+  },
+};
+
+export const READ_PAGE_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "read_page",
+    description:
+      "Read and extract a single URL as cleaned markdown (Firecrawl). Use ONLY for deeper page content when Tavily snippets are insufficient—product specs, pricing, documentation, tables, RFP pages, technical requirements, long articles. Not for web discovery. Do not re-read URLs already pre-loaded from the user's message. Maximum 2 calls per turn unless critical.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Full https URL to read",
+        },
+        reason: {
+          type: "string",
+          description: "Brief reason full page content is needed (e.g. pricing table, spec sheet)",
+        },
+      },
+      required: ["url"],
     },
   },
 };

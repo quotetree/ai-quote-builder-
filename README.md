@@ -105,6 +105,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 OPENAI_API_KEY=your-openai-api-key
 TAVILY_API_KEY=your-tavily-api-key
+FIRECRAWL_API_KEY=your-firecrawl-api-key
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
@@ -239,8 +240,11 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 # OpenAI
 OPENAI_API_KEY=sk-your-openai-key
 
-# Tavily (optional — enables web search in Plan chat)
+# Tavily (optional — Copilot web discovery)
 TAVILY_API_KEY=tvly-your-tavily-key
+
+# Firecrawl (optional — Copilot read-page extraction)
+FIRECRAWL_API_KEY=fc-your-firecrawl-key
 
 # Site URL
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
@@ -309,7 +313,8 @@ Add these in **Settings → Environment Variables**:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OPENAI_API_KEY`
-- `TAVILY_API_KEY` (optional — Plan mode web search)
+- `TAVILY_API_KEY` (optional — Copilot web discovery via Tavily)
+- `FIRECRAWL_API_KEY` (optional — Copilot page extraction via Firecrawl; read_page only)
 - `NEXT_PUBLIC_SITE_URL` (your Vercel domain)
 - `NEXT_PUBLIC_SHARE_BASE_URL` (optional share link domain)
 

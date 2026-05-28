@@ -48,12 +48,15 @@ export async function searchWeb(query: string): Promise<TavilySearchResponse> {
 }
 
 export function formatSearchResultsForPrompt(search: TavilySearchResponse): string {
-  const lines: string[] = [];
+  const lines: string[] = [
+    "Tavily web search results (snippets only). If snippets are enough, answer without reading full pages.",
+    "If you need specs, pricing, documentation, tables, or long-form detail, call read_page for at most 2 of the most relevant URLs below—not every result.",
+  ];
   if (search.answer) {
-    lines.push(`Summary: ${search.answer}`);
+    lines.push(`\nSummary: ${search.answer}`);
   }
   for (const r of search.results) {
-    lines.push(`- [${r.title}](${r.url}): ${r.content.slice(0, 500)}`);
+    lines.push(`- **${r.title}** (${r.url}): ${r.content.slice(0, 500)}`);
   }
   return lines.join("\n");
 }

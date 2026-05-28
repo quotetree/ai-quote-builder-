@@ -6,9 +6,12 @@ import {
   checkAttachmentsReady,
   ensureAttachmentsAnalyzed,
 } from "@/lib/ai/planAttachmentContext";
+import { extractUrlsFromText } from "@/lib/ai/extractUrlsFromMessage";
+import { type ScrapeCache, scrapePageCached } from "@/lib/ai/firecrawlScrape";
 import {
   PLAN_SYSTEM_PROMPT,
   RFP_ESTIMATOR_SYSTEM_PROMPT,
+  READ_PAGE_TOOL,
   SEARCH_PRICE_BOOK_TOOL,
   WEB_SEARCH_TOOL,
   type PlanDocumentCitation,
@@ -26,9 +29,11 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MAX_TOOL_ITERATIONS = 6;
+const MAX_TOOL_ITERATIONS = 8;
 const MAX_WEB_SEARCH_ROUNDS = 2;
 const MAX_PRICE_BOOK_SEARCH_ROUNDS = 4;
+const MAX_READ_PAGE_ROUNDS = 3;
+const MAX_USER_URL_PRELOAD = 2;
 
 interface PlanRequestBody {
   projectId: string;
@@ -154,21 +159,66 @@ export async function POST(request: NextRequest) {
     ? `${PLAN_SYSTEM_PROMPT}\n\n${RFP_ESTIMATOR_SYSTEM_PROMPT}`
     : PLAN_SYSTEM_PROMPT;
 
+  const sources: PlanSource[] = [];
+  const scrapeCache: ScrapeCache = new Map();
+  const userMessageText = message.trim();
+  const userProvidedUrls = extractUrlsFromText(userMessageText);
+
+  let preloadedPageBlock = "";
+  let userPagesPreloaded = false;
+  if (userProvidedUrls.length > 0 && process.env.FIRECRAWL_API_KEY) {
+    const blocks: string[] = [];
+    for (const url of userProvidedUrls.slice(0, MAX_USER_URL_PRELOAD)) {
+      const { formatted, result } = await scrapePageCached(url, scrapeCache);
+      blocks.push(formatted);
+      if (result.success) {
+        userPagesPreloaded = true;
+        if (!sources.some((s) => s.url === result.url)) {
+          sources.push({ title: result.title, url: result.url });
+        }
+      }
+    }
+    if (blocks.length > 0) {
+      preloadedPageBlock = [
+        "--- USER-PROVIDED WEB PAGE(S) (Firecrawl) ---",
+        blocks.join("\n\n---\n\n"),
+        "",
+        userPagesPreloaded
+          ? "Answer using the extracted page content above. Do not call web_search unless this content is clearly insufficient. You may call read_page only for a different URL if needed."
+          : "Page extraction failed for the URL(s) above. You may use web_search to find alternative sources.",
+      ].join("\n");
+    }
+  } else if (userProvidedUrls.length > 0 && !process.env.FIRECRAWL_API_KEY) {
+    preloadedPageBlock = [
+      "--- USER-PROVIDED URL(S) ---",
+      userProvidedUrls.join("\n"),
+      "",
+      "Firecrawl is not configured, so full page content could not be extracted. Use web_search only if you cannot answer from project context.",
+    ].join("\n");
+  }
+
+  const userTurnContent = preloadedPageBlock
+    ? `${userMessageText}\n\n${preloadedPageBlock}`
+    : userMessageText;
+
   const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: `--- PROJECT CONTEXT ---\n${contextBlock}` },
     ...historyMessages,
-    { role: "user", content: message.trim() },
+    { role: "user", content: userTurnContent },
   ];
 
-  const sources: PlanSource[] = [];
   const planTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [SEARCH_PRICE_BOOK_TOOL];
   if (process.env.TAVILY_API_KEY) {
     planTools.push(WEB_SEARCH_TOOL);
   }
+  if (process.env.FIRECRAWL_API_KEY) {
+    planTools.push(READ_PAGE_TOOL);
+  }
 
   let webSearchRounds = 0;
   let priceBookSearchRounds = 0;
+  let readPageRounds = 0;
 
   try {
     let iterations = 0;
@@ -243,6 +293,16 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
+          if (userPagesPreloaded) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content:
+                "Skip web_search: the user provided URL(s) and full page content is already pre-loaded. Answer from that content unless it is clearly insufficient.",
+            });
+            continue;
+          }
+
           if (webSearchRounds >= MAX_WEB_SEARCH_ROUNDS) {
             chatMessages.push({
               role: "tool",
@@ -253,7 +313,7 @@ export async function POST(request: NextRequest) {
           }
           webSearchRounds += 1;
 
-          let query = message.trim();
+          let query = userMessageText;
           try {
             const args = JSON.parse(call.function.arguments) as { query?: string };
             if (args.query?.trim()) query = args.query.trim();
@@ -278,6 +338,66 @@ export async function POST(request: NextRequest) {
               role: "tool",
               tool_call_id: call.id,
               content: `Search failed: ${err instanceof Error ? err.message : "unknown"}`,
+            });
+          }
+          continue;
+        }
+
+        if (call.function.name === "read_page") {
+          if (!process.env.FIRECRAWL_API_KEY) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: "Page reading is not configured (FIRECRAWL_API_KEY missing).",
+            });
+            continue;
+          }
+
+          if (readPageRounds >= MAX_READ_PAGE_ROUNDS) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: `Page read limit reached (max ${MAX_READ_PAGE_ROUNDS} per message). Summarize from prior extracts and Tavily snippets.`,
+            });
+            continue;
+          }
+
+          let pageUrl = "";
+          try {
+            const args = JSON.parse(call.function.arguments) as { url?: string };
+            pageUrl = args.url?.trim() ?? "";
+          } catch {
+            /* empty */
+          }
+
+          if (!pageUrl) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: "read_page requires a non-empty url parameter.",
+            });
+            continue;
+          }
+
+          readPageRounds += 1;
+
+          try {
+            const { formatted, result } = await scrapePageCached(pageUrl, scrapeCache);
+            if (result.success && result.url) {
+              if (!sources.some((s) => s.url === result.url)) {
+                sources.push({ title: result.title, url: result.url });
+              }
+            }
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: formatted,
+            });
+          } catch (err) {
+            chatMessages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: `Page read failed: ${err instanceof Error ? err.message : "unknown"}. Use Tavily snippets if available.`,
             });
           }
         }
