@@ -1186,7 +1186,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                             setEditChoiceQuote(quote);
                           }}
                           className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={quote.is_editing ? "Quote is being edited" : "Edit"}
+                          title={quote.is_editing ? "Quote is being edited" : "Edit/View"}
                           disabled={quote.is_editing}
                         >
                           <Edit size={16} />
@@ -1476,7 +1476,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Edit</h3>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Edit/View</h3>
               <button
                 onClick={() => setEditChoiceQuote(null)}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
@@ -1498,7 +1498,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
               >
                 <Edit size={18} className="text-gray-500 flex-shrink-0" />
-                Edit Quote
+                Edit/View Quote
               </button>
               <button
                 type="button"
@@ -1509,7 +1509,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
               >
                 <Layout size={18} className="text-green-600 flex-shrink-0" />
-                Edit Proposal
+                Edit/View Proposal
               </button>
             </div>
           </div>
