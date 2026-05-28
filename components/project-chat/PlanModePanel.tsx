@@ -724,7 +724,7 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
   };
 
   const clearPlanChat = async () => {
-    if (!confirm("Clear Plan conversation for this project?")) return;
+    if (!confirm("Clear Copilot conversation for this project?")) return;
     setBusy(true);
     try {
       const ids = messages.map((m) => m.id);
@@ -761,10 +761,9 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
 
         {!loadingMessages && messages.length === 0 && !streamingText && !busy && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center">
-            <p className="text-sm font-medium text-gray-900 mb-1">Plan assistant</p>
+            <p className="text-sm font-medium text-gray-900 mb-1">Quotetree Copilot</p>
             <p className="text-xs text-gray-600 leading-relaxed">
-              Ask about your quote, bid strategy, scope ideas, or competitor comparisons. Attach PDFs,
-              images, or CSVs. Web search runs when Tavily is configured.
+              AI-powered search, project analysis, insights, and proposal support for estimating.
             </p>
           </div>
         )}
@@ -825,7 +824,7 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
             }
           }}
           rows={2}
-          placeholder="Ask about the quote, bid strategy, scope, labor breakdown…"
+          placeholder="Ask me anything..."
           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-green-500"
           disabled={busy}
         />

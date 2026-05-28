@@ -230,9 +230,9 @@ const ScopeModePanel = forwardRef<ModeChatPanelHandle, ScopeModePanelProps>(
 
         {uiPhase === "idle" && !loadingMessages && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center">
-            <p className="text-sm font-medium text-gray-900 mb-2">Scope proposal writer</p>
+            <p className="text-sm font-medium text-gray-900 mb-2">Proposal Scope Builder</p>
             <p className="text-xs text-gray-600 mb-4 leading-relaxed">
-              Answer four quick questions, then get scope of work, exclusions, assumptions, or a project summary from your quote—without changing pricing.
+              Answer a few quick questions to generate polished scopes, exclusions, assumptions, and proposal summaries from your estimate.
             </p>
             <button
               type="button"
@@ -241,7 +241,7 @@ const ScopeModePanel = forwardRef<ModeChatPanelHandle, ScopeModePanelProps>(
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              Start scope draft
+              Generate Scope of Work
             </button>
           </div>
         )}

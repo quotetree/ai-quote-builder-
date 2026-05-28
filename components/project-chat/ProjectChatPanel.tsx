@@ -60,7 +60,7 @@ export default function ProjectChatPanel({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const modeLabel = mode === "scope" ? "Scope" : "Plan";
+  const modeLabel = mode === "scope" ? "Scope" : "Copilot";
   const ModeIcon = mode === "scope" ? FileText : Compass;
 
   const handleClearChat = () => {
@@ -71,12 +71,12 @@ export default function ProjectChatPanel({
   return (
     <aside
       className={`flex flex-col h-full bg-white border-l border-gray-200 ${className}`}
-      aria-label="Project assistant"
+      aria-label="Project chat"
     >
       <header className="shrink-0 px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-            Assistant
+            Chat
           </p>
           <p className="text-sm font-semibold text-gray-900 truncate">{projectName}</p>
         </div>
@@ -150,7 +150,7 @@ export default function ProjectChatPanel({
                 }`}
               >
                 <Compass size={14} />
-                Plan
+                Copilot
                 {mode === "plan" && <span className="ml-auto text-green-600">✓</span>}
               </button>
               <button
