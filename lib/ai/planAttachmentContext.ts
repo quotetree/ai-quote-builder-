@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractFileContent } from "@/lib/ai/extractFileContent";
+import { isPlanLayoutCameraQuery } from "@/lib/ai/plan/planLayoutAnalysis";
+import { isLikelyFloorPlanFileName } from "@/lib/ai/plan/floorPlanVision";
 import type { DocumentCitation } from "@/lib/ai/retrieveDocumentChunks";
 import { retrieveRfpIntelligence } from "@/lib/ai/rfp/rfpIntelligenceRetrieval";
 import { loadStructuredExtractions } from "@/lib/ai/loadStructuredExtractions";
@@ -244,9 +246,19 @@ export async function loadPlanAttachmentContext(
     (r) => !r.project_document_id && (r.extracted_text || r.vision_summary),
   );
 
+  const skipGenericVision =
+    isPlanLayoutCameraQuery(userMessage) ||
+    legacyRows.some((r) => isLikelyFloorPlanFileName(r.file_name));
+
   for (const row of legacyRows) {
     const parts = [`### File: ${row.file_name} (${row.mime_type})`];
-    if (row.vision_summary) parts.push(`Image/site summary:\n${row.vision_summary}`);
+    if (row.vision_summary && !skipGenericVision) {
+      parts.push(`Image/site summary:\n${row.vision_summary}`);
+    } else if (row.vision_summary && skipGenericVision) {
+      parts.push(
+        "Image/site summary: omitted — use the dedicated FLOOR PLAN ANALYSIS block in this turn for symbol counts (generic summaries often mis-count 360° labels as fisheye).",
+      );
+    }
     if (row.extracted_text) parts.push(`Extracted text:\n${row.extracted_text}`);
     blocks.push(parts.join("\n\n"));
   }

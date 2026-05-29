@@ -317,10 +317,15 @@ async function loadProjectNotesBlock(
 /**
  * Build Drive + notes context for the active project only.
  */
+export interface ProjectDriveContextOptions {
+  skipPdfChunkRetrieval?: boolean;
+}
+
 export async function loadProjectDriveContext(
   supabase: SupabaseClient,
   projectId: string,
   userMessage?: string,
+  driveOptions?: ProjectDriveContextOptions,
 ): Promise<string> {
   const { data: docs } = await supabase
     .from("project_documents")
@@ -373,14 +378,16 @@ export async function loadProjectDriveContext(
     (d) => !isPdfMime(d.mime_type ?? d.file_type, d.file_name),
   );
 
-  const pdfChunkBlock = await loadDrivePdfChunkContext(
-    supabase,
-    projectId,
-    pdfDocs,
-    userMessage,
-  );
-  if (pdfChunkBlock) {
-    lines.push(pdfChunkBlock, "");
+  if (!driveOptions?.skipPdfChunkRetrieval) {
+    const pdfChunkBlock = await loadDrivePdfChunkContext(
+      supabase,
+      projectId,
+      pdfDocs,
+      userMessage,
+    );
+    if (pdfChunkBlock) {
+      lines.push(pdfChunkBlock, "");
+    }
   }
 
   const sheetSummary = await loadProjectSheetIndexSummary(supabase, projectId, 30);

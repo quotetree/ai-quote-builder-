@@ -42,7 +42,10 @@ export async function retrieveDocumentChunks(
   documentIds: string[],
   userMessage: string,
   fileNamesByDocId: Record<string, string>,
-  options?: { preferredPagesByDocId?: Record<string, number[]> },
+  options?: {
+    preferredPagesByDocId?: Record<string, number[]>;
+    maxChunks?: number;
+  },
 ): Promise<RetrievedChunkContext> {
   if (documentIds.length === 0) {
     return { promptText: "", citations: [] };
@@ -61,7 +64,8 @@ export async function retrieveDocumentChunks(
     return { promptText: "", citations: [] };
   }
 
-  const selected = selectTopHybridChunks(candidates, MAX_CHUNKS);
+  const maxChunks = options?.maxChunks ?? MAX_CHUNKS;
+  const selected = selectTopHybridChunks(candidates, maxChunks);
 
   const citations: DocumentCitation[] = [];
   const blocks = selected.map((chunk) => {

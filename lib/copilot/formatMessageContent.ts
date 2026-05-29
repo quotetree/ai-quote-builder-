@@ -1,3 +1,5 @@
+import { sanitizeCopilotLatexBlocks } from "@/lib/copilot/sanitizeCopilotMath";
+
 export interface SourceLink {
   title: string;
   url: string;
@@ -82,6 +84,21 @@ export function linkifyBareUrls(content: string, sources?: SourceLink[]): string
   });
 }
 
+/** Internal grounding tags — kept in stored messages for follow-ups, hidden in UI */
+const INTERNAL_CITATION_TAG_RE = /\s*\[(?:pricebook|memory|project):[a-f0-9-]+\]\s*/gi;
+const INTERNAL_CITATION_LINE_RE = /^\s*\[(?:pricebook|memory|project):[a-f0-9-]+\]\s*$/gim;
+
+export function stripInternalCitationTags(content: string): string {
+  return content
+    .replace(INTERNAL_CITATION_LINE_RE, "")
+    .replace(INTERNAL_CITATION_TAG_RE, " ")
+    .replace(/[ \t]+\|/g, " |")
+    .replace(/\|[ \t]+\|/g, "| |")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function preprocessCopilotContent(
   content: string,
   options?: {
@@ -93,6 +110,8 @@ export function preprocessCopilotContent(
   if (options?.stripSourcesSection !== false) {
     text = stripTrailingSourcesSection(text);
   }
+  text = stripInternalCitationTags(text);
+  text = sanitizeCopilotLatexBlocks(text);
   text = linkifyBareUrls(text, options?.sources);
   return text;
 }

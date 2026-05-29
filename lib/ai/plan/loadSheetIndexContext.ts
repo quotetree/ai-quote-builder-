@@ -25,6 +25,7 @@ function parseTradeFilter(message: string): string | null {
   const lower = message.toLowerCase();
   if (/\bfire alarm\b|\bfa sheets?\b/.test(lower)) return "fire_alarm";
   if (/\belectrical\b|\b(?:^|\s)e[\s-]?\d/.test(lower)) return "electrical";
+  if (/\bcamera|cctv|surveillance\b/.test(lower)) return "security";
   if (/\bsecurity\b|\baccess control\b/.test(lower)) return "security";
   if (/\blow voltage\b|\bstructured cabling\b|\btelecom\b/.test(lower)) return "low_voltage";
   if (/\bmechanical\b/.test(lower)) return "mechanical";

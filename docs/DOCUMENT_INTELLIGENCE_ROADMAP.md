@@ -20,7 +20,7 @@ Phased plan to evolve QuoteTree Copilot from **RFP text Q&A over chunks** to **e
 
 ## Current State (Baseline)
 
-Copilot (Plan mode) today:
+Copilot mode today:
 
 - **Copilot PDFs** (`doc_source: plan_upload`) → `extractPdfPages` (pdfjs) → `chunkDocumentPagesWithTables` → `document_chunks` → keyword/RFP retrieval
 - **Drive PDFs** → `pdf-parse` whole-file text → `project_documents.extracted_text` — **no chunks**

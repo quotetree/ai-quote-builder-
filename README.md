@@ -28,7 +28,7 @@ Generate professional quotes through natural chat conversations, manage your pri
 - ✅ **Sidebar Navigation** - Toggle sidebar with search, price book access, and project list
 - ✅ **Project Management** - Create and organize projects by product families
 - ✅ **3-Panel Workspace** - Chat, Drive, and Log panels in one interface
-- ✅ **AI Assistant (Scope + Plan)** - Side-panel chat: Scope for proposal writing, Plan for bid strategy with attachments and optional web search
+- ✅ **AI Assistant (Scope + Copilot)** - Side-panel chat: Scope for proposal writing, Copilot for bid strategy with attachments and optional web search
 - ✅ **Price Book** - CRUD operations for products with CSV bulk upload
 - ✅ **Quote Log** - Version control for all generated quotes
 - ✅ **PDF Export** - Professional, branded PDF quote downloads
@@ -41,7 +41,7 @@ Generate professional quotes through natural chat conversations, manage your pri
 1. **Create Project** → Name your project and select product families
 2. **Drive + Spreadsheet** → Build the quote in the spreadsheet (source of truth for pricing)
 3. **Chat (Scope mode)** → Generate scope, exclusions, assumptions, and summary from spreadsheet context
-4. **Chat (Plan mode)** → Ask strategy questions; attach PDFs/images (analyzed when you send); optional Tavily web search
+4. **Chat (Copilot mode)** → Ask strategy questions; attach PDFs/images (analyzed when you send); optional Tavily web search
 5. **Log** → Add New Quote opens a spreadsheet in Drive; version history for committed quotes
 6. **Download PDF** → Export professional quote for client
 
@@ -135,7 +135,7 @@ In your Supabase project dashboard:
 - Run `supabase/migrations/20241113_create_drive_folders_notes.sql` and
   `supabase/migrations/20241113_add_project_document_update_policy.sql` to add
   nested folders, notes, and document rename permissions
-- Run `supabase/migrations/20260525100000_create_chat_attachments.sql` for Plan mode file uploads (or `supabase db push`)
+- Run `supabase/migrations/20260525100000_create_chat_attachments.sql` for Copilot mode file uploads (or `supabase db push`)
 
 6. **Run the development server**
 
@@ -174,7 +174,7 @@ quote-tree-ai/
 ├── components/                     # React components
 │   ├── Sidebar.tsx                # Navigation sidebar
 │   ├── ProjectWorkspace.tsx       # Drive + Log + chat rail
-│   ├── project-chat/              # Scope + Plan assistant panels
+│   ├── project-chat/              # Scope + Copilot assistant panels
 │   ├── DrivePanel.tsx             # Spreadsheets & documents
 │   └── LogPanel.tsx               # Quote version log
 ├── lib/                           # Utilities

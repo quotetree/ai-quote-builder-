@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 import { rasterizePdfPage } from "@/lib/ai/ocr/rasterizePdfPage";
+import { floorPlanVisionImageUrl } from "@/lib/ai/plan/floorPlanVision";
 import { planPageRenderScale } from "@/lib/ai/plan/planPageConfig";
 
 export interface InspectPlanPageArgs {
@@ -179,16 +180,22 @@ export async function inspectPlanPage(
 
     const textContext = [pageRow?.native_text, pageRow?.ocr_text].filter(Boolean).join("\n").slice(0, 2000);
 
+    const floorPlanFocus = Boolean(
+      args.focus?.includes("LEGEND") || args.focus?.includes("symbol_code"),
+    );
+
     const openai = new OpenAI({ apiKey });
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
-      temperature: 0.2,
-      max_tokens: 1500,
+      temperature: floorPlanFocus ? 0.1 : 0.2,
+      max_tokens: floorPlanFocus ? 4000 : 1500,
+      ...(floorPlanFocus ? { response_format: { type: "json_object" as const } } : {}),
       messages: [
         {
           role: "system",
-          content:
-            "You are an estimator reviewing a construction plan sheet. Describe symbols, legends, devices, notes, quantities visible on the sheet. Be specific and practical for bidding. If uncertain, say so.",
+          content: floorPlanFocus
+            ? "You are an estimator counting CCTV symbols on a floor plan using the legend only. Output valid JSON."
+            : "You are an estimator reviewing a construction plan sheet. Describe symbols, legends, devices, notes, quantities visible on the sheet. Be specific and practical for bidding. If uncertain, say so.",
         },
         {
           role: "user",
@@ -199,7 +206,7 @@ export async function inspectPlanPage(
                 `File: ${resolved.fileName}`,
                 `Page: ${resolved.pageNumber}`,
                 meta,
-                args.focus ? `Focus: ${args.focus}` : "",
+                args.focus ? `Focus:\n${args.focus}` : "",
                 textContext ? `Extracted text on page:\n${textContext}` : "",
               ]
                 .filter(Boolean)
@@ -207,7 +214,7 @@ export async function inspectPlanPage(
             },
             {
               type: "image_url",
-              image_url: { url: `data:${mime};base64,${base64}` },
+              image_url: floorPlanVisionImageUrl(base64, mime),
             },
           ],
         },

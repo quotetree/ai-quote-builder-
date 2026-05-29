@@ -60,7 +60,7 @@ export default function ProjectChatPanel({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const modeLabel = mode === "scope" ? "Scope" : "Copilot";
+  const modeLabel = mode === "scope" ? "Scope" : "Price Book";
   const ModeIcon = mode === "scope" ? FileText : Compass;
 
   const handleClearChat = () => {
@@ -150,7 +150,7 @@ export default function ProjectChatPanel({
                 }`}
               >
                 <Compass size={14} />
-                Copilot
+                Price Book
                 {mode === "plan" && <span className="ml-auto text-green-600">✓</span>}
               </button>
               <button

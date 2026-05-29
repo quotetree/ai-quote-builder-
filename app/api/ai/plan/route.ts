@@ -1,53 +1,52 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@/lib/supabase/server";
-import { buildFullProjectContext } from "@/lib/ai/buildFullProjectContext";
+import { buildPricebookCopilotContext } from "@/lib/ai/buildPricebookCopilotContext";
+import { catalogPricingGroundingInstructions } from "@/lib/ai/plan/catalogPricingGrounding";
+import { runMandatoryCatalogSearch } from "@/lib/ai/plan/mandatoryCatalogSearch";
+import type { ChatTurn } from "@/lib/ai/plan/webResearchContext";
 import {
-  checkAttachmentsReady,
-  ensureAttachmentsAnalyzed,
-} from "@/lib/ai/planAttachmentContext";
-import { extractUrlsFromText } from "@/lib/ai/extractUrlsFromMessage";
-import { type ScrapeCache, scrapePageCached } from "@/lib/ai/firecrawlScrape";
-import {
-  PLAN_SYSTEM_PROMPT,
-  RFP_ESTIMATOR_SYSTEM_PROMPT,
-  INSPECT_PLAN_PAGE_TOOL,
-  READ_PAGE_TOOL,
+  PRICEBOOK_COPILOT_SYSTEM_PROMPT,
   SEARCH_PRICE_BOOK_TOOL,
-  WEB_SEARCH_TOOL,
-  type PlanDocumentCitation,
-  type PlanSource,
+  type PlanInternalSourceCitation,
 } from "@/lib/ai/planPrompts";
 import {
-  formatInspectPlanPageForTool,
-  inspectPlanPage,
-  type InspectPlanPageArgs,
-} from "@/lib/ai/plan/inspectPlanPage";
+  enrichCatalogFiltersFromTerms,
+  parseCatalogQueryFilters,
+} from "@/lib/ai/retrieval/catalogQueryFilters";
+import { normalizeCatalogQuery } from "@/lib/ai/retrieval/catalogQueryNormalize";
 import {
+  assessPricebookTaskComplexity,
+  dedupeHistoryCurrentMessage,
+  filterCatalogHistory,
+  pricebookTurnInstructions,
+  trimChatHistory,
+} from "@/lib/ai/pricebookCopilot/turnHelpers";
+import {
+  referentialFollowUpInstructions,
+  resolveReferentialFollowUp,
+} from "@/lib/ai/pricebookCopilot/referentialFollowUp";
+import {
+  fetchPriceBookProductsByIds,
+  formatPinnedResultSetForPrompt,
   formatPriceBookResultsForPrompt,
   searchPriceBook,
   type PriceBookSearchParams,
 } from "@/lib/ai/searchPriceBook";
-import { formatSearchResultsForPrompt, searchWeb } from "@/lib/ai/tavilySearch";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
-const MAX_TOOL_ITERATIONS = 8;
-const MAX_WEB_SEARCH_ROUNDS = 2;
+const MAX_TOOL_ITERATIONS = 4;
 const MAX_PRICE_BOOK_SEARCH_ROUNDS = 4;
-const MAX_READ_PAGE_ROUNDS = 3;
-const MAX_INSPECT_PLAN_PAGE_ROUNDS = 3;
-const MAX_USER_URL_PRELOAD = 2;
 
 interface PlanRequestBody {
   projectId: string;
   activeSpreadsheetId?: string | null;
   message: string;
   history?: { role: "user" | "assistant"; content: string }[];
-  attachmentIds?: string[];
 }
 
 function ndjsonLine(obj: Record<string, unknown>): string {
@@ -68,6 +67,14 @@ function parsePriceBookArgs(raw: string): PriceBookSearchParams {
       max_results:
         typeof args.max_results === "number" && Number.isFinite(args.max_results)
           ? args.max_results
+          : undefined,
+      max_sales_price:
+        typeof args.max_sales_price === "number" && Number.isFinite(args.max_sales_price)
+          ? args.max_sales_price
+          : undefined,
+      min_sales_price:
+        typeof args.min_sales_price === "number" && Number.isFinite(args.min_sales_price)
+          ? args.min_sales_price
           : undefined,
     };
   } catch {
@@ -105,7 +112,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { projectId, activeSpreadsheetId, message, history, attachmentIds } = body;
+  const { projectId, message, history } = body;
 
   if (!projectId || !message?.trim()) {
     return new Response(ndjsonLine({ type: "error", error: "projectId and message are required" }), {
@@ -114,27 +121,32 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (attachmentIds && attachmentIds.length > 0) {
-    const readiness = await checkAttachmentsReady(supabase, projectId, attachmentIds);
-    if (!readiness.ready) {
-      return new Response(
-        ndjsonLine({
-          type: "error",
-          error: readiness.error ?? "Attachments are not ready",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/x-ndjson" },
-        },
-      );
-    }
-    await ensureAttachmentsAnalyzed(supabase, projectId, attachmentIds);
-  }
+  const userMessageText = message.trim();
 
-  const fullContext = await buildFullProjectContext(supabase, projectId, {
-    activeSpreadsheetId: activeSpreadsheetId ?? null,
-    userMessage: message.trim(),
-    attachmentIds,
+  const historyMessages = trimChatHistory(
+    filterCatalogHistory(
+      dedupeHistoryCurrentMessage(
+        (history ?? [])
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+        userMessageText,
+      ),
+    ),
+  );
+
+  const turnNumber = historyMessages.length + 1;
+  const taskComplexity = assessPricebookTaskComplexity(userMessageText);
+  const referentialFollowUp = resolveReferentialFollowUp(
+    userMessageText,
+    historyMessages as ChatTurn[],
+  );
+
+  const fullContext = await buildPricebookCopilotContext(supabase, projectId, {
+    userMessage: userMessageText,
+    skipRetrieval: Boolean(referentialFollowUp),
   });
 
   if (!fullContext) {
@@ -144,98 +156,95 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const contextBlock = fullContext.combinedPrompt;
-  const documentCitations: PlanDocumentCitation[] = fullContext.documentCitations.map(
-    (c) => ({
-      fileName: c.fileName,
-      pageStart: c.pageStart,
-      pageEnd: c.pageEnd,
-    }),
-  );
+  const { data: projectOrg } = await supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const organizationId = projectOrg?.organization_id as string | undefined;
 
-  const historyMessages = (history ?? [])
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .slice(-16)
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+  let contextBlock = fullContext.combinedPrompt;
+  contextBlock = `${contextBlock}\n\n${pricebookTurnInstructions(taskComplexity, turnNumber)}`;
+  contextBlock = `${contextBlock}\n\n${catalogPricingGroundingInstructions()}`;
+  if (referentialFollowUp) {
+    contextBlock = `${contextBlock}\n\n${referentialFollowUpInstructions(referentialFollowUp)}`;
+  }
+  contextBlock = `${contextBlock}\n\n--- CATALOG MODE ---\nAnswer **only** from prefetched Price book results and search_price_book. Include **every** matching row for filter/list questions. Do not invent products or use external knowledge.`;
 
-  const systemPrompt = fullContext.isRfpAnalysisMode
-    ? `${PLAN_SYSTEM_PROMPT}\n\n${RFP_ESTIMATOR_SYSTEM_PROMPT}`
-    : PLAN_SYSTEM_PROMPT;
+  const internalSources: PlanInternalSourceCitation[] = fullContext.internalSources.map((s) => ({
+    type: s.type,
+    label: s.label,
+    id: s.id,
+    fileName: s.fileName,
+    pageStart: s.pageStart,
+    pageEnd: s.pageEnd,
+  }));
 
-  const sources: PlanSource[] = [];
-  const scrapeCache: ScrapeCache = new Map();
-  const userMessageText = message.trim();
-  const userProvidedUrls = extractUrlsFromText(userMessageText);
-
-  let preloadedPageBlock = "";
-  let userPagesPreloaded = false;
-  if (userProvidedUrls.length > 0 && process.env.FIRECRAWL_API_KEY) {
-    const blocks: string[] = [];
-    for (const url of userProvidedUrls.slice(0, MAX_USER_URL_PRELOAD)) {
-      const { formatted, result } = await scrapePageCached(url, scrapeCache);
-      blocks.push(formatted);
-      if (result.success) {
-        userPagesPreloaded = true;
-        if (!sources.some((s) => s.url === result.url)) {
-          sources.push({ title: result.title, url: result.url });
-        }
+  let preloadedMandatoryCatalogBlock = "";
+  let pinnedProductIds: string[] | null = null;
+  if (organizationId) {
+    try {
+      if (referentialFollowUp) {
+        pinnedProductIds = referentialFollowUp.productIds;
+        const pinned = await fetchPriceBookProductsByIds(
+          supabase,
+          organizationId,
+          pinnedProductIds,
+        );
+        preloadedMandatoryCatalogBlock = formatPinnedResultSetForPrompt(pinned, {
+          priorLabel: referentialFollowUp.priorResultLabel,
+          userQuestion: userMessageText,
+        });
+      } else {
+        preloadedMandatoryCatalogBlock = await runMandatoryCatalogSearch(
+          supabase,
+          organizationId,
+          userMessageText,
+          historyMessages as ChatTurn[],
+        );
       }
+    } catch (err) {
+      console.error("[plan] mandatory catalog search failed", err);
+      preloadedMandatoryCatalogBlock =
+        "--- PRICE BOOK SEARCH ---\nCatalog search failed. Call search_price_book before listing any products. Do not invent SKUs or prices.";
     }
-    if (blocks.length > 0) {
-      preloadedPageBlock = [
-        "--- USER-PROVIDED WEB PAGE(S) (Firecrawl) ---",
-        blocks.join("\n\n---\n\n"),
-        "",
-        userPagesPreloaded
-          ? "Answer using the extracted page content above. Do not call web_search unless this content is clearly insufficient. You may call read_page only for a different URL if needed."
-          : "Page extraction failed for the URL(s) above. You may use web_search to find alternative sources.",
-      ].join("\n");
-    }
-  } else if (userProvidedUrls.length > 0 && !process.env.FIRECRAWL_API_KEY) {
-    preloadedPageBlock = [
-      "--- USER-PROVIDED URL(S) ---",
-      userProvidedUrls.join("\n"),
-      "",
-      "Firecrawl is not configured, so full page content could not be extracted. Use web_search only if you cannot answer from project context.",
-    ].join("\n");
   }
 
-  const userTurnContent = preloadedPageBlock
-    ? `${userMessageText}\n\n${preloadedPageBlock}`
-    : userMessageText;
+  const userTurnParts = [userMessageText];
+  if (preloadedMandatoryCatalogBlock) {
+    if (referentialFollowUp) {
+      userTurnParts.unshift(
+        "REFERENTIAL FOLLOW-UP: The user means the products from your PREVIOUS answer only. Use the PINNED PRICE BOOK RESULT SET below — do NOT search the full catalog.",
+      );
+    } else {
+      userTurnParts.unshift(
+        "Use ONLY the PRICE BOOK SEARCH block below — ignore any prior assistant catalog lists without `[pricebook:uuid]` tags.",
+      );
+    }
+    userTurnParts.push(preloadedMandatoryCatalogBlock);
+  }
+  const userTurnContent = userTurnParts.join("\n\n");
 
   const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `--- PROJECT CONTEXT ---\n${contextBlock}` },
+    { role: "system", content: PRICEBOOK_COPILOT_SYSTEM_PROMPT },
+    { role: "user", content: `--- PRICE BOOK CONTEXT ---\n${contextBlock}` },
     ...historyMessages,
     { role: "user", content: userTurnContent },
   ];
 
   const planTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [SEARCH_PRICE_BOOK_TOOL];
-  if (process.env.PLAN_PAGE_IMAGES_ENABLED === "true" || process.env.OPENAI_API_KEY) {
-    planTools.push(INSPECT_PLAN_PAGE_TOOL);
-  }
-  if (process.env.TAVILY_API_KEY) {
-    planTools.push(WEB_SEARCH_TOOL);
-  }
-  if (process.env.FIRECRAWL_API_KEY) {
-    planTools.push(READ_PAGE_TOOL);
-  }
 
-  let webSearchRounds = 0;
+  const streamMaxTokens =
+    taskComplexity === "simple" ? 900 : taskComplexity === "deep" ? 4500 : 2800;
+
   let priceBookSearchRounds = 0;
-  let readPageRounds = 0;
-  let inspectPlanPageRounds = 0;
 
   try {
     let iterations = 0;
     while (iterations < MAX_TOOL_ITERATIONS) {
       const completion = await openai.chat.completions.create({
         model: "gpt-4o",
-        temperature: 0.6,
+        temperature: 0.15,
         messages: chatMessages,
         tools: planTools,
         tool_choice: "auto",
@@ -252,231 +261,85 @@ export async function POST(request: NextRequest) {
       chatMessages.push(choice);
 
       for (const call of toolCalls) {
-        if (call.type !== "function") continue;
+        if (call.type !== "function" || call.function.name !== "search_price_book") continue;
 
-        if (call.function.name === "search_price_book") {
-          if (priceBookSearchRounds >= MAX_PRICE_BOOK_SEARCH_ROUNDS) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content:
-                "Price book search limit reached for this message (max 4 searches). Summarize from prior results.",
-            });
-            continue;
-          }
-          priceBookSearchRounds += 1;
-
-          const params = parsePriceBookArgs(call.function.arguments);
-          if (!params.query) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "Price book search requires a non-empty query string.",
-            });
-            continue;
-          }
-
-          try {
-            const search = await searchPriceBook(supabase, params);
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: formatPriceBookResultsForPrompt(search),
-            });
-          } catch (err) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Price book search failed: ${err instanceof Error ? err.message : "unknown"}`,
-            });
-          }
+        if (pinnedProductIds?.length && organizationId) {
+          const pinned = await fetchPriceBookProductsByIds(
+            supabase,
+            organizationId,
+            pinnedProductIds,
+          );
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: formatPinnedResultSetForPrompt(pinned, {
+              priorLabel: referentialFollowUp?.priorResultLabel,
+              userQuestion: userMessageText,
+            }),
+          });
           continue;
         }
 
-        if (call.function.name === "web_search") {
-          if (!process.env.TAVILY_API_KEY) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "Web search is not configured.",
-            });
-            continue;
-          }
+        if (priceBookSearchRounds >= MAX_PRICE_BOOK_SEARCH_ROUNDS) {
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content:
+              "Price book search limit reached for this message (max 4 searches). Summarize from prior results.",
+          });
+          continue;
+        }
+        priceBookSearchRounds += 1;
 
-          if (userPagesPreloaded) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content:
-                "Skip web_search: the user provided URL(s) and full page content is already pre-loaded. Answer from that content unless it is clearly insufficient.",
-            });
-            continue;
-          }
-
-          if (webSearchRounds >= MAX_WEB_SEARCH_ROUNDS) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "Search limit reached for this message (max 2 web searches).",
-            });
-            continue;
-          }
-          webSearchRounds += 1;
-
-          let query = userMessageText;
-          try {
-            const args = JSON.parse(call.function.arguments) as { query?: string };
-            if (args.query?.trim()) query = args.query.trim();
-          } catch {
-            /* use message */
-          }
-
-          try {
-            const search = await searchWeb(query);
-            for (const r of search.results) {
-              if (r.url && !sources.some((s) => s.url === r.url)) {
-                sources.push({ title: r.title, url: r.url });
-              }
-            }
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: formatSearchResultsForPrompt(search),
-            });
-          } catch (err) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Search failed: ${err instanceof Error ? err.message : "unknown"}`,
-            });
-          }
+        const params = parsePriceBookArgs(call.function.arguments);
+        if (!params.query) {
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: "Price book search requires a non-empty query string.",
+          });
           continue;
         }
 
-        if (call.function.name === "read_page") {
-          if (!process.env.FIRECRAWL_API_KEY) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "Page reading is not configured (FIRECRAWL_API_KEY missing).",
-            });
-            continue;
-          }
-
-          if (readPageRounds >= MAX_READ_PAGE_ROUNDS) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Page read limit reached (max ${MAX_READ_PAGE_ROUNDS} per message). Summarize from prior extracts and Tavily snippets.`,
-            });
-            continue;
-          }
-
-          let pageUrl = "";
-          try {
-            const args = JSON.parse(call.function.arguments) as { url?: string };
-            pageUrl = args.url?.trim() ?? "";
-          } catch {
-            /* empty */
-          }
-
-          if (!pageUrl) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "read_page requires a non-empty url parameter.",
-            });
-            continue;
-          }
-
-          readPageRounds += 1;
-
-          try {
-            const { formatted, result } = await scrapePageCached(pageUrl, scrapeCache);
-            if (result.success && result.url) {
-              if (!sources.some((s) => s.url === result.url)) {
-                sources.push({ title: result.title, url: result.url });
-              }
-            }
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: formatted,
-            });
-          } catch (err) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Page read failed: ${err instanceof Error ? err.message : "unknown"}. Use Tavily snippets if available.`,
-            });
-          }
+        if (!organizationId) {
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: "Organization not found for this project.",
+          });
           continue;
         }
 
-        if (call.function.name === "inspect_plan_page") {
-          if (inspectPlanPageRounds >= MAX_INSPECT_PLAN_PAGE_ROUNDS) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Plan inspection limit reached (max ${MAX_INSPECT_PLAN_PAGE_ROUNDS} per message). Summarize from prior inspections and context.`,
-            });
-            continue;
-          }
-
-          let args: InspectPlanPageArgs = {};
-          try {
-            const raw = JSON.parse(call.function.arguments) as Record<string, unknown>;
-            args = {
-              sheetNumber:
-                typeof raw.sheet_number === "string"
-                  ? raw.sheet_number
-                  : typeof raw.sheetNumber === "string"
-                    ? raw.sheetNumber
-                    : undefined,
-              documentId:
-                typeof raw.document_id === "string"
-                  ? raw.document_id
-                  : typeof raw.documentId === "string"
-                    ? raw.documentId
-                    : undefined,
-              pageNumber:
-                typeof raw.page_number === "number"
-                  ? raw.page_number
-                  : typeof raw.pageNumber === "number"
-                    ? raw.pageNumber
-                    : undefined,
-              focus: typeof raw.focus === "string" ? raw.focus : undefined,
-            };
-          } catch {
-            /* empty */
-          }
-
-          if (!args.sheetNumber && !(args.documentId && args.pageNumber)) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content:
-                "inspect_plan_page requires sheet_number OR document_id + page_number.",
-            });
-            continue;
-          }
-
-          inspectPlanPageRounds += 1;
-
-          try {
-            const result = await inspectPlanPage(supabase, projectId, args);
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: formatInspectPlanPageForTool(result),
-            });
-          } catch (err) {
-            chatMessages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: `Plan inspection failed: ${err instanceof Error ? err.message : "unknown"}`,
-            });
-          }
+        try {
+          const userNorm = normalizeCatalogQuery(userMessageText);
+          const userFilters = enrichCatalogFiltersFromTerms(
+            parseCatalogQueryFilters(userMessageText),
+            userNorm.terms,
+          );
+          const normalized = normalizeCatalogQuery(params.query);
+          const search = await searchPriceBook(
+            supabase,
+            {
+              ...params,
+              query: normalized.searchText || params.query,
+              manufacturer: params.manufacturer || normalized.manufacturer,
+              category: params.category || userFilters.categoryHint,
+              max_sales_price: params.max_sales_price ?? userFilters.maxSalesPrice,
+              min_sales_price: params.min_sales_price ?? userFilters.minSalesPrice,
+            },
+            { organizationId },
+          );
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: formatPriceBookResultsForPrompt(search),
+          });
+        } catch (err) {
+          chatMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: `Price book search failed: ${err instanceof Error ? err.message : "unknown"}`,
+          });
         }
       }
 
@@ -485,10 +348,15 @@ export async function POST(request: NextRequest) {
 
     const stream = await openai.chat.completions.create({
       model: "gpt-4o",
-      temperature: 0.6,
+      temperature: 0.15,
+      max_tokens: streamMaxTokens,
       stream: true,
       messages: chatMessages,
     });
+
+    console.log(
+      `[plan] pricebook copilot | turn=${turnNumber} depth=${taskComplexity} referential=${Boolean(referentialFollowUp)} pinned=${pinnedProductIds?.length ?? 0} searches=${priceBookSearchRounds} maxTok=${streamMaxTokens}`,
+    );
 
     const encoder = new TextEncoder();
 
@@ -507,9 +375,8 @@ export async function POST(request: NextRequest) {
             encoder.encode(
               ndjsonLine({
                 type: "done",
-                sources,
-                documentCitations:
-                  documentCitations.length > 0 ? documentCitations : undefined,
+                internalSources: internalSources.length > 0 ? internalSources : undefined,
+                routedSources: ["pricebook"],
                 fullLength: full.length,
               }),
             ),
@@ -537,7 +404,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.error("[plan] error", err);
-    const msg = err instanceof Error ? err.message : "Plan chat failed";
+    const msg = err instanceof Error ? err.message : "Price Book Copilot failed";
     return new Response(ndjsonLine({ type: "error", error: msg }), {
       status: 500,
       headers: { "Content-Type": "application/x-ndjson" },

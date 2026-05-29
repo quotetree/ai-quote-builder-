@@ -1,5 +1,10 @@
 import OpenAI from "openai";
 import Papa from "papaparse";
+import {
+  FLOOR_PLAN_VISION_JSON_PROMPT,
+  floorPlanVisionImageUrl,
+  isLikelyFloorPlanFileName,
+} from "@/lib/ai/plan/floorPlanVision";
 
 const MAX_EXTRACT_CHARS = 120_000;
 const MAX_VISION_CHARS = 8_000;
@@ -21,22 +26,31 @@ async function extractImageWithVision(
   openai: OpenAI,
   buffer: Buffer,
   mimeType: string,
+  fileName: string,
 ): Promise<string> {
   const base64 = buffer.toString("base64");
-  const dataUrl = `data:${mimeType};base64,${base64}`;
+  const floorPlan = isLikelyFloorPlanFileName(fileName);
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
-    temperature: 0.2,
-    max_tokens: 1500,
+    temperature: floorPlan ? 0.1 : 0.2,
+    max_tokens: floorPlan ? 2500 : 1500,
+    ...(floorPlan ? { response_format: { type: "json_object" as const } } : {}),
     messages: [
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: "Describe this image in detail for an estimator reviewing a bid. Include visible text, product names, quantities, prices, diagrams, and site conditions if present.",
+            text: floorPlan
+              ? `File: ${fileName}\n\n${FLOOR_PLAN_VISION_JSON_PROMPT}`
+              : "Describe this image for a low-voltage/security estimator. Include visible text, quantities, and equipment.",
           },
-          { type: "image_url", image_url: { url: dataUrl } },
+          {
+            type: "image_url",
+            image_url: floorPlan
+              ? floorPlanVisionImageUrl(base64, mimeType)
+              : { url: `data:${mimeType};base64,${base64}`, detail: "high" },
+          },
         ],
       },
     ],
@@ -71,7 +85,7 @@ export async function extractFileContent(
       /\.(png|jpe?g|gif|webp)$/i.test(lower)
     ) {
       if (!openai) throw new Error("OpenAI required for image analysis");
-      const vision = await extractImageWithVision(openai, buffer, mimeType);
+      const vision = await extractImageWithVision(openai, buffer, mimeType, fileName);
       return {
         extractedText: null,
         visionSummary: truncate(vision, MAX_VISION_CHARS),
