@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, Compass, ChevronDown, RotateCcw, X } from "lucide-react";
+import { FileText, Compass, ChevronDown, RotateCcw, X, Hammer } from "lucide-react";
 import ScopeModePanel from "./ScopeModePanel";
 import PlanModePanel, { type ModeChatPanelHandle } from "./PlanModePanel";
+import BuildModePanel from "./BuildModePanel";
 
-export type ChatAssistantMode = "scope" | "plan";
+export type ChatAssistantMode = "scope" | "plan" | "build";
 
 interface ProjectChatPanelProps {
   projectId: string;
@@ -29,6 +30,7 @@ export default function ProjectChatPanel({
   const [contextError, setContextError] = useState<string | null>(null);
   const planPanelRef = useRef<ModeChatPanelHandle>(null);
   const scopePanelRef = useRef<ModeChatPanelHandle>(null);
+  const buildPanelRef = useRef<ModeChatPanelHandle>(null);
 
   const loadContext = async () => {
     setContextError(null);
@@ -60,11 +62,17 @@ export default function ProjectChatPanel({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const modeLabel = mode === "scope" ? "Scope" : "Price Book";
-  const ModeIcon = mode === "scope" ? FileText : Compass;
+  const modeLabel =
+    mode === "scope" ? "Scope" : mode === "build" ? "Build" : "Price Book";
+  const ModeIcon = mode === "scope" ? FileText : mode === "build" ? Hammer : Compass;
 
   const handleClearChat = () => {
-    const panel = mode === "plan" ? planPanelRef.current : scopePanelRef.current;
+    const panel =
+      mode === "plan"
+        ? planPanelRef.current
+        : mode === "scope"
+          ? scopePanelRef.current
+          : buildPanelRef.current;
     void panel?.clearChat();
   };
 
@@ -117,6 +125,12 @@ export default function ProjectChatPanel({
             projectId={projectId}
             activeSpreadsheetId={activeSpreadsheetId}
           />
+        ) : mode === "build" ? (
+          <BuildModePanel
+            ref={buildPanelRef}
+            projectId={projectId}
+            activeSpreadsheetId={activeSpreadsheetId}
+          />
         ) : (
           <PlanModePanel
             ref={planPanelRef}
@@ -138,7 +152,7 @@ export default function ProjectChatPanel({
             <ChevronDown size={12} className="text-gray-500" />
           </button>
           {modeMenuOpen && (
-            <div className="absolute bottom-full left-0 mb-1 w-40 rounded-lg border border-gray-200 bg-white shadow-lg py-1 z-30">
+            <div className="absolute bottom-full left-0 mb-1 w-44 rounded-lg border border-gray-200 bg-white shadow-lg py-1 z-30">
               <button
                 type="button"
                 onClick={() => {
@@ -166,6 +180,20 @@ export default function ProjectChatPanel({
                 <FileText size={14} />
                 Scope
                 {mode === "scope" && <span className="ml-auto text-green-600">✓</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("build");
+                  setModeMenuOpen(false);
+                }}
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
+                  mode === "build" ? "text-gray-900 font-medium" : "text-gray-600"
+                }`}
+              >
+                <Hammer size={14} />
+                Build
+                {mode === "build" && <span className="ml-auto text-green-600">✓</span>}
               </button>
             </div>
           )}

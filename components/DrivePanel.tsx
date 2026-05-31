@@ -1001,6 +1001,18 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
       window.removeEventListener("newSpreadsheetQuoteStarted", handleNewSpreadsheetQuote as EventListener);
   }, [projectId, currentFolderId]);
 
+  // Build mode: open newly created spreadsheet from chat
+  useEffect(() => {
+    const handleBuildSpreadsheetOpened = (e: Event) => {
+      const detail = (e as CustomEvent<{ spreadsheet?: ProjectSpreadsheet; projectId?: string }>).detail;
+      if (!detail?.spreadsheet || (detail.projectId && detail.projectId !== projectId)) return;
+      openCreatedSpreadsheet(detail.spreadsheet);
+    };
+    window.addEventListener("buildSpreadsheetOpened", handleBuildSpreadsheetOpened as EventListener);
+    return () =>
+      window.removeEventListener("buildSpreadsheetOpened", handleBuildSpreadsheetOpened as EventListener);
+  }, [projectId]);
+
 
   useEffect(() => {
     if (!activeNote) return;

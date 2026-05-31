@@ -20,6 +20,8 @@ import type {
 } from "@/types/database";
 import { useProducts } from "@/hooks/useProducts";
 import PriceBookModal from "@/components/PriceBookModal";
+import ProductSearchDropdown from "@/components/ProductSearchDropdown";
+import { filterProducts } from "@/lib/filterProducts";
 import toast from "react-hot-toast";
 import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 
@@ -146,104 +148,10 @@ interface SimpleMarkup {
   base_total: number;
 }
 
-// Matches the price book's multi-term, multi-field search exactly
-function filterProducts(products: Product[], query: string): Product[] {
-  const q = query.trim();
-  if (!q) return [];
-  const terms = q.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
-  if (terms.length === 0) return [];
-  return products.filter((p) => {
-    const text = [
-      p.product_name,
-      p.product_number,
-      p.description,
-      p.product_brand,
-      p.product_type,
-      ...(p.product_tags ?? []),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return terms.every((t) => text.includes(t));
-  });
-}
+// Matches the price book's multi-term, multi-field search exactly (shared with Build mode)
+// See lib/filterProducts.ts
 
-// ── ProductDropdown (portal, fixed-positioned) ────────────────────────────────
-
-function ProductDropdown({
-  suggestions,
-  onSelect,
-  onAddNew,
-  anchorRect,
-  dropdownRef,
-}: {
-  suggestions: Product[];
-  onSelect: (p: Product) => void;
-  onAddNew: () => void;
-  anchorRect: DOMRect | null;
-  dropdownRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  if (!anchorRect) return null;
-
-  const style: React.CSSProperties = {
-    position: "fixed",
-    top: anchorRect.bottom + 4,
-    left: anchorRect.left,
-    width: Math.max(anchorRect.width, 300),
-    zIndex: 9999,
-  };
-
-  return createPortal(
-    <div
-      ref={dropdownRef}
-      style={style}
-      className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden"
-    >
-      {/* Add new */}
-      <button
-        type="button"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          onAddNew();
-        }}
-        className="w-full text-left px-3 py-2.5 flex items-center gap-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors border-b border-gray-200 dark:border-gray-700 font-medium text-sm"
-      >
-        <Plus size={14} />
-        Add new
-      </button>
-
-      {/* Results — 4 items visible, scroll for more */}
-      <div className="overflow-y-auto" style={{ maxHeight: "224px" }}>
-        {suggestions.length === 0 ? (
-          <p className="px-3 py-3 text-sm text-gray-400 dark:text-gray-500">No products found</p>
-        ) : (
-          suggestions.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onSelect(p);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors border-b border-gray-100 dark:border-gray-800 last:border-0"
-            >
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                {p.product_name}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-2 mt-0.5">
-                {p.product_number && <span>#{p.product_number}</span>}
-                <span>{fmt(p.sales_price)}</span>
-              </p>
-            </button>
-          ))
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-// ── SpreadsheetRowItem ────────────────────────────────────────────────────────
+// ── ProductDropdown wrapper ────────────────────────────────────────────────────
 
 interface RowItemProps {
   row: SpreadsheetRow;
@@ -371,7 +279,7 @@ function SpreadsheetRowItem({
           className="pl-2 py-2 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder-gray-300 dark:placeholder-gray-600 w-full min-w-0"
         />
         {openField === "name" && (
-          <ProductDropdown
+          <ProductSearchDropdown
             suggestions={nameSuggestions}
             onSelect={selectProduct}
             onAddNew={() => { setOpenField(null); onAddNew(); }}
@@ -396,7 +304,7 @@ function SpreadsheetRowItem({
           className="pl-2 py-2 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder-gray-300 dark:placeholder-gray-600 w-full min-w-0"
         />
         {openField === "code" && (
-          <ProductDropdown
+          <ProductSearchDropdown
             suggestions={codeSuggestions}
             onSelect={selectProduct}
             onAddNew={() => { setOpenField(null); onAddNew(); }}
@@ -563,6 +471,28 @@ export default function SpreadsheetEditor({
   const dragOverRowRef = useRef<{ rowId: string; sectionId: string } | null>(null);
 
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync rows added from Build mode chat
+  useEffect(() => {
+    const handleLineItemAdded = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        spreadsheetId: string;
+        sections: SpreadsheetSection[];
+        subtotal?: number;
+        total?: number;
+      }>).detail;
+      if (!detail || detail.spreadsheetId !== spreadsheet.id) return;
+      setSections(detail.sections);
+      setSaved(true);
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+      }
+    };
+    window.addEventListener("spreadsheetLineItemAdded", handleLineItemAdded as EventListener);
+    return () =>
+      window.removeEventListener("spreadsheetLineItemAdded", handleLineItemAdded as EventListener);
+  }, [spreadsheet.id]);
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
