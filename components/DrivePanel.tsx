@@ -1,5 +1,65 @@
 "use client";
 
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
+import type { JSX } from "react";
+import type { PostgrestSingleResponse } from "@supabase/supabase-js";
+import {
+  Upload,
+  File,
+  Trash2,
+  Download,
+  FolderPlus,
+  Loader2,
+  X,
+  MoreVertical,
+  Image as ImageIcon,
+  FileText,
+  FileSpreadsheet,
+  FileArchive,
+  FileCode,
+  FileAudio,
+  FileVideo,
+  Presentation,
+  Pencil,
+  Folder,
+  StickyNote,
+  BookmarkMinus,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Link as LinkIcon,
+  Table,
+  Plus,
+  Highlighter,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  ChevronDown,
+  Copy,
+} from "lucide-react";
+import { createPortal } from "react-dom";
+import { createClient } from "@/lib/supabase/client";
+import {
+  ProjectDocument,
+  ProjectFolder,
+  ProjectNote,
+  ProjectSpreadsheet,
+  SpreadsheetSection,
+  SpreadsheetTemplateId,
+  SpreadsheetTemplate,
+} from "@/types/database";
+import SpreadsheetEditor from "@/components/SpreadsheetEditor";
+import toast from "react-hot-toast";
+
 const DEFAULT_FONT_SIZE = "16px";
 
 interface NoteSegment {
@@ -127,66 +187,6 @@ function parseHtmlToSegments(html: string): NoteSegment[] {
 
 const segmentsToPlainText = (segments: NoteSegment[]) =>
   segments.map((segment) => segment.text).join("");
-
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-} from "react";
-import type { JSX } from "react";
-import type { PostgrestSingleResponse } from "@supabase/supabase-js";
-import {
-  Upload,
-  File,
-  Trash2,
-  Download,
-  FolderPlus,
-  Loader2,
-  X,
-  MoreVertical,
-  Image as ImageIcon,
-  FileText,
-  FileSpreadsheet,
-  FileArchive,
-  FileCode,
-  FileAudio,
-  FileVideo,
-  Presentation,
-  Pencil,
-  Folder,
-  StickyNote,
-  BookmarkMinus,
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
-  List,
-  ListOrdered,
-  Link as LinkIcon,
-  Table,
-  Plus,
-  Highlighter,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  ChevronDown,
-  Copy,
-} from "lucide-react";
-import { createPortal } from "react-dom";
-import { createClient } from "@/lib/supabase/client";
-import {
-  ProjectDocument,
-  ProjectFolder,
-  ProjectNote,
-  ProjectSpreadsheet,
-  SpreadsheetSection,
-  SpreadsheetTemplateId,
-  SpreadsheetTemplate,
-} from "@/types/database";
-import SpreadsheetEditor from "@/components/SpreadsheetEditor";
-import toast from "react-hot-toast";
 
 interface DrivePanelProps {
   projectId: string;

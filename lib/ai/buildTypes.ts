@@ -1,4 +1,5 @@
 import type { PriceBookSearchHit } from "@/lib/ai/searchPriceBook";
+import type { BuildUpdateProposal } from "@/lib/applyBuildUpdates";
 import type { SpreadsheetSection } from "@/types/database";
 
 export type BuildPhase = "parse" | "auto";
@@ -54,6 +55,7 @@ export interface BuildParseResponse {
   kind: "parse";
   summary: string;
   cards: BuildMatchCard[];
+  updateProposals?: BuildUpdateProposal[];
   spreadsheetContext?: BuildSpreadsheetContext;
   taxMarkupNotice?: string;
 }

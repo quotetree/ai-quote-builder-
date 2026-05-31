@@ -11,10 +11,12 @@ You receive the current spreadsheet line items. Return ONLY valid JSON:
   "taxMarkupSummary": "brief note if user asked for tax/markup",
   "explicitAdds": [
     {
+      "kind": "product" | "labor_lump_sum",
       "requestedLabel": "what the user asked for",
-      "searchQuery": "concise pricebook keywords (brand, model, product type)",
+      "searchQuery": "concise pricebook keywords (brand, model, product type, labor type)",
       "quantity": 1,
       "unit": "ea",
+      "lumpSumAmount": 18000,
       "discountPercent": 10
     }
   ],
@@ -42,14 +44,19 @@ Rules:
 - taxOrMarkupRequested: true if user asks to add/edit tax, markup, margin bake-in, sales tax, etc.
 
 EXPLICIT ADDS (explicitAdds):
-- Use when the user directly requests adding one or a few specific NEW products (e.g. "I need a four-door access controller", "Add 5 bullet cameras").
-- searchQuery must be exactly what the user would type in the spreadsheet **Product / Service Name** search box — the shortest distinctive fragment (e.g. "bana", "banana", "cd53", "verkada acu"). Do NOT include quantities, discounts, unit words, or full sentences.
+- Use when the user directly requests adding one or a few specific NEW products or labor lines (e.g. "I need a four-door access controller", "Add 5 bullet cameras", "$18,000 in intercom labor").
+- searchQuery must be exactly what the user would type in the spreadsheet **Product / Service Name** search box — the shortest distinctive fragment (e.g. "bana", "banana", "cd53", "intercom labor", "access control labor"). Do NOT include dollar amounts, quantities, discounts, unit words, or full sentences.
+- kind "labor_lump_sum" when user requests a dollar-amount labor line (e.g. "$18,000 camera labor", "$10,000 in access control labor"). Set lumpSumAmount to the dollar total, unit "ls", quantity 1.
+- kind "product" for catalog hardware/software items.
 - discountPercent: ONLY include when the user EXPLICITLY states a discount for that product in the same request (e.g. "at a 10% discount", "with 10% off"). Otherwise omit or use 0.
-- Do NOT use explicitAdds for bulk scope-of-work lists (multiple items, pasted SOW, labor lump sums mixed with many products). Those go through scope parsing with empty explicitAdds.
+- Do NOT use explicitAdds for bulk scope-of-work lists (multiple items, pasted SOW). Those go through scope parsing with empty explicitAdds.
+- If user asks for a labor type NOT already on the spreadsheet (e.g. "access control labor" when only "Intercom Labor" exists), use explicitAdds — NEVER updates.
 
-UPDATES (updates) — ONLY for explicit change requests on lines already on the spreadsheet:
-- User must clearly ask to CHANGE, UPDATE, SET, INCREASE, DECREASE, or APPLY qty/discount/price on existing items.
-- Examples: "Add 10% discount to all items in Equipment section", "Increase qty on the 4 door controller by 10"
+UPDATES (updates) — ONLY when user explicitly asks to CHANGE a line that is ALREADY on the spreadsheet BY NAME:
+- User must clearly ask to CHANGE, UPDATE, SET, INCREASE, DECREASE, or APPLY qty/discount/price on a product name that appears in CURRENT SPREADSHEET.
+- Examples: "Add 10% discount to all items in Equipment section", "Change Intercom Labor sales price to $20,000", "Increase qty on the 4 door controller by 10"
+- NEVER use updates when user says "I need", "add", "include", or "$X in [type] labor" for something not already listed — that is explicitAdds or scope add.
+- NEVER use productKeywords that are only generic words like "labor", "service", or "total" — always include distinctive product-type words from the user's request AND from the spreadsheet product name.
 - If the user says "I need a four-door controller at 10% discount" and that product is ALREADY on the spreadsheet, use intent "update" with set_discount — NOT explicitAdds.
 - Do NOT infer discounts from scope-of-work text. Ignore discount mentions in bulk scope lists unless the user is explicitly updating existing lines.
 - For "10% discount on all items in Equipment section": op set_discount, scope section, sectionLabel Equipment, discountPercent 10

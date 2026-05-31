@@ -26,6 +26,12 @@ function stripAmountFromLabel(label: string): string {
     .trim();
 }
 
+function extractDollarAmount(text: string): number {
+  const match = text.match(/\$\s*([\d,]+(?:\.\d+)?)/);
+  if (!match) return 0;
+  return Math.max(0, Number(match[1].replace(/,/g, "")) || 0);
+}
+
 function normalizeItem(raw: RawExtractedItem, index: number): BuildExtractedItem {
   const kind = normalizeKind(raw.kind);
   const quantity = Math.max(1, Number(raw.quantity) || 1);
@@ -37,6 +43,13 @@ function normalizeItem(raw: RawExtractedItem, index: number): BuildExtractedItem
       ? raw.searchQuery?.trim() || stripAmountFromLabel(requestedLabel)
       : raw.searchQuery?.trim() || requestedLabel;
 
+  const lumpSumFromRaw =
+    raw.lumpSumAmount != null ? Math.max(0, Number(raw.lumpSumAmount) || 0) : 0;
+  const lumpSumAmount =
+    kind === "labor_lump_sum"
+      ? lumpSumFromRaw || extractDollarAmount(requestedLabel)
+      : undefined;
+
   return {
     id: crypto.randomUUID(),
     kind,
@@ -45,10 +58,7 @@ function normalizeItem(raw: RawExtractedItem, index: number): BuildExtractedItem
     quantity: kind === "labor_lump_sum" ? 1 : quantity,
     unit,
     discountPercent,
-    lumpSumAmount:
-      kind === "labor_lump_sum" && raw.lumpSumAmount != null
-        ? Math.max(0, Number(raw.lumpSumAmount) || 0)
-        : undefined,
+    lumpSumAmount: kind === "labor_lump_sum" ? lumpSumAmount : undefined,
   };
 }
 

@@ -17,10 +17,10 @@ import {
 import { buildSpreadsheetContext } from "@/lib/buildSpreadsheetContext";
 import type { BuildExplicitAdd } from "@/lib/applyBuildUpdates";
 import {
-  applyBuildUpdates,
-  summarizeAppliedUpdates,
+  previewBuildUpdates,
+  summarizeUpdateProposals,
 } from "@/lib/applyBuildUpdates";
-import { computeSpreadsheetTotals } from "@/lib/spreadsheetLineItems";
+import { resolveAnalyzeForRouting } from "@/lib/buildAnalyzeRouting";
 import type { SpreadsheetSection } from "@/types/database";
 
 export const maxDuration = 120;
@@ -90,13 +90,14 @@ async function buildCardsFromExplicitAdds(
 
     cards.push({
       itemId: crypto.randomUUID(),
-      kind: "product",
+      kind: item.kind,
       requestedLabel: item.requestedLabel,
-      quantity: item.quantity,
+      quantity: item.kind === "labor_lump_sum" ? 1 : item.quantity,
       unit: item.unit,
       discountPercent: item.discountPercent,
       primary,
       alternatives,
+      lumpSumAmount: item.lumpSumAmount,
     });
   }
 
@@ -232,144 +233,24 @@ export async function POST(request: NextRequest) {
         ? await loadSpreadsheet(supabase, activeSpreadsheetId, projectId)
         : null;
 
-    const analyze =
+    const analyze = resolveAnalyzeForRouting(
+      message.trim(),
       phase !== "parse"
         ? await analyzeBuildMessage(message.trim(), sheet?.sections ?? [])
-        : { intent: "add" as const, updates: [], explicitAdds: [], taxOrMarkupRequested: false };
+        : { intent: "add" as const, updates: [], explicitAdds: [], taxOrMarkupRequested: false },
+    );
 
     const hasExplicitAdds = analyze.explicitAdds.length > 0;
-    const wantsUpdate =
-      analyze.intent === "update" ||
-      (analyze.intent === "mixed" && analyze.updates.length > 0);
+    const hasUpdateProposals = analyze.updates.length > 0;
     const wantsScopeAdd =
       (analyze.intent === "add" || analyze.intent === "mixed") && !hasExplicitAdds;
     const wantsExplicitAdd =
       hasExplicitAdds && (analyze.intent === "add" || analyze.intent === "mixed");
 
-    // --- Update existing spreadsheet lines ---
-    if (wantsUpdate) {
-      if (!activeSpreadsheetId || !sheet) {
-        return NextResponse.json(
-          {
-            error:
-              "Open a spreadsheet with line items first, then ask me to change quantities or discounts.",
-          },
-          { status: 400 },
-        );
-      }
-
-      const { sections: updatedSections, applied } = applyBuildUpdates(
-        sheet.sections,
-        analyze.updates,
-      );
-      const { subtotal, total } = computeSpreadsheetTotals(updatedSections);
-
-      const { data: saved, error: saveError } = await supabase
-        .from("project_spreadsheets")
-        .update({ sections: updatedSections, subtotal, total })
-        .eq("id", activeSpreadsheetId)
-        .select("id, title, sections, template_id")
-        .single();
-
-      if (saveError) throw saveError;
-
-      let summary = summarizeAppliedUpdates(applied);
-      if (analyze.taxOrMarkupRequested) {
-        summary += `\n\n${taxNotice(analyze.taxMarkupSummary)}`;
-      }
-
-      const spreadsheetContext = buildSpreadsheetContext(
-        saved.id,
-        saved.title || sheet.title,
-        (saved.sections ?? []) as SpreadsheetSection[],
-        saved.template_id as string | null,
-      );
-
-      // Mixed: also return product cards for new items
-      if (wantsExplicitAdd) {
-        const cards = await buildCardsFromExplicitAdds(
-          supabase,
-          analyze.explicitAdds,
-          organizationId,
-        );
-        const parsePart: BuildParseResponse = {
-          kind: "parse",
-          summary: buildParseSummary(cards),
-          cards,
-          spreadsheetContext,
-          taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
-        };
-
-        const updatePart: BuildUpdateResponse = {
-          kind: "update",
-          summary,
-          updatesApplied: applied.length,
-          spreadsheetId: activeSpreadsheetId,
-          sections: updatedSections,
-          spreadsheetContext,
-          taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
-        };
-
-        return NextResponse.json({ kind: "mixed", update: updatePart, parse: parsePart });
-      }
-
-      if (wantsScopeAdd && analyze.intent === "mixed") {
-        const cards = await buildCardsFromScope(supabase, message.trim(), organizationId);
-        const parsePart: BuildParseResponse = {
-          kind: "parse",
-          summary: buildParseSummary(cards),
-          cards,
-          spreadsheetContext,
-          taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
-        };
-
-        const updatePart: BuildUpdateResponse = {
-          kind: "update",
-          summary,
-          updatesApplied: applied.length,
-          spreadsheetId: activeSpreadsheetId,
-          sections: updatedSections,
-          spreadsheetContext,
-          taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
-        };
-
-        return NextResponse.json({ kind: "mixed", update: updatePart, parse: parsePart });
-      }
-
-      const response: BuildUpdateResponse = {
-        kind: "update",
-        summary,
-        updatesApplied: applied.length,
-        spreadsheetId: activeSpreadsheetId,
-        sections: updatedSections,
-        spreadsheetContext,
-        taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
-      };
-
-      return NextResponse.json(response);
-    }
-
-    // Tax/markup only (no line updates, no new products)
-    if (analyze.taxOrMarkupRequested && !wantsScopeAdd && !wantsExplicitAdd) {
-      const response: BuildUpdateResponse = {
-        kind: "update",
-        summary: taxNotice(analyze.taxMarkupSummary),
-        updatesApplied: 0,
-        spreadsheetId: activeSpreadsheetId ?? "",
-        sections: sheet?.sections ?? [],
-        spreadsheetContext:
-          (activeSpreadsheetId
-            ? await loadSpreadsheetContext(supabase, activeSpreadsheetId, projectId)
-            : null) ?? undefined,
-        taxMarkupNotice: taxNotice(analyze.taxMarkupSummary),
-      };
-      return NextResponse.json(response);
-    }
-
-    // --- Add new products (explicit request or scope parse) ---
-    const cards = wantsExplicitAdd
-      ? await buildCardsFromExplicitAdds(supabase, analyze.explicitAdds, organizationId)
-      : await buildCardsFromScope(supabase, message.trim(), organizationId);
+    const updateProposals =
+      sheet && hasUpdateProposals
+        ? previewBuildUpdates(sheet.sections, analyze.updates)
+        : [];
 
     let spreadsheetContext: BuildSpreadsheetContext | undefined;
     if (activeSpreadsheetId) {
@@ -377,7 +258,42 @@ export async function POST(request: NextRequest) {
       if (ctx) spreadsheetContext = ctx;
     }
 
-    let summary = buildParseSummary(cards);
+    // Tax/markup only
+    if (analyze.taxOrMarkupRequested && !wantsScopeAdd && !wantsExplicitAdd && updateProposals.length === 0) {
+      const response: BuildUpdateResponse = {
+        kind: "update",
+        summary: taxNotice(analyze.taxMarkupSummary),
+        updatesApplied: 0,
+        spreadsheetId: activeSpreadsheetId ?? "",
+        sections: sheet?.sections ?? [],
+        spreadsheetContext,
+        taxMarkupNotice: taxNotice(analyze.taxMarkupSummary),
+      };
+      return NextResponse.json(response);
+    }
+
+    const cards = wantsExplicitAdd
+      ? await buildCardsFromExplicitAdds(supabase, analyze.explicitAdds, organizationId)
+      : wantsScopeAdd || updateProposals.length === 0
+        ? await buildCardsFromScope(supabase, message.trim(), organizationId)
+        : [];
+
+    const summaryParts: string[] = [];
+    if (updateProposals.length > 0) {
+      summaryParts.push(summarizeUpdateProposals(updateProposals));
+    }
+    if (cards.length > 0) {
+      summaryParts.push(buildParseSummary(cards));
+    }
+    if (summaryParts.length === 0) {
+      summaryParts.push(
+        updateProposals.length === 0 && hasUpdateProposals
+          ? "I couldn't find matching line items for that change. Try naming the product exactly as it appears on your spreadsheet."
+          : "I couldn't find any items to add or update from that message.",
+      );
+    }
+
+    let summary = summaryParts.join("\n\n---\n\n");
     if (analyze.taxOrMarkupRequested) {
       summary += `\n\n${taxNotice(analyze.taxMarkupSummary)}`;
     }
@@ -386,6 +302,7 @@ export async function POST(request: NextRequest) {
       kind: "parse",
       summary,
       cards,
+      updateProposals: updateProposals.length > 0 ? updateProposals : undefined,
       spreadsheetContext,
       taxMarkupNotice: analyze.taxOrMarkupRequested ? taxNotice(analyze.taxMarkupSummary) : undefined,
     };

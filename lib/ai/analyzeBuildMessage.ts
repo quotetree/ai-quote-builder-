@@ -26,6 +26,8 @@ interface RawExplicitAdd {
   quantity?: number;
   unit?: string;
   discountPercent?: number;
+  lumpSumAmount?: number;
+  kind?: string;
 }
 
 interface RawAnalyze {
@@ -44,19 +46,39 @@ const VALID_OPS = new Set([
   "adjust_sales_price",
 ]);
 
+function extractDollarAmount(text: string): number {
+  const match = text.match(/\$\s*([\d,]+(?:\.\d+)?)/);
+  if (!match) return 0;
+  return Math.max(0, Number(match[1].replace(/,/g, "")) || 0);
+}
+
 function normalizeExplicitAdd(raw: RawExplicitAdd): BuildExplicitAdd | null {
   const requestedLabel = raw.requestedLabel?.trim();
   const searchQuery = raw.searchQuery?.trim() || requestedLabel;
   if (!requestedLabel && !searchQuery) return null;
 
+  const label = requestedLabel || searchQuery || "Product";
+  const lumpSumAmount = Math.max(
+    0,
+    Number(raw.lumpSumAmount) ||
+      extractDollarAmount(label) ||
+      (searchQuery ? extractDollarAmount(searchQuery) : 0),
+  );
+  const isLabor =
+    raw.kind === "labor_lump_sum" ||
+    (lumpSumAmount > 0 && /\blabor\b/i.test(`${label} ${searchQuery}`));
+
   return {
-    requestedLabel: requestedLabel || searchQuery || "Product",
-    searchQuery: searchQuery || requestedLabel || "",
+    requestedLabel: label,
+    searchQuery: searchQuery || label,
     quantity: Math.max(1, Number(raw.quantity) || 1),
-    unit: (raw.unit?.trim() || "ea").toLowerCase(),
+    unit: (raw.unit?.trim() || (isLabor ? "ls" : "ea")).toLowerCase(),
     discountPercent: Math.min(100, Math.max(0, Number(raw.discountPercent) || 0)),
+    kind: isLabor ? "labor_lump_sum" : "product",
+    lumpSumAmount: isLabor ? lumpSumAmount : undefined,
   };
 }
+
 function normalizeUpdate(raw: RawUpdate): BuildUpdateInstruction | null {
   const op = raw.op?.trim();
   if (!op || !VALID_OPS.has(op)) return null;

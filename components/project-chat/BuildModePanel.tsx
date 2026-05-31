@@ -18,6 +18,8 @@ import type {
   BuildSpreadsheetContext,
   BuildUpdateResponse,
 } from "@/lib/ai/buildTypes";
+import type { BuildUpdateProposal } from "@/lib/applyBuildUpdates";
+import { applyBuildUpdateProposals } from "@/lib/applyBuildUpdates";
 import {
   buildRowFromInput,
   computeSpreadsheetTotals,
@@ -30,6 +32,7 @@ import type { ProjectSpreadsheet, SpreadsheetSection } from "@/types/database";
 import { useProducts } from "@/hooks/useProducts";
 import ScopeMessageBubble from "./ScopeMessageBubble";
 import BuildMatchCardComponent, { type BuildAddPayload } from "./BuildMatchCard";
+import BuildUpdateCard from "./BuildUpdateCard";
 import { trackAIChatMessage } from "@/lib/analytics";
 import type { ModeChatPanelHandle } from "./PlanModePanel";
 
@@ -46,6 +49,12 @@ function parseCards(msg: ChatMessage): BuildMatchCard[] {
   const cards = msg.metadata?.cards;
   if (!Array.isArray(cards)) return [];
   return cards as BuildMatchCard[];
+}
+
+function parseUpdateProposals(msg: ChatMessage): BuildUpdateProposal[] {
+  const proposals = msg.metadata?.updateProposals;
+  if (!Array.isArray(proposals)) return [];
+  return proposals as BuildUpdateProposal[];
 }
 
 function parseSpreadsheetContext(msg: ChatMessage): BuildSpreadsheetContext | undefined {
@@ -73,6 +82,8 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
     const [error, setError] = useState<string | null>(null);
     const [addedItemIds, setAddedItemIds] = useState<Set<string>>(new Set());
     const [addingItemId, setAddingItemId] = useState<string | null>(null);
+    const [appliedProposalIds, setAppliedProposalIds] = useState<Set<string>>(new Set());
+    const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
     const [liveSpreadsheetContext, setLiveSpreadsheetContext] =
       useState<BuildSpreadsheetContext | null>(null);
     const [localSpreadsheetId, setLocalSpreadsheetId] = useState<string | null>(null);
@@ -163,47 +174,6 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
       return data as ChatMessage;
     };
 
-    const syncSpreadsheetFromUpdate = async (update: BuildUpdateResponse) => {
-      if (!update.spreadsheetId || !update.sections?.length) return;
-
-      const { subtotal, total } = computeSpreadsheetTotals(update.sections);
-
-      window.dispatchEvent(
-        new CustomEvent("spreadsheetLineItemAdded", {
-          detail: {
-            spreadsheetId: update.spreadsheetId,
-            sections: update.sections,
-            subtotal,
-            total,
-          },
-        }),
-      );
-
-      if (update.spreadsheetContext) {
-        setLiveSpreadsheetContext(normalizeSpreadsheetContext(update.spreadsheetContext));
-      } else {
-        const { data } = await supabase
-          .from("project_spreadsheets")
-          .select("id, title, sections, template_id")
-          .eq("id", update.spreadsheetId)
-          .maybeSingle();
-        if (data) {
-          setLiveSpreadsheetContext(
-            buildSpreadsheetContext(
-              data.id,
-              data.title || "Untitled Spreadsheet",
-              (data.sections ?? []) as SpreadsheetSection[],
-              data.template_id as string | null,
-            ),
-          );
-        }
-      }
-
-      if (update.updatesApplied > 0) {
-        toast.success(`Updated ${update.updatesApplied} line item(s) on spreadsheet`);
-      }
-    };
-
     const sendMessage = async (textOverride?: string) => {
       const text = (textOverride ?? input).trim();
       if (!text || busy) return;
@@ -212,6 +182,7 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
       setError(null);
       setInput("");
       setAddedItemIds(new Set());
+      setAppliedProposalIds(new Set());
 
       try {
         await persistMessage("user", text);
@@ -234,30 +205,16 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
         }
 
         if (body.kind === "update") {
-          await syncSpreadsheetFromUpdate(body);
           await persistMessage("assistant", body.summary, {
             buildUpdate: true,
             updatesApplied: body.updatesApplied,
             spreadsheetContext: body.spreadsheetContext,
           });
-        } else if (body.kind === "mixed") {
-          await syncSpreadsheetFromUpdate(body.update);
-          const ctx =
-            body.parse.spreadsheetContext ??
-            body.update.spreadsheetContext ??
-            liveSpreadsheetContext ??
-            undefined;
-          const summary = `${body.update.summary}\n\n---\n\n${body.parse.summary}`;
-          await persistMessage("assistant", summary, {
-            buildUpdate: true,
-            updatesApplied: body.update.updatesApplied,
-            cards: body.parse.cards,
-            spreadsheetContext: ctx,
-          });
-        } else {
+        } else if (body.kind === "parse") {
           const ctx = body.spreadsheetContext ?? liveSpreadsheetContext ?? undefined;
           await persistMessage("assistant", body.summary, {
             cards: body.cards,
+            updateProposals: body.updateProposals,
             spreadsheetContext: ctx,
           });
         }
@@ -322,6 +279,75 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
       );
 
       return { id: sheet.id, sections: initialSections };
+    };
+
+    const handleApplyUpdate = async (proposal: BuildUpdateProposal) => {
+      if (!effectiveSpreadsheetId) {
+        toast.error("Open a spreadsheet first");
+        return;
+      }
+
+      setApplyingProposalId(proposal.proposalId);
+      try {
+        const { data, error: fetchError } = await supabase
+          .from("project_spreadsheets")
+          .select("id, title, sections, template_id")
+          .eq("id", effectiveSpreadsheetId)
+          .eq("project_id", projectId)
+          .maybeSingle();
+
+        if (fetchError) throw fetchError;
+        if (!data) throw new Error("Spreadsheet not found");
+
+        const currentSections = (data.sections ?? []) as SpreadsheetSection[];
+        const { sections: updatedSections, applied } = applyBuildUpdateProposals(
+          currentSections,
+          [proposal],
+        );
+        if (applied.length === 0) {
+          throw new Error("Could not apply that change — the row may have changed");
+        }
+
+        const { subtotal, total } = computeSpreadsheetTotals(updatedSections);
+        const { data: saved, error: updateError } = await supabase
+          .from("project_spreadsheets")
+          .update({ sections: updatedSections, subtotal, total })
+          .eq("id", effectiveSpreadsheetId)
+          .select("id, title, sections, template_id")
+          .single();
+
+        if (updateError) throw updateError;
+
+        window.dispatchEvent(
+          new CustomEvent("spreadsheetLineItemAdded", {
+            detail: {
+              spreadsheetId: effectiveSpreadsheetId,
+              sections: updatedSections,
+              subtotal,
+              total,
+              spreadsheet: saved as ProjectSpreadsheet,
+            },
+          }),
+        );
+
+        if (saved) {
+          setLiveSpreadsheetContext(
+            buildSpreadsheetContext(
+              saved.id,
+              saved.title || "Untitled Spreadsheet",
+              (saved.sections ?? []) as SpreadsheetSection[],
+              saved.template_id as string | null,
+            ),
+          );
+        }
+
+        setAppliedProposalIds((prev) => new Set(prev).add(proposal.proposalId));
+        toast.success(`Updated ${proposal.productName}`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to apply change");
+      } finally {
+        setApplyingProposalId(null);
+      }
     };
 
     const handleAddToQuote = async (payload: BuildAddPayload) => {
@@ -424,7 +450,11 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
 
     const latestAssistantWithCards = [...messages]
       .reverse()
-      .find((m) => m.role === "assistant" && parseCards(m).length > 0);
+      .find(
+        (m) =>
+          m.role === "assistant" &&
+          (parseCards(m).length > 0 || parseUpdateProposals(m).length > 0),
+      );
 
     return (
       <div className="flex flex-col flex-1 min-h-0">
@@ -439,9 +469,8 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center space-y-3">
               <p className="text-sm font-medium text-gray-900">Build</p>
               <p className="text-xs text-gray-600 leading-relaxed">
-                Describe scope to add products, or explicitly ask to change quantities or discounts on
-                lines already on your spreadsheet. Tax and markup must be edited in the
-                spreadsheet directly.
+                Describe scope to add products, or explicitly ask to change quantities, prices, or discounts on
+                lines already on your spreadsheet. You'll review and approve each change before it's applied.
               </p>
               <div className="flex flex-wrap justify-center gap-2 pt-1">
                 {EXAMPLE_PROMPTS.map((prompt) => (
@@ -460,10 +489,11 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
 
           {messages.map((msg) => {
             const cards = msg.role === "assistant" ? parseCards(msg) : [];
+            const updateProposals = msg.role === "assistant" ? parseUpdateProposals(msg) : [];
             const ctx =
               parseSpreadsheetContext(msg) ??
               (liveSpreadsheetContext ? normalizeSpreadsheetContext(liveSpreadsheetContext) : undefined);
-            const isLatestCardMessage = latestAssistantWithCards?.id === msg.id;
+            const isLatestProposalMessage = latestAssistantWithCards?.id === msg.id;
 
             return (
               <div key={msg.id} className="space-y-3">
@@ -471,6 +501,23 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
                   role={msg.role as "user" | "assistant"}
                   content={msg.content}
                 />
+                {updateProposals.length > 0 && (
+                  <div className="space-y-2">
+                    {updateProposals.map((proposal) => (
+                      <BuildUpdateCard
+                        key={proposal.proposalId}
+                        proposal={proposal}
+                        applied={
+                          isLatestProposalMessage
+                            ? appliedProposalIds.has(proposal.proposalId)
+                            : false
+                        }
+                        applying={applyingProposalId === proposal.proposalId}
+                        onApply={handleApplyUpdate}
+                      />
+                    ))}
+                  </div>
+                )}
                 {cards.length > 0 && (
                   <div className="space-y-2">
                     {cards.map((card) => (
@@ -480,7 +527,7 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
                         products={products}
                         productsLoading={productsLoading}
                         spreadsheetContext={ctx}
-                        added={isLatestCardMessage ? addedItemIds.has(card.itemId) : false}
+                        added={isLatestProposalMessage ? addedItemIds.has(card.itemId) : false}
                         adding={addingItemId === card.itemId}
                         onAdd={handleAddToQuote}
                       />
