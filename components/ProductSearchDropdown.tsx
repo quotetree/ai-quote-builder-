@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import type { Product } from "@/types/database";
@@ -35,6 +36,18 @@ export default function ProductSearchDropdown({
   onSearchChange,
   emptyPlaceholder = "No products found",
 }: ProductSearchDropdownProps) {
+  const emptyInputRef = useRef<HTMLInputElement>(null);
+  const [emptyInputFocused, setEmptyInputFocused] = useState(false);
+
+  useEffect(() => {
+    if (!emptyInputFocused) return;
+    const el = emptyInputRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  }, [emptyInputFocused]);
+
   if (!anchorRect) return null;
 
   const style: React.CSSProperties = {
@@ -69,22 +82,32 @@ export default function ProductSearchDropdown({
         {suggestions.length === 0 ? (
           onSearchChange ? (
             <div
-              className="flex items-center gap-0.5 px-3 py-2 min-h-[44px] cursor-text"
-              onMouseDown={(e) => e.preventDefault()}
+              className="px-3 py-2 min-h-[44px] cursor-text flex items-center"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setEmptyInputFocused(true);
+              }}
             >
-              <span
-                className="text-sm text-gray-800 dark:text-gray-200 select-none shrink-0 leading-none"
-                aria-hidden
-              >
-                |
-              </span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder={emptyPlaceholder}
-                className="flex-1 min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500"
-              />
+              {emptyInputFocused ? (
+                <input
+                  ref={emptyInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  onFocus={() => setEmptyInputFocused(true)}
+                  onBlur={() => setEmptyInputFocused(false)}
+                  placeholder={emptyPlaceholder}
+                  className="w-full min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                />
+              ) : searchQuery ? (
+                <span className="text-sm text-gray-800 dark:text-gray-200 truncate w-full">
+                  {searchQuery}
+                </span>
+              ) : (
+                <span className="text-sm text-gray-400 dark:text-gray-500 w-full">
+                  {emptyPlaceholder}
+                </span>
+              )}
             </div>
           ) : (
             <p className="px-3 py-3 text-sm text-gray-400 dark:text-gray-500">{emptyPlaceholder}</p>
