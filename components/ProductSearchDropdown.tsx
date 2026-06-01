@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import type { Product } from "@/types/database";
@@ -37,16 +37,14 @@ export default function ProductSearchDropdown({
   emptyPlaceholder = "No products found",
 }: ProductSearchDropdownProps) {
   const emptyInputRef = useRef<HTMLInputElement>(null);
-  const [emptyInputFocused, setEmptyInputFocused] = useState(false);
 
-  useEffect(() => {
-    if (!emptyInputFocused) return;
+  const focusEmptyInput = () => {
     const el = emptyInputRef.current;
     if (!el) return;
     el.focus();
     const len = el.value.length;
     el.setSelectionRange(len, len);
-  }, [emptyInputFocused]);
+  };
 
   if (!anchorRect) return null;
 
@@ -85,29 +83,18 @@ export default function ProductSearchDropdown({
               className="px-3 py-2 min-h-[44px] cursor-text flex items-center"
               onMouseDown={(e) => {
                 e.preventDefault();
-                setEmptyInputFocused(true);
+                focusEmptyInput();
               }}
             >
-              {emptyInputFocused ? (
-                <input
-                  ref={emptyInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  onFocus={() => setEmptyInputFocused(true)}
-                  onBlur={() => setEmptyInputFocused(false)}
-                  placeholder={emptyPlaceholder}
-                  className="w-full min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500"
-                />
-              ) : searchQuery ? (
-                <span className="text-sm text-gray-800 dark:text-gray-200 truncate w-full">
-                  {searchQuery}
-                </span>
-              ) : (
-                <span className="text-sm text-gray-400 dark:text-gray-500 w-full">
-                  {emptyPlaceholder}
-                </span>
-              )}
+              <input
+                ref={emptyInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                placeholder={emptyPlaceholder}
+                className="w-full min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 caret-transparent focus:caret-current"
+              />
             </div>
           ) : (
             <p className="px-3 py-3 text-sm text-gray-400 dark:text-gray-500">{emptyPlaceholder}</p>
