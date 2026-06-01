@@ -288,7 +288,6 @@ function SpreadsheetRowItem({
             searchQuery={row.product_name}
             onSearchChange={(value) => {
               updateRow(sectionId, row.id, { product_name: value, product_id: null });
-              openDropdown("name");
             }}
           />
         )}
@@ -318,7 +317,6 @@ function SpreadsheetRowItem({
             searchQuery={row.product_code}
             onSearchChange={(value) => {
               updateRow(sectionId, row.id, { product_code: value, product_id: null });
-              openDropdown("code");
             }}
           />
         )}

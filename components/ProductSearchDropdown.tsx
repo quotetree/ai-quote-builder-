@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import type { Product } from "@/types/database";
@@ -37,6 +37,7 @@ export default function ProductSearchDropdown({
   emptyPlaceholder = "No products found",
 }: ProductSearchDropdownProps) {
   const emptyInputRef = useRef<HTMLInputElement>(null);
+  const emptyInputFocusedRef = useRef(false);
 
   const focusEmptyInput = () => {
     const el = emptyInputRef.current;
@@ -45,6 +46,16 @@ export default function ProductSearchDropdown({
     const len = el.value.length;
     el.setSelectionRange(len, len);
   };
+
+  // Keep typing uninterrupted when parent re-renders or suggestions appear.
+  useLayoutEffect(() => {
+    if (!emptyInputFocusedRef.current) return;
+    const el = emptyInputRef.current;
+    if (!el || document.activeElement === el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  }, [searchQuery, suggestions.length]);
 
   if (!anchorRect) return null;
 
@@ -77,49 +88,55 @@ export default function ProductSearchDropdown({
       )}
 
       <div className="overflow-y-auto" style={{ maxHeight: "224px" }}>
-        {suggestions.length === 0 ? (
-          onSearchChange ? (
-            <div
-              className="px-3 py-2 min-h-[44px] cursor-text flex items-center"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                focusEmptyInput();
+        {suggestions.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onSelect(p);
+            }}
+            className="w-full text-left px-3 py-2 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors border-b border-gray-100 dark:border-gray-800 last:border-0"
+          >
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+              {p.product_name}
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-2 mt-0.5">
+              {p.product_number && <span>#{p.product_number}</span>}
+              <span>{fmt(p.sales_price)}</span>
+            </p>
+          </button>
+        ))}
+
+        {onSearchChange ? (
+          <div
+            className={`px-3 py-2 min-h-[44px] cursor-text flex items-center ${
+              suggestions.length > 0 ? "border-t border-gray-200 dark:border-gray-700" : ""
+            }`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              focusEmptyInput();
+            }}
+          >
+            <input
+              ref={emptyInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              onFocus={() => {
+                emptyInputFocusedRef.current = true;
               }}
-            >
-              <input
-                ref={emptyInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                onMouseDown={(e) => e.stopPropagation()}
-                placeholder={emptyPlaceholder}
-                className="w-full min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 caret-transparent focus:caret-current"
-              />
-            </div>
-          ) : (
-            <p className="px-3 py-3 text-sm text-gray-400 dark:text-gray-500">{emptyPlaceholder}</p>
-          )
-        ) : (
-          suggestions.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onSelect(p);
+              onBlur={() => {
+                emptyInputFocusedRef.current = false;
               }}
-              className="w-full text-left px-3 py-2 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors border-b border-gray-100 dark:border-gray-800 last:border-0"
-            >
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                {p.product_name}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-2 mt-0.5">
-                {p.product_number && <span>#{p.product_number}</span>}
-                <span>{fmt(p.sales_price)}</span>
-              </p>
-            </button>
-          ))
-        )}
+              onMouseDown={(e) => e.stopPropagation()}
+              placeholder={emptyPlaceholder}
+              className="w-full min-w-0 text-sm bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 caret-transparent focus:caret-current"
+            />
+          </div>
+        ) : suggestions.length === 0 ? (
+          <p className="px-3 py-3 text-sm text-gray-400 dark:text-gray-500">{emptyPlaceholder}</p>
+        ) : null}
       </div>
     </div>,
     document.body,

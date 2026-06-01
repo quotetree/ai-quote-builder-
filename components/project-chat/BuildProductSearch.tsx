@@ -90,7 +90,6 @@ export default function BuildProductSearch({
           searchQuery={query}
           onSearchChange={(value) => {
             setQuery(value);
-            openDropdown();
           }}
         />
       )}
