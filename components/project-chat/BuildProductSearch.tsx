@@ -87,6 +87,11 @@ export default function BuildProductSearch({
           anchorRect={anchorRect}
           dropdownRef={dropdownRef}
           minWidth={280}
+          searchQuery={query}
+          onSearchChange={(value) => {
+            setQuery(value);
+            openDropdown();
+          }}
         />
       )}
     </div>
