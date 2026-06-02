@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Calendar,
   CheckSquare,
@@ -89,6 +89,8 @@ export default function ProposalElement({
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showQuoteMenu, setShowQuoteMenu] = useState(false);
+  const [varIsEditing, setVarIsEditing] = useState(false);
+  const [varDraft, setVarDraft] = useState("");
   const quoteMenuRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,6 +100,36 @@ export default function ProposalElement({
   const isFocused = useRef(false);
 
   const { id, type, x, y, w, h, content, styles } = element;
+
+  const commitVarValue = useCallback(
+    (value: string) => {
+      if (onCustomVarSync && element.variableName) {
+        onCustomVarSync(element.variableName, value);
+      } else {
+        onContentChange(id, value);
+      }
+    },
+    [id, element.variableName, onCustomVarSync, onContentChange]
+  );
+
+  const beginVarEdit = useCallback(() => {
+    setVarIsEditing(true);
+    setVarDraft("");
+    setTimeout(() => varValueRef.current?.focus(), 0);
+  }, []);
+
+  const endVarEdit = useCallback(
+    (value: string) => {
+      setVarIsEditing(false);
+      commitVarValue(value);
+    },
+    [commitVarValue]
+  );
+
+  useEffect(() => {
+    setVarIsEditing(false);
+    setVarDraft("");
+  }, [id]);
 
   // Track previous selection state so we can detect when the element is selected
   // programmatically (e.g. from the field manager) vs. by a direct click.
@@ -110,9 +142,9 @@ export default function ProposalElement({
     if (type === "text") {
       setTimeout(() => editableRef.current?.focus(), 150);
     } else if (type === "custom_variable") {
-      setTimeout(() => varValueRef.current?.focus(), 150);
+      setTimeout(() => beginVarEdit(), 150);
     }
-  }, [isSelected, isReadOnly, type]);
+  }, [isSelected, isReadOnly, type, beginVarEdit]);
 
   // For recipient-assignable elements: look up the assigned recipient by email stored in variableName
   const ASSIGNABLE_TYPES = ["signature", "initial", "date", "checkbox"];
@@ -205,7 +237,7 @@ export default function ProposalElement({
       setTimeout(() => editableRef.current?.focus(), 0);
     }
     if (type === "custom_variable") {
-      setTimeout(() => varValueRef.current?.focus(), 0);
+      setTimeout(() => beginVarEdit(), 0);
     }
   };
 
@@ -388,43 +420,84 @@ export default function ProposalElement({
       );
     }
 
-    // ── Custom Variable — value input field ──────────────────────────────────
+    // ── Custom Variable — chip when idle; empty cursor while editing ────────
     if (type === "custom_variable") {
       const varFontStyle: React.CSSProperties = {
         fontSize: styles.fontSize,
         fontFamily: styles.fontFamily,
         color: styles.color,
       };
+      const fieldNameLabel = element.variableName
+        ? `[${element.variableName}]`
+        : null;
+      const hasValue = Boolean((element.content || "").trim());
+      const chipOnlyLayout = Boolean(fieldNameLabel) && !hasValue && !varIsEditing;
 
-      // Read-only / export: show the typed content as plain text
+      const fieldNameBadge = fieldNameLabel ? (
+        <span
+          className="relative z-[1] flex-shrink-0 px-2 py-0.5 rounded-sm bg-[#fef08a] text-black leading-tight select-none pointer-events-none"
+          style={{ fontSize: styles.fontSize ?? 14, fontFamily: styles.fontFamily }}
+          aria-hidden
+        >
+          {fieldNameLabel}
+        </span>
+      ) : null;
+
+      const varBoxClass =
+        "relative w-full h-full box-border rounded-md border border-gray-300 bg-white flex items-center overflow-hidden px-2 py-1 min-w-0";
+
+      const editingInput = (
+        <input
+          ref={varValueRef}
+          type="text"
+          value={varDraft}
+          onChange={(e) => setVarDraft(e.target.value)}
+          onBlur={(e) => endVarEdit(e.target.value)}
+          onMouseDown={(e) => e.stopPropagation()}
+          placeholder=""
+          className="relative z-[1] w-full min-w-0 border-0 outline-none bg-transparent p-0 m-0 h-auto caret-black"
+          style={varFontStyle}
+        />
+      );
+
+      // Read-only / export — chip when empty, saved value only when filled
       if (isReadOnly) {
         return (
-          <div className="w-full h-full flex items-center px-1" style={varFontStyle}>
-            {element.content || ""}
+          <div
+            className={`${varBoxClass} ${chipOnlyLayout ? "justify-center" : "justify-start"}`}
+            style={varFontStyle}
+          >
+            {!hasValue && fieldNameBadge}
+            {hasValue && <span className="truncate min-w-0">{element.content}</span>}
           </div>
         );
       }
 
-      // Editor mode: always a simple value input
-      return (
-        <div className="w-full h-full">
-          <input
-            ref={varValueRef}
-            type="text"
-            value={element.content || ""}
-            onChange={(e) => {
-              const newValue = e.target.value;
-              if (onCustomVarSync && element.variableName) {
-                onCustomVarSync(element.variableName, newValue);
-              } else {
-                onContentChange(id, newValue);
-              }
-            }}
+      if (varIsEditing) {
+        return (
+          <div
+            className={`${varBoxClass} justify-start`}
             onMouseDown={(e) => e.stopPropagation()}
-            placeholder="Enter value"
-            className="w-full h-full px-2 rounded border border-brand-green/30 outline-none bg-transparent placeholder:text-brand-green/40"
-            style={varFontStyle}
-          />
+          >
+            {editingInput}
+          </div>
+        );
+      }
+
+      // Idle: chip when empty; saved value only after blur (replaces chip)
+      return (
+        <div
+          className={`${varBoxClass} ${
+            chipOnlyLayout ? "justify-center" : "justify-start"
+          }`}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {!hasValue && fieldNameBadge}
+          {hasValue && (
+            <span className="relative z-[1] truncate min-w-0" style={varFontStyle}>
+              {element.content}
+            </span>
+          )}
         </div>
       );
     }
@@ -763,7 +836,11 @@ export default function ProposalElement({
 
       {/* Standard selection label bar for non-image elements */}
       {isSelected && !isReadOnly && type !== "image" && (
-        <div className="absolute -top-6 left-0 flex items-center gap-0.5 bg-blue-500 rounded-t px-1.5 py-0.5 text-white select-none z-10">
+        <div
+          className={`absolute left-0 flex items-center gap-0.5 bg-blue-500 rounded-t px-1.5 py-0.5 text-white select-none z-20 shadow-sm ${
+            type === "custom_variable" ? "-top-7" : "-top-6"
+          }`}
+        >
           <GripVertical size={11} className="cursor-move" />
           <span
             className={`text-[10px] font-medium font-mono ${isAssignable ? "cursor-pointer hover:text-blue-200" : ""}`}

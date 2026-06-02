@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2, ArrowLeft, Layout } from "lucide-react";
+import { Plus, Download, Edit, Check, X, MoreVertical, Copy, FileEdit, Trash2, ArrowLeft } from "lucide-react";
 import ProposalTemplateModal, {
   type ProposalAutoSaveStatus,
 } from "@/components/proposal-template/ProposalTemplateModal";
@@ -1479,9 +1479,9 @@ export default function LogPanel({ projectId }: LogPanelProps) {
               <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Edit/View</h3>
               <button
                 onClick={() => setEditChoiceQuote(null)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                className="group p-2 rounded-lg border border-transparent transition-colors hover:bg-green-50 dark:hover:bg-brand-green/20 hover:border-brand-green"
               >
-                <X size={20} />
+                <X size={20} className="text-gray-500 group-hover:text-brand-green transition-colors" />
               </button>
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 truncate">
@@ -1495,10 +1495,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   setEditChoiceQuote(null);
                   void handleEditQuote(q);
                 }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+                className="group w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-700 hover:bg-green-50 dark:hover:bg-brand-green/20 hover:border-brand-green"
               >
-                <Edit size={18} className="text-gray-500 flex-shrink-0" />
-                Edit/View Quote
+                <span className="group-hover:text-brand-green transition-colors">Quote</span>
+                <Edit size={18} className="text-gray-500 flex-shrink-0 group-hover:text-brand-green transition-colors" />
               </button>
               <button
                 type="button"
@@ -1506,10 +1506,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   openEditProposal(editChoiceQuote);
                   setEditChoiceQuote(null);
                 }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+                className="group w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-gray-800 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-700 hover:bg-green-50 dark:hover:bg-brand-green/20 hover:border-brand-green"
               >
-                <Layout size={18} className="text-green-600 flex-shrink-0" />
-                Edit/View Proposal
+                <span className="group-hover:text-brand-green transition-colors">Proposal</span>
+                <Edit size={18} className="text-gray-500 flex-shrink-0 group-hover:text-brand-green transition-colors" />
               </button>
             </div>
           </div>
