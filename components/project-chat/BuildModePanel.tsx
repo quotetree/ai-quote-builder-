@@ -63,12 +63,6 @@ function parseSpreadsheetContext(msg: ChatMessage): BuildSpreadsheetContext | un
   return normalizeSpreadsheetContext(ctx as BuildSpreadsheetContext & { isNonBlank?: boolean });
 }
 
-const EXAMPLE_PROMPTS = [
-  "10 Verkada 1yr licenses, 5 bullet cameras, 5 CD53s, 3 boxes of cable, $8,800 camera labor",
-  "I need a four-door access controller at a 10% discount",
-  "Add 10% discount to all items in the Equipment section",
-];
-
 const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
   function BuildModePanel({ projectId, activeSpreadsheetId = null }, ref) {
     const supabase = createClient();
@@ -466,24 +460,11 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
           )}
 
           {!loadingMessages && messages.length === 0 && !busy && (
-            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center space-y-3">
-              <p className="text-sm font-medium text-gray-900">Build</p>
+            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center space-y-2">
+              <p className="text-sm font-medium text-gray-900">BuildIQ</p>
               <p className="text-xs text-gray-600 leading-relaxed">
-                Describe scope to add products, or explicitly ask to change quantities, prices, or discounts on
-                lines already on your spreadsheet. You'll review and approve each change before it's applied.
+                Pull product from your catalog into a quote by chatting with AI
               </p>
-              <div className="flex flex-wrap justify-center gap-2 pt-1">
-                {EXAMPLE_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => void sendMessage(prompt)}
-                    className="text-xs rounded-full border border-gray-300 bg-white px-3 py-1 text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-colors text-left"
-                  >
-                    {prompt.length > 60 ? `${prompt.slice(0, 57)}…` : prompt}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
 
@@ -556,7 +537,7 @@ const BuildModePanel = forwardRef<ModeChatPanelHandle, BuildModePanelProps>(
               }
             }}
             rows={2}
-            placeholder="Paste scope or ask explicitly to update qty/discount…"
+            placeholder="Request products or services to add..."
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-green-500"
             disabled={busy}
           />

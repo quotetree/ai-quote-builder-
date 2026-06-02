@@ -94,11 +94,11 @@ async function readStreamError(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
-const EXAMPLE_PROMPTS = [
-  "Bullet cameras under $1,000",
-  "Do we carry Verkada domes?",
-  "Fiber tools and testers",
-  "What's the margin on SKU ABC-123?",
+const PRODUCTIQ_EXAMPLES = [
+  "Find products under $500",
+  "Compare available options",
+  "Show products by manufacturer",
+  "Margin on SKU ABC-123",
 ];
 
 const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
@@ -252,24 +252,15 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
 
           {!loadingMessages && messages.length === 0 && !streamingText && !busy && (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center space-y-3">
-              <p className="text-sm font-medium text-gray-900">Price Book Copilot</p>
+              <p className="text-sm font-medium text-gray-900">ProductIQ</p>
               <p className="text-xs text-gray-600 leading-relaxed">
-                ChatGPT for your company&apos;s products, pricing, and inventory. Search by
-                natural language, compare options, and calculate margins — all grounded in your
-                price book.
+                AI-powered search across your products, pricing, inventory and margins
               </p>
-              <div className="flex flex-wrap justify-center gap-2 pt-1">
-                {EXAMPLE_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => void sendMessage(prompt)}
-                    className="text-xs rounded-full border border-gray-300 bg-white px-3 py-1 text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-colors"
-                  >
-                    {prompt}
-                  </button>
+              <ul className="text-xs text-gray-800 text-left inline-block space-y-1.5 pt-1 list-disc pl-5 font-semibold">
+                {PRODUCTIQ_EXAMPLES.map((example) => (
+                  <li key={example}>{example}</li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
 
@@ -304,7 +295,7 @@ const PlanModePanel = forwardRef<ModeChatPanelHandle, PlanModePanelProps>(
               }
             }}
             rows={2}
-            placeholder="Search products, pricing, margins…"
+            placeholder="Search your product catalog with natural language..."
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-green-500"
             disabled={busy}
           />

@@ -23,7 +23,7 @@ export default function ProjectChatPanel({
   className = "",
   onClose,
 }: ProjectChatPanelProps) {
-  const [mode, setMode] = useState<ChatAssistantMode>("plan");
+  const [mode, setMode] = useState<ChatAssistantMode>("build");
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeMenuRef = useRef<HTMLDivElement>(null);
 
@@ -63,7 +63,7 @@ export default function ProjectChatPanel({
   }, []);
 
   const modeLabel =
-    mode === "scope" ? "Scope" : mode === "build" ? "Build" : "Price Book";
+    mode === "scope" ? "ScopeIQ" : mode === "build" ? "BuildIQ" : "ProductIQ";
   const ModeIcon = mode === "scope" ? FileText : mode === "build" ? Hammer : Compass;
 
   const handleClearChat = () => {
@@ -156,16 +156,16 @@ export default function ProjectChatPanel({
               <button
                 type="button"
                 onClick={() => {
-                  setMode("plan");
+                  setMode("build");
                   setModeMenuOpen(false);
                 }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                  mode === "plan" ? "text-gray-900 font-medium" : "text-gray-600"
+                  mode === "build" ? "text-gray-900 font-medium" : "text-gray-600"
                 }`}
               >
-                <Compass size={14} />
-                Price Book
-                {mode === "plan" && <span className="ml-auto text-green-600">✓</span>}
+                <Hammer size={14} />
+                BuildIQ
+                {mode === "build" && <span className="ml-auto text-green-600">✓</span>}
               </button>
               <button
                 type="button"
@@ -178,22 +178,22 @@ export default function ProjectChatPanel({
                 }`}
               >
                 <FileText size={14} />
-                Scope
+                ScopeIQ
                 {mode === "scope" && <span className="ml-auto text-green-600">✓</span>}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setMode("build");
+                  setMode("plan");
                   setModeMenuOpen(false);
                 }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                  mode === "build" ? "text-gray-900 font-medium" : "text-gray-600"
+                  mode === "plan" ? "text-gray-900 font-medium" : "text-gray-600"
                 }`}
               >
-                <Hammer size={14} />
-                Build
-                {mode === "build" && <span className="ml-auto text-green-600">✓</span>}
+                <Compass size={14} />
+                ProductIQ
+                {mode === "plan" && <span className="ml-auto text-green-600">✓</span>}
               </button>
             </div>
           )}
