@@ -12,7 +12,6 @@ import ProposalEditorToolbar from "./ProposalEditorToolbar";
 import ProposalCanvas from "./ProposalCanvas";
 import ProposalQuickAdd, { QuoteOption } from "./ProposalQuickAdd";
 import ProposalFieldManager from "./ProposalFieldManager";
-import ProposalExportRenderer from "./ProposalExportRenderer";
 import ProposalRecipientsPanel from "./ProposalRecipientsPanel";
 import ProposalShareLinkModal from "./ProposalShareLinkModal";
 import ProposalGeneratorModal, { ProposalOption } from "./ProposalGeneratorModal";
@@ -202,8 +201,6 @@ export default function ProposalTemplateModal({
   // Saved selection state so font-size changes can be applied after the dropdown steals focus
   const savedRangeRef = useRef<Range | null>(null);
   const savedEditableRef = useRef<HTMLElement | null>(null);
-  // Refs to the hidden off-screen page divs used for html2canvas PDF capture
-  const hiddenPageRefs = useRef<(HTMLDivElement | null)[]>([]);
   // Tracks which element ids have content that exceeds their page height
   const [overflowedElementIds, setOverflowedElementIds] = useState<Set<string>>(new Set());
 
@@ -1091,8 +1088,7 @@ export default function ProposalTemplateModal({
 
   /**
    * Silently persists the current page state to the database without showing
-   * user-facing toasts. Used internally by handleDownloadPDF to ensure the
-   * export page has the latest data before PDFShift fetches it.
+   * user-facing toasts. Used before PDF export so the server reads latest data.
    * Returns true on success, false on failure.
    */
   const doSilentSave = async (): Promise<boolean> => {
@@ -1102,7 +1098,7 @@ export default function ProposalTemplateModal({
 
   const handleDownloadPDF = async () => {
     // When the document is completed and Firma has a signed PDF, download that
-    // instead of regenerating the unsigned proposal via html2canvas.
+    // instead of regenerating the unsigned proposal.
     if (signatureStatus === "completed" && quoteId) {
       setDownloadingPDF(true);
       const toastId = toast.loading("Downloading signed PDF…");
@@ -1136,182 +1132,56 @@ export default function ProposalTemplateModal({
     }
 
     if (pages.length === 0) { toast.error("No pages to export."); return; }
-    setDownloadingPDF(true);
-    const toastId = toast.loading("Generating PDF…");
+    if (!quoteId) {
+      toast.error("Save this proposal to a quote before downloading.");
+      return;
+    }
 
-    // Temporary container used to host cloned page nodes for html2canvas capture.
-    // It lives at z-index:-9999 so it is never visible but is fully in the DOM
-    // and not clipped by any overflow:hidden ancestor.
-    const tmpWrapper = document.createElement("div");
-    tmpWrapper.setAttribute("data-pdf-capture", "true");
-    tmpWrapper.style.cssText =
-      "position:fixed;top:0;left:0;z-index:-9999;pointer-events:none;background:white;width:816px;overflow:visible;";
-    document.body.appendChild(tmpWrapper);
+    setDownloadingPDF(true);
+    const toastId = toast.loading("Generating proposal PDF…");
 
     try {
-      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import("html2canvas"),
-        import("jspdf"),
-      ]);
-
-      // US Letter in PDF points: 612 × 792 pt (at 72 dpi).
-      // Our canvas space is 816 × 1056 px (at 96 dpi).
-      // The pixel→point scale is 612/816 = 0.75.
-      const PDF_W  = 612;
-      const PX_TO_PT = PDF_W / 816; // 0.75
-
-      // Capture at the physical device pixel ratio so text is sharp on Retina
-      // displays. The canvas will be dpr× larger in pixel count but is embedded
-      // in the PDF at the same logical pt dimensions, giving full-resolution output.
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-
-      // ── Dev-only: log preview dimensions before capture ──────────────────
-      if (process.env.NODE_ENV === "development") {
-        console.group("[PDF Export] Preview → PDF dimensions");
-        pages.forEach((page, i) => {
-          const ref = hiddenPageRefs.current[i];
-          console.log(
-            `Page ${i + 1}: pageHeight=${page.pageHeight ?? 1056}  ` +
-            `bgImage=${!!page.backgroundImage}  elements=${page.elements.length}  ` +
-            `exportDOM: ${ref?.offsetWidth ?? "?"}×${ref?.offsetHeight ?? "?"}px`
-          );
-          page.elements.forEach((el) => {
-            const base = `  [${el.type}] id=${el.id.slice(0, 8)} x=${el.x} y=${el.y} w=${el.w} h=${el.h}`;
-            if (el.type === "text" || el.type === "custom_variable") {
-              console.log(`${base} fontSize=${el.styles?.fontSize}`);
-            } else if (el.type === "image") {
-              const src = el.content ?? "";
-              const srcType = src.startsWith("data:") ? "base64" : src.startsWith("blob:") ? "blob" : "public-url";
-              console.log(`${base} imgSrc=${srcType} (${src.slice(0, 60)}…)`);
-            } else {
-              console.log(base);
-            }
-          });
-        });
-        console.groupEnd();
+      const saved = await doSilentSave();
+      if (!saved) {
+        throw new Error("Could not save proposal before export. Add content and try again.");
       }
 
-      let doc: InstanceType<typeof jsPDF> | null = null;
+      const response = await fetch("/api/generate-proposal-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId, quoteName: quoteName ?? "proposal" }),
+      });
 
-      for (let i = 0; i < pages.length; i++) {
-        const page  = pages[i];
-        const pageEl = hiddenPageRefs.current[i];
-        if (!pageEl) {
-          console.warn(`[PDF] No DOM ref for page ${i + 1} — skipping`);
-          continue;
+      if (!response.ok) {
+        let msg = "Failed to generate proposal PDF";
+        try {
+          const j = await response.json();
+          if (j?.error) msg = j.error;
+        } catch {
+          /* ignore */
         }
-
-        // Compute capture height BEFORE cloning so minHeight and the inner
-        // ProposalPage div both get the correct value.
-        // If any element overflows the standard page height, expand to capture it
-        // fully — this prevents html2canvas from clipping elements at the bottom.
-        const maxElBottom = page.elements.reduce(
-          (max, el) => Math.max(max, el.y + el.h),
-          PAGE_HEIGHT
-        );
-        const nodeH = Math.max(PAGE_HEIGHT, maxElBottom);
-        const PDF_H = Math.round(nodeH * PX_TO_PT);
-
-        // Clone the off-screen page node into our visible temp container.
-        // This avoids html2canvas issues with elements positioned at left:-1200px.
-        const clone = pageEl.cloneNode(true) as HTMLDivElement;
-        clone.style.position  = "relative";
-        clone.style.left      = "0";
-        clone.style.top       = "0";
-        clone.style.width     = "816px";
-        // Use nodeH (not PAGE_HEIGHT) so the clone is tall enough to contain any
-        // overflowing absolutely-positioned elements before html2canvas captures.
-        clone.style.minHeight = `${nodeH}px`;
-        clone.style.background = "#ffffff";
-
-        // When elements overflow the standard 1056 px page, expand the ProposalPage
-        // div inside the clone to match nodeH so nothing is clipped by the inner
-        // container's fixed height before html2canvas reads the pixels.
-        if (nodeH > PAGE_HEIGHT && !page.backgroundImage) {
-          const innerPage = clone.firstElementChild as HTMLElement | null;
-          if (innerPage) {
-            innerPage.style.height = `${nodeH}px`;
-            innerPage.style.overflow = "visible";
-          }
+        if (response.status === 403) {
+          msg = "No proposal yet. Save the proposal first.";
         }
-
-        // Ensure all images use CORS mode so html2canvas can read pixel data.
-        // ProposalExportRenderer already loads them with crossOrigin="anonymous",
-        // so the browser cache already has the CORS-enabled version.
-        clone.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
-          img.crossOrigin = "anonymous";
-        });
-
-        tmpWrapper.innerHTML = "";
-        tmpWrapper.appendChild(clone);
-
-        // Wait for any images in the clone to finish loading (usually instant
-        // since the originals are already cached from ProposalExportRenderer).
-        const imgEls = Array.from(clone.querySelectorAll<HTMLImageElement>("img"));
-        await Promise.all(
-          imgEls.map((img) =>
-            img.complete
-              ? Promise.resolve()
-              : new Promise<void>((resolve) => {
-                  img.onload  = () => resolve();
-                  img.onerror = () => {
-                    console.warn(`[PDF] Image failed to load on page ${i + 1}:`, img.src?.slice(0, 80));
-                    resolve(); // don't block the rest of the PDF
-                  };
-                })
-          )
-        );
-
-        if (process.env.NODE_ENV === "development") {
-          const cloneH = clone.offsetHeight;
-          console.log(
-            `[PDF] Page ${i + 1}: cloneH=${cloneH} origH=${pageEl.offsetHeight} ` +
-            `capture ${816}×${nodeH}px (×${dpr}dpr) → PDF ${PDF_W}×${PDF_H}pt  ` +
-            `images=[${imgEls.map((img) => {
-              const s = img.src ?? "";
-              return s.startsWith("data:") ? "base64" : s.startsWith("blob:") ? "blob" : "url";
-            }).join(", ")}]`
-          );
-        }
-
-        // Capture the cloned page exactly as the browser renders it.
-        // scale:dpr → physical pixel resolution on Retina displays so text in
-        // the PDF is as sharp as the browser preview (not half-resolution).
-        // The canvas will be 816*dpr × nodeH*dpr physical pixels but is added
-        // to jsPDF at the same logical PDF_W×PDF_H pt dimensions.
-        const canvas = await html2canvas(clone, {
-          useCORS:         true,
-          allowTaint:      false,
-          backgroundColor: "#ffffff",
-          scale:           dpr,
-          logging:         false,
-          width:           816,
-          height:          nodeH,
-        });
-
-        // Embed the captured page image into the PDF at the correct dimensions.
-        // Lower JPEG quality slightly (0.92) since dpr≥2 gives 4× more pixels anyway.
-        const imgData = canvas.toDataURL("image/jpeg", dpr >= 2 ? 0.92 : 0.95);
-        if (i === 0) {
-          doc = new jsPDF({ unit: "pt", format: [PDF_W, PDF_H], orientation: "portrait" });
-        } else {
-          doc!.addPage([PDF_W, PDF_H]);
-        }
-        doc!.addImage(imgData, "JPEG", 0, 0, PDF_W, PDF_H);
+        throw new Error(msg);
       }
 
-      if (!doc) throw new Error("No pages were captured.");
-
-      const filename = quoteName
-        ? quoteName.replace(/[^a-z0-9\-_ ]/gi, "").trim() || "proposal"
-        : "proposal";
-      doc.save(`${filename}.pdf`);
-      toast.success("PDF downloaded!", { id: toastId });
-    } catch (err: any) {
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = (quoteName ?? "proposal").replace(/[^\w\-. ]/g, "").trim() || "proposal";
+      a.download = `${safeName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Proposal PDF downloaded", { id: toastId });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to download proposal PDF";
       console.error("[PDF] Generation failed:", err);
-      toast.error(err?.message ?? "Failed to generate PDF", { id: toastId });
+      toast.error(msg, { id: toastId });
     } finally {
-      if (document.body.contains(tmpWrapper)) document.body.removeChild(tmpWrapper);
       setDownloadingPDF(false);
     }
   };
@@ -2246,23 +2116,6 @@ export default function ProposalTemplateModal({
       </div>
   );
 
-  /**
-   * ProposalExportRenderer portals to document.body — completely outside
-   * the editor's overflow:hidden container and any ancestor transforms.
-   * This is the ONLY render used for PDF export.
-   * The old inline hidden container (opacity:0 inside overflow:hidden) has
-   * been removed because opacity:0 caused html2canvas to capture blank pages.
-   */
-  // ProposalExportRenderer stays mounted off-screen so html2canvas can
-  // read layout (offsetWidth/offsetHeight/getBCR) from hiddenPageRefs.
-  // PDF capture uses a separate createRoot temp container (see handleDownloadPDF).
-  const exportRenderer = (
-    <ProposalExportRenderer
-      pages={pages}
-      onPageRef={(idx, el) => { hiddenPageRefs.current[idx] = el; }}
-    />
-  );
-
   const shareLinkModal = quoteId ? (
     <ProposalShareLinkModal
       isOpen={shareLinkOpen}
@@ -2281,11 +2134,10 @@ export default function ProposalTemplateModal({
     />
   ) : null;
 
-  if (inline) return <>{exportRenderer}{innerContent}{shareLinkModal}</>;
+  if (inline) return <>{innerContent}{shareLinkModal}</>;
 
   return (
     <>
-      {exportRenderer}
       {shareLinkModal}
       <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
         {innerContent}
