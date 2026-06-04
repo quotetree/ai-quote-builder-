@@ -13,6 +13,8 @@
 
 import sharp from "sharp";
 import type { TemplatePage, TemplateElement } from "@/components/proposal-template/proposalTemplateTypes";
+import type { QuoteWithProfile } from "@/components/proposal-template/QuoteBlock";
+import { renderQuoteBlockHtml } from "@/lib/proposal/quoteBlockHtml";
 
 const PAGE_WIDTH = 816;
 const PAGE_HEIGHT = 1056;
@@ -107,7 +109,8 @@ async function optimizeImage(
  * URLs that fail to fetch are omitted; callers fall back to the original URL.
  */
 export async function prefetchProposalImages(
-  pages: TemplatePage[]
+  pages: TemplatePage[],
+  extraUrls: string[] = []
 ): Promise<Record<string, string>> {
   // Track which URLs are used as page backgrounds vs. inline image elements
   // so we can apply the correct max-dimension constraint.
@@ -131,6 +134,11 @@ export async function prefetchProposalImages(
   for (const url of bgUrls) allUrls.set(url, true);
   for (const url of elementUrls) {
     if (!allUrls.has(url)) allUrls.set(url, false);
+  }
+  for (const url of extraUrls) {
+    if (url && !url.startsWith("data:") && !allUrls.has(url)) {
+      allUrls.set(url, false);
+    }
   }
 
   const result: Record<string, string> = {};
@@ -177,7 +185,11 @@ export async function prefetchProposalImages(
 // Per-element HTML
 // ---------------------------------------------------------------------------
 
-function renderElement(el: TemplateElement, imgMap: Record<string, string>): string {
+function renderElement(
+  el: TemplateElement,
+  imgMap: Record<string, string>,
+  quoteDataMap?: Record<string, QuoteWithProfile>
+): string {
   const baseStyle =
     `position:absolute;` +
     `left:${el.x}px;top:${el.y}px;width:${el.w}px;height:${el.h}px;` +
@@ -278,6 +290,23 @@ function renderElement(el: TemplateElement, imgMap: Record<string, string>): str
       );
     }
 
+    case "quote": {
+      let qId = "";
+      try {
+        const parsed = JSON.parse(el.content || "{}");
+        qId = parsed.quoteId ?? "";
+      } catch {
+        return "";
+      }
+      const data = qId ? quoteDataMap?.[qId] : undefined;
+      if (!data) return "";
+      return (
+        `<div style="${baseStyle}padding:40px 48px;overflow:auto;background:#fff;">` +
+        renderQuoteBlockHtml(data, imgMap) +
+        `</div>`
+      );
+    }
+
     default:
       return "";
   }
@@ -295,7 +324,8 @@ function renderElement(el: TemplateElement, imgMap: Record<string, string>): str
  */
 export function buildProposalHtml(
   pages: TemplatePage[],
-  imgMap: Record<string, string>
+  imgMap: Record<string, string>,
+  quoteDataMap?: Record<string, QuoteWithProfile>
 ): string {
   const pageBlocks = pages.map((page) => {
     const pageH = page.pageHeight ?? PAGE_HEIGHT;
@@ -313,7 +343,7 @@ export function buildProposalHtml(
     }
 
     for (const el of page.elements) {
-      inner += renderElement(el, imgMap);
+      inner += renderElement(el, imgMap, quoteDataMap);
     }
 
     return (

@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateExportToken } from "@/lib/proposal/exportToken";
+import { getServiceClient } from "@/lib/supabase/service";
+import type { TemplatePage } from "@/components/proposal-template/proposalTemplateTypes";
+import { buildProposalHtml, prefetchProposalImages } from "@/lib/proposal/buildProposalHtml";
+import { fetchEmbeddedQuoteData } from "@/lib/proposal/fetchEmbeddedQuoteData";
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
+
   // ── 1. Parse request body ────────────────────────────────────────────────
   let quoteId: string;
   let quoteName: string;
@@ -28,15 +35,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ── 3. Ownership check ───────────────────────────────────────────────────
-  // Verify the authenticated user belongs to the organization that owns this
-  // proposal. We join quote_proposals → quotes (to get the org) → organization_memberships.
-  // This query returns a row only when the user is an org member.
-  const { data: accessCheck, error: accessError } = await supabase
+  // ── 3. Ownership check + load proposal pages ─────────────────────────────
+  const { data: proposal, error: accessError } = await supabase
     .from("quote_proposals")
     .select(
       `
       id,
+      pages,
       organization_id,
       quotes!inner ( id ),
       organizations!inner (
@@ -53,35 +58,55 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to verify access" }, { status: 500 });
   }
 
-  if (!accessCheck) {
-    // Either the proposal does not exist or the user does not own it — return 403
+  if (!proposal) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const pages: TemplatePage[] = Array.isArray(proposal.pages) ? proposal.pages : [];
+  if (pages.length === 0) {
+    return NextResponse.json(
+      { error: "No proposal pages to export. Open Edit Proposal and save first." },
+      { status: 422 }
+    );
+  }
+
   // ── 4. Verify PDFShift API key is configured ─────────────────────────────
-  const apiKey = process.env.PDFSHIFT_API_KEY;
+  const apiKey = process.env.PDFSHIFT_API_KEY?.trim();
   if (!apiKey || apiKey === "your_key_here") {
     console.error("[generate-proposal-pdf] PDFSHIFT_API_KEY is not configured");
-    return NextResponse.json({ error: "PDF service not configured" }, { status: 503 });
+    return NextResponse.json(
+      {
+        error:
+          "PDFShift is not configured. Add PDFSHIFT_API_KEY in your Vercel environment variables and redeploy.",
+      },
+      { status: 503 }
+    );
   }
 
-  // ── 5. Build the signed export URL ──────────────────────────────────────
-  // NEXT_PUBLIC_SITE_URL must be set to the publicly accessible domain in production.
-  // PDFShift cannot reach localhost — use ngrok or a staging URL locally.
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  if (!siteUrl) {
-    return NextResponse.json({ error: "NEXT_PUBLIC_SITE_URL is not configured" }, { status: 503 });
+  // ── 5. Build self-contained HTML (direct to PDFShift — no URL fetch) ─────
+  const admin = getServiceClient();
+  const quoteDataMap = await fetchEmbeddedQuoteData(admin, pages);
+
+  const logoUrls = Object.values(quoteDataMap)
+    .map((d) => d.profile?.company_logo_url)
+    .filter((url): url is string => !!url && !url.startsWith("data:"));
+
+  const imgMap = await prefetchProposalImages(pages, logoUrls);
+  const proposalHtml = buildProposalHtml(pages, imgMap, quoteDataMap);
+  const htmlSizeKB = Math.round(proposalHtml.length / 1024);
+
+  if (proposalHtml.length < 2_000) {
+    return NextResponse.json(
+      { error: "The proposal appears to have no renderable content." },
+      { status: 422 }
+    );
   }
 
-  let token: string;
-  try {
-    token = generateExportToken(quoteId);
-  } catch (tokenErr) {
-    console.error("[generate-proposal-pdf] Token generation failed:", tokenErr);
-    return NextResponse.json({ error: "PDF service not configured" }, { status: 503 });
-  }
-
-  const exportUrl = `${siteUrl}/proposal/export/${quoteId}?token=${encodeURIComponent(token)}`;
+  console.log(
+    `[generate-proposal-pdf] HTML ready — pages=${pages.length} html=${htmlSizeKB}KB ` +
+    `images=${Object.keys(imgMap).length} quotes=${Object.keys(quoteDataMap).length} ` +
+    `prep=${Date.now() - startedAt}ms`
+  );
 
   // ── 6. Call PDFShift ─────────────────────────────────────────────────────
   let pdfShiftResponse: Response;
@@ -93,17 +118,11 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        source: exportUrl,
+        source: proposalHtml,
         landscape: false,
         use_print: true,
-        // Give the page 1.5 s after load for images/fonts to finish rendering.
-        delay: 1500,
-        // Bypass the ngrok browser-warning interstitial page that appears on
-        // free ngrok tunnels. Remove this in production (non-ngrok deployments
-        // ignore unknown headers, so it is safe to leave in place).
-        http_headers: {
-          "ngrok-skip-browser-warning": "1",
-        },
+        delay: 500,
+        viewport: "816x1056",
       }),
     });
   } catch (fetchErr) {
@@ -122,7 +141,13 @@ export async function POST(req: NextRequest) {
 
   // ── 7. Stream PDF back to the browser ────────────────────────────────────
   const pdfBuffer = await pdfShiftResponse.arrayBuffer();
+  const pdfSizeKB = Math.round(pdfBuffer.byteLength / 1024);
   const safeFilename = quoteName.replace(/[^\w\-. ]/g, "").trim() || "proposal";
+
+  console.log(
+    `[generate-proposal-pdf] ✅ done | quoteId=${quoteId} | pages=${pages.length} | ` +
+    `pdf=${pdfSizeKB}KB | html=${htmlSizeKB}KB | total=${Date.now() - startedAt}ms`
+  );
 
   return new NextResponse(pdfBuffer, {
     status: 200,
