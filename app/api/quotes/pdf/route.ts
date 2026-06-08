@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -82,26 +83,13 @@ const safeNumber = (value: unknown): number => {
 const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
 /**
- * For spreadsheet-sourced quotes: proportionally allocate each SimpleMarkup's
- * calculated_amount to an eligible line item based on its share of base_total.
+ * For spreadsheet-sourced quotes: allocate each SimpleMarkup to line items.
  */
 function calcItemMarkup(
   item: { product_name: string; line_total: number },
   markups: any[]
 ): number {
-  if (!Array.isArray(markups) || markups.length === 0) return 0;
-  const simpleMarkups = markups.filter(
-    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
-  );
-  if (simpleMarkups.length === 0) return 0;
-  return simpleMarkups.reduce((total, m) => {
-    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
-    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
-      return total;
-    }
-    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
-    return total + share;
-  }, 0);
+  return calcSimpleItemMarkup(item, markups);
 }
 
 const getTaxInfo = (quote: any) => {

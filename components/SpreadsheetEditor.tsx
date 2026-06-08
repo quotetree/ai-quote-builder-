@@ -24,6 +24,13 @@ import ProductSearchDropdown from "@/components/ProductSearchDropdown";
 import { filterProducts } from "@/lib/filterProducts";
 import toast from "react-hot-toast";
 import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
+import {
+  calcSimpleItemMarkup,
+  computeMarkupPerItemDeltas,
+  getItemsForMarkupSelector,
+  type MarkupDistribution,
+  type SpreadsheetSimpleMarkup,
+} from "@/lib/quote/simpleMarkup";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,17 +143,7 @@ interface TaxCharge {
   applies_to_total: number;
 }
 
-// Simple markup — stored in spreadsheet.baked_markups
-interface SimpleMarkup {
-  id: string;
-  name: string;
-  mode: "percent" | "amount";
-  value: number; // decimal for percent, dollars for amount
-  base_applies_to: "all" | "exclude_products";
-  base_excluded: string[];
-  calculated_amount: number;
-  base_total: number;
-}
+type SimpleMarkup = SpreadsheetSimpleMarkup;
 
 // Matches the price book's multi-term, multi-field search exactly (shared with Build mode)
 // See lib/filterProducts.ts
@@ -438,7 +435,18 @@ export default function SpreadsheetEditor({
   const [taxForm, setTaxForm] = useState(blankTaxForm);
 
   // Markup modal state
-  const blankMarkupForm = () => ({ name: "Markup", rate: "", lumpSum: "", baseAppliesTo: "all" as "all" | "exclude_products", baseSelected: [] as string[], showAdvanced: false });
+  const blankMarkupForm = () => ({
+    name: "Markup",
+    rate: "",
+    lumpSum: "",
+    baseAppliesTo: "all" as "all" | "exclude_products",
+    baseSelected: [] as string[],
+    addAppliesTo: "all" as "all" | "exclude_products",
+    addSelected: [] as string[],
+    distribution: "proportional" as MarkupDistribution,
+    singleItem: "",
+    showAdvanced: false,
+  });
   const [showMarkupModal, setShowMarkupModal] = useState(false);
   const [editingMarkupId, setEditingMarkupId] = useState<string | null>(null);
   const [markupForm, setMarkupForm] = useState(blankMarkupForm);
@@ -658,7 +666,11 @@ export default function SpreadsheetEditor({
       lumpSum: m.mode === "amount" ? String(m.value) : "",
       baseAppliesTo: m.base_applies_to,
       baseSelected: m.base_excluded,
-      showAdvanced: false,
+      addAppliesTo: m.add_applies_to ?? "all",
+      addSelected: m.add_excluded ?? [],
+      distribution: m.distribution ?? "proportional",
+      singleItem: m.single_item ?? "",
+      showAdvanced: Boolean(m.distribution && m.distribution !== "proportional") || Boolean(m.single_item),
     });
     setShowMarkupModal(true);
   };
@@ -666,14 +678,42 @@ export default function SpreadsheetEditor({
   const submitMarkup = () => {
     const rate = parseFloat(markupForm.rate) / 100 || 0;
     const lump = parseFloat(markupForm.lumpSum) || 0;
+    if (rate <= 0 && lump <= 0) {
+      toast.error("Enter a percentage or lump sum for the markup.");
+      return;
+    }
     const mode: "percent" | "amount" = lump > 0 ? "amount" : "percent";
     const value = mode === "amount" ? lump : rate;
-    const baseItems =
-      markupForm.baseAppliesTo === "all"
-        ? allLineItems
-        : allLineItems.filter((i) => !markupForm.baseSelected.includes(i.name));
+    const baseItems = getItemsForMarkupSelector(
+      allLineItems,
+      markupForm.baseAppliesTo,
+      markupForm.baseSelected,
+    );
+    const addToItems = getItemsForMarkupSelector(
+      allLineItems,
+      markupForm.addAppliesTo,
+      markupForm.addSelected,
+    );
     const baseTotal = baseItems.reduce((a, i) => a + i.amount, 0);
+    if (baseTotal <= 0) {
+      toast.error("Choose at least one base item with a non-zero amount.");
+      return;
+    }
+    if (addToItems.length === 0) {
+      toast.error("Choose at least one item to receive the markup.");
+      return;
+    }
+    if (markupForm.distribution === "single" && !markupForm.singleItem) {
+      toast.error("Select the item that should receive the full markup.");
+      return;
+    }
     const calcAmount = mode === "amount" ? lump : baseTotal * rate;
+    const perItemDeltas = computeMarkupPerItemDeltas(
+      calcAmount,
+      addToItems,
+      markupForm.distribution,
+      markupForm.singleItem,
+    );
     const markup: SimpleMarkup = {
       id: editingMarkupId ?? uid(),
       name: markupForm.name,
@@ -681,6 +721,11 @@ export default function SpreadsheetEditor({
       value,
       base_applies_to: markupForm.baseAppliesTo,
       base_excluded: markupForm.baseSelected,
+      add_applies_to: markupForm.addAppliesTo,
+      add_excluded: markupForm.addSelected,
+      distribution: markupForm.distribution,
+      single_item: markupForm.distribution === "single" ? markupForm.singleItem : undefined,
+      per_item_deltas: perItemDeltas,
       calculated_amount: calcAmount,
       base_total: baseTotal,
     };
@@ -1212,6 +1257,14 @@ export default function SpreadsheetEditor({
                         {m.base_applies_to === "exclude_products" && m.base_excluded.length > 0
                           ? ` → Excludes: ${m.base_excluded.join(", ")}`
                           : ""}
+                        {m.add_applies_to === "exclude_products" && (m.add_excluded?.length ?? 0) > 0
+                          ? ` | Add to excludes: ${m.add_excluded!.join(", ")}`
+                          : m.add_applies_to === "all"
+                            ? " | Add to: all items"
+                            : ""}
+                        {m.distribution && m.distribution !== "proportional"
+                          ? ` | ${m.distribution === "even" ? "Even split" : `Single: ${m.single_item ?? "item"}`}`
+                          : ""}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -1454,18 +1507,121 @@ export default function SpreadsheetEditor({
                 )}
               </div>
 
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Add To</label>
+                <p className="text-xs text-gray-500 mb-2">Items that will receive the markup baked into their prices</p>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input type="radio" checked={markupForm.addAppliesTo === "all"} onChange={() => setMarkupForm({ ...markupForm, addAppliesTo: "all", addSelected: [] })} className="mr-2" />
+                    <span className="text-sm">All items</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input type="radio" checked={markupForm.addAppliesTo === "exclude_products"} onChange={() => setMarkupForm({ ...markupForm, addAppliesTo: "exclude_products" })} className="mr-2" />
+                    <span className="text-sm">Exclude...</span>
+                  </label>
+                </div>
+                {markupForm.addAppliesTo === "exclude_products" && allLineItems.length > 0 && (
+                  <div className="pl-6 mt-2 space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded p-2">
+                    {allLineItems.map((item, i) => (
+                      <label key={i} className="flex items-start">
+                        <input
+                          type="checkbox"
+                          checked={markupForm.addSelected.includes(item.name)}
+                          onChange={(e) => setMarkupForm({
+                            ...markupForm,
+                            addSelected: e.target.checked
+                              ? [...markupForm.addSelected, item.name]
+                              : markupForm.addSelected.filter((p) => p !== item.name),
+                          })}
+                          className="mr-2 mt-0.5"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm">{item.name}</span>
+                          <span className="text-xs text-gray-500 ml-2">({fmt(item.amount)})</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t pt-4">
+                <button
+                  type="button"
+                  onClick={() => setMarkupForm({ ...markupForm, showAdvanced: !markupForm.showAdvanced })}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                >
+                  <span className={`inline-block transition-transform ${markupForm.showAdvanced ? "rotate-90" : ""}`}>▶</span>
+                  Advanced
+                </button>
+                {markupForm.showAdvanced && (
+                  <div className="mt-3 space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">Distribution Method</label>
+                    <div className="space-y-2">
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          checked={markupForm.distribution === "proportional"}
+                          onChange={() => setMarkupForm({ ...markupForm, distribution: "proportional" })}
+                          className="mr-2"
+                        />
+                        <span className="text-sm">Proportional (based on line totals)</span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          checked={markupForm.distribution === "even"}
+                          onChange={() => setMarkupForm({ ...markupForm, distribution: "even" })}
+                          className="mr-2"
+                        />
+                        <span className="text-sm">Even (equal shares)</span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          checked={markupForm.distribution === "single"}
+                          onChange={() => setMarkupForm({ ...markupForm, distribution: "single", singleItem: markupForm.singleItem || allLineItems[0]?.name || "" })}
+                          className="mr-2"
+                        />
+                        <span className="text-sm">Single item</span>
+                      </label>
+                    </div>
+                    {markupForm.distribution === "single" && allLineItems.length > 0 && (
+                      <select
+                        value={markupForm.singleItem}
+                        onChange={(e) => setMarkupForm({ ...markupForm, singleItem: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                      >
+                        <option value="">Select an item…</option>
+                        {getItemsForMarkupSelector(allLineItems, markupForm.addAppliesTo, markupForm.addSelected).map((item) => (
+                          <option key={item.name} value={item.name}>{item.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {(markupForm.rate || markupForm.lumpSum) && (() => {
                 const rate = parseFloat(markupForm.rate) / 100 || 0;
                 const lump = parseFloat(markupForm.lumpSum) || 0;
                 const mode = lump > 0 ? "amount" : "percent";
-                const baseItems = markupForm.baseAppliesTo === "all" ? allLineItems : allLineItems.filter((i) => !markupForm.baseSelected.includes(i.name));
+                const baseItems = getItemsForMarkupSelector(allLineItems, markupForm.baseAppliesTo, markupForm.baseSelected);
+                const addToItems = getItemsForMarkupSelector(allLineItems, markupForm.addAppliesTo, markupForm.addSelected);
                 const baseTotal = baseItems.reduce((a, i) => a + i.amount, 0);
                 const markupAmt = mode === "amount" ? lump : baseTotal * rate;
+                const distributionLabel =
+                  markupForm.distribution === "even"
+                    ? "Even split"
+                    : markupForm.distribution === "single"
+                      ? `Single item${markupForm.singleItem ? `: ${markupForm.singleItem}` : ""}`
+                      : "Proportional";
                 return (
                   <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm text-purple-900 space-y-1">
                     <div><strong>Base:</strong> {baseItems.length} items totaling {fmt(baseTotal)}</div>
                     <div><strong>Markup Amount:</strong> {fmt(markupAmt)} {mode === "amount" ? "(lump sum)" : `(${markupForm.rate}%)`}</div>
-                    <div className="text-xs text-purple-700 italic mt-1">The markup will be added to the total</div>
+                    <div><strong>Add To:</strong> {addToItems.length} item{addToItems.length === 1 ? "" : "s"}</div>
+                    <div><strong>Distribution:</strong> {distributionLabel}</div>
                   </div>
                 );
               })()}

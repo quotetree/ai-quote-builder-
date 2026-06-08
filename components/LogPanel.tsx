@@ -17,6 +17,7 @@ import {
   profitMarginPdfFilename,
 } from "@/lib/profitMarginPdf";
 import { isSpreadsheetSourcedQuote } from "@/lib/spreadsheetFromQuote";
+import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 
 type QuoteWithExtras = Quote & {
   baked_markups?: any[];
@@ -34,30 +35,6 @@ const safeNumber = (value: unknown): number => {
 };
 
 const roundToCents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
-
-/**
- * For a spreadsheet-sourced quote, proportionally allocate each SimpleMarkup's
- * calculated_amount across eligible line items (by their share of base_total).
- */
-function calcItemMarkup(
-  item: { product_name: string | null; line_total: number },
-  markups: any[]
-): number {
-  if (!Array.isArray(markups) || markups.length === 0) return 0;
-  // Only process SimpleMarkup entries (have calculated_amount at top level, no audited wrapper)
-  const simpleMarkups = markups.filter(
-    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
-  );
-  if (simpleMarkups.length === 0) return 0;
-  return simpleMarkups.reduce((total, m) => {
-    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
-    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
-      return total;
-    }
-    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
-    return total + share;
-  }, 0);
-}
 
 const getMarkupAmount = (quote: QuoteWithExtras): number => {
   const markups = quote.baked_markups ?? quote.bakedMarkups;
@@ -1344,7 +1321,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                   <div className="space-y-2">
                     {selectedQuote.items.map((item) => {
                       const bakedMarkups = (selectedQuote as any).baked_markups ?? (selectedQuote as any).bakedMarkups ?? [];
-                      const itemMarkup = roundToCents(calcItemMarkup(item, bakedMarkups));
+                      const itemMarkup = roundToCents(calcSimpleItemMarkup(item, bakedMarkups));
                       const displayTotal = item.line_total + itemMarkup;
                       return (
                         <div

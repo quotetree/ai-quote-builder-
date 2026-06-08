@@ -1,4 +1,5 @@
 import type { QuoteWithProfile } from "@/components/proposal-template/QuoteBlock";
+import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -41,31 +42,6 @@ const safeNumber = (value: unknown): number => {
 
 const roundToCents = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
 
-function calcItemMarkup(
-  item: { product_name: string | null; line_total: number },
-  markups: Array<{
-    calculated_amount: number;
-    base_total: number;
-    base_applies_to?: string;
-    base_excluded?: string[];
-    audited?: unknown;
-  }>
-): number {
-  if (!Array.isArray(markups) || markups.length === 0) return 0;
-  const simpleMarkups = markups.filter(
-    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
-  );
-  if (simpleMarkups.length === 0) return 0;
-  return simpleMarkups.reduce((total, m) => {
-    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
-    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
-      return total;
-    }
-    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
-    return total + share;
-  }, 0);
-}
-
 function getTaxInfo(quote: QuoteWithProfile["quote"]) {
   const fallbackRate = safeNumber(quote.tax_rate);
   const fallbackAmount = safeNumber(quote.tax_amount);
@@ -100,7 +76,7 @@ export function renderQuoteBlockHtml(
 
   const lineRows = items.map((item) => {
     const discountPercent = safeNumber(item.discount_percent);
-    const markupAmount = roundToCents(calcItemMarkup(item, bakedMarkups));
+    const markupAmount = roundToCents(calcSimpleItemMarkup(item, bakedMarkups));
     const displayTotal = item.line_total + markupAmount;
     const displaySalesPrice =
       item.quantity > 0 ? displayTotal / item.quantity : item.unit_price;
