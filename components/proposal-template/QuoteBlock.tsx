@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  calcCustomerFacingSubtotal,
+  calcSimpleItemMarkup,
+  roundToCents,
+} from "@/lib/quote/simpleMarkup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,27 +98,6 @@ const safeNumber = (value: unknown): number => {
   }
   return 0;
 };
-
-const roundToCents = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
-
-function calcItemMarkup(
-  item: { product_name: string | null; line_total: number },
-  markups: SimpleMarkup[]
-): number {
-  if (!Array.isArray(markups) || markups.length === 0) return 0;
-  const simpleMarkups = markups.filter(
-    (m) => typeof m?.calculated_amount === "number" && safeNumber(m?.base_total) > 0 && !m?.audited
-  );
-  if (simpleMarkups.length === 0) return 0;
-  return simpleMarkups.reduce((total, m) => {
-    const excluded: string[] = Array.isArray(m.base_excluded) ? m.base_excluded : [];
-    if (m.base_applies_to === "exclude_products" && item.product_name && excluded.includes(item.product_name)) {
-      return total;
-    }
-    const share = (item.line_total / safeNumber(m.base_total)) * safeNumber(m.calculated_amount);
-    return total + share;
-  }, 0);
-}
 
 function getTaxInfo(quote: QuoteData) {
   const fallbackRate = safeNumber(quote.tax_rate);
@@ -231,7 +215,7 @@ export default function QuoteBlock({ quoteId, preloadedData }: QuoteBlockProps) 
   // Build line rows using the same markup-hiding logic as the PDF
   const lineRows = items.map((item) => {
     const discountPercent = safeNumber(item.discount_percent);
-    const markupAmount = roundToCents(calcItemMarkup(item, bakedMarkups));
+    const markupAmount = roundToCents(calcSimpleItemMarkup(item, bakedMarkups));
     const displayTotal = item.line_total + markupAmount;
     // Back-calculate sales price and list price from the markup-inclusive total
     // so that: salesPrice × qty = displayTotal and listPrice × (1 - disc) = salesPrice
@@ -254,6 +238,7 @@ export default function QuoteBlock({ quoteId, preloadedData }: QuoteBlockProps) 
   });
 
   const hasDiscount = (quote.discount_amount ?? 0) > 0;
+  const displaySubtotal = calcCustomerFacingSubtotal(items, bakedMarkups);
 
   return (
     <div
@@ -338,7 +323,7 @@ export default function QuoteBlock({ quoteId, preloadedData }: QuoteBlockProps) 
       <div className="mt-3 flex flex-col items-end gap-0.5">
         <div className="flex gap-6 text-xs text-gray-700">
           <span>Subtotal:</span>
-          <span className="min-w-[80px] text-right">{formatCurrency(quote.subtotal)}</span>
+          <span className="min-w-[80px] text-right">{formatCurrency(displaySubtotal)}</span>
         </div>
 
         {hasDiscount && (

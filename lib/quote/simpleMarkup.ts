@@ -82,6 +82,24 @@ export function computeMarkupPerItemDeltas(
   return deltas;
 }
 
+/** Customer-facing line total: base line_total plus any hidden SimpleMarkup share. */
+export function calcCustomerFacingLineTotal(
+  item: { product_name: string | null; line_total: number },
+  markups: any[],
+): number {
+  return roundToCents(item.line_total + calcSimpleItemMarkup(item, markups));
+}
+
+/** Customer-facing subtotal: sum of markup-inclusive line totals (matches visible table rows). */
+export function calcCustomerFacingSubtotal(
+  items: Array<{ product_name: string | null; line_total: number }>,
+  markups: any[],
+): number {
+  return roundToCents(
+    items.reduce((sum, item) => sum + calcCustomerFacingLineTotal(item, markups), 0),
+  );
+}
+
 /** Allocates spreadsheet SimpleMarkup amounts to a quote line item. */
 export function calcSimpleItemMarkup(
   item: { product_name: string | null; line_total: number },

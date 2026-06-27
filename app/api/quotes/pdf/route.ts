@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
+import { calcCustomerFacingSubtotal, calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -249,8 +249,13 @@ function buildQuotePDF(opts: {
     ? getTaxInfo({ tax_rate: opts.tax_rate, tax_amount: opts.tax_amount, charges: opts.charges }).amount
     : roundToCents(opts.tax_amount);
 
+  const displaySubtotal =
+    opts.items.length > 0
+      ? calcCustomerFacingSubtotal(opts.items, bakedMarkups)
+      : roundToCents(opts.subtotal);
+
   doc.text("Subtotal:", totalsX, currentY);
-  doc.text(formatCurrency(opts.subtotal), pageWidth - 20, currentY, { align: "right" });
+  doc.text(formatCurrency(displaySubtotal), pageWidth - 20, currentY, { align: "right" });
 
   if ((opts.discount_amount ?? 0) > 0) {
     currentY += 7;

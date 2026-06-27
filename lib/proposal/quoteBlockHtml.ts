@@ -1,5 +1,9 @@
 import type { QuoteWithProfile } from "@/components/proposal-template/QuoteBlock";
-import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
+import {
+  calcCustomerFacingSubtotal,
+  calcSimpleItemMarkup,
+  roundToCents,
+} from "@/lib/quote/simpleMarkup";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -39,8 +43,6 @@ const safeNumber = (value: unknown): number => {
   }
   return 0;
 };
-
-const roundToCents = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
 
 function getTaxInfo(quote: QuoteWithProfile["quote"]) {
   const fallbackRate = safeNumber(quote.tax_rate);
@@ -95,6 +97,8 @@ export function renderQuoteBlockHtml(
       markupAmount,
     };
   });
+
+  const displaySubtotal = calcCustomerFacingSubtotal(items, bakedMarkups);
 
   const logoUrl = profile?.company_logo_url;
   const logoSrc = logoUrl
@@ -151,7 +155,7 @@ export function renderQuoteBlockHtml(
     `</tr></thead><tbody>${rowsHtml}</tbody></table>` +
     `<div style="margin-top:12px;display:flex;flex-direction:column;align-items:flex-end;gap:2px;">` +
     `<div style="display:flex;gap:24px;font-size:11px;color:#374151;"><span>Subtotal:</span>` +
-    `<span style="min-width:80px;text-align:right;">${formatCurrency(quote.subtotal)}</span></div>` +
+    `<span style="min-width:80px;text-align:right;">${formatCurrency(displaySubtotal)}</span></div>` +
     discountRow +
     `<div style="display:flex;gap:24px;font-size:11px;color:#374151;"><span>Tax:</span>` +
     `<span style="min-width:80px;text-align:right;">${formatCurrency(taxAmount)}</span></div>` +
