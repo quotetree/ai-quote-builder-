@@ -1068,7 +1068,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   }
 
   return (
-    <div className="h-full bg-gray-50 dark:bg-gray-950 p-6">
+    <div className="min-h-full bg-gray-50 dark:bg-gray-950 p-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Quote Log</h2>

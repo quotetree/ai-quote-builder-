@@ -274,7 +274,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
             />
           )}
         </div>
-        <div className={mainTab === "log" ? "h-full" : "hidden"}>
+        <div className={mainTab === "log" ? "h-full overflow-y-auto min-h-0" : "hidden"}>
           <LogPanel projectId={projectId} />
         </div>
       </div>
