@@ -23,6 +23,7 @@ import ProposalTemplateModal from "./proposal-template/ProposalTemplateModal";
 import BillingModal from "./BillingModal";
 import MembersModal from "./MembersModal";
 import type { Project } from "@/types/database";
+import { PROPOSAL_BUILDER_UI_ENABLED } from "@/lib/features/proposalBuilderUi";
 
 function projectMatchesSearch(project: Project, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -439,9 +440,13 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
             <div className="relative">
               <button
                 onClick={() => {
-                  if (canManagePersonalization()) {
-                    setPersonalizationSubMenuOpen((v) => !v);
+                  if (!canManagePersonalization()) return;
+                  if (!PROPOSAL_BUILDER_UI_ENABLED) {
+                    setAccountMenuOpen(false);
+                    setPersonalizationOpen(true);
+                    return;
                   }
+                  setPersonalizationSubMenuOpen((v) => !v);
                 }}
                 disabled={!canManagePersonalization()}
                 className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
@@ -455,10 +460,12 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                   Personalization
                   {!canManagePersonalization() && <Lock size={14} className="text-gray-400" />}
                 </span>
-                <ChevronRight size={14} className="text-gray-400" />
+                {PROPOSAL_BUILDER_UI_ENABLED && (
+                  <ChevronRight size={14} className="text-gray-400" />
+                )}
               </button>
 
-              {personalizationSubMenuOpen && canManagePersonalization() && (
+              {PROPOSAL_BUILDER_UI_ENABLED && personalizationSubMenuOpen && canManagePersonalization() && (
                 <>
                   <div
                     className="fixed inset-0 z-40"
@@ -620,10 +627,12 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         }}
       />
 
-      <ProposalTemplateModal
-        isOpen={proposalTemplateOpen}
-        onClose={() => setProposalTemplateOpen(false)}
-      />
+      {PROPOSAL_BUILDER_UI_ENABLED && (
+        <ProposalTemplateModal
+          isOpen={proposalTemplateOpen}
+          onClose={() => setProposalTemplateOpen(false)}
+        />
+      )}
 
       <BillingModal
         isOpen={billingOpen}
