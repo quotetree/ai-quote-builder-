@@ -819,6 +819,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
           productFamilies={productFamilies}
           products={products}
           onClose={() => setShowFamilyManager(false)}
+          onCreate={createProductFamily}
           onUpdate={updateProductFamily}
           onDelete={deleteFamilyAndRefresh}
         />
@@ -1529,12 +1530,14 @@ function ProductFamilyManager({
   productFamilies,
   products,
   onClose,
+  onCreate,
   onUpdate,
   onDelete,
 }: {
   productFamilies: ProductFamily[];
   products: Product[];
   onClose: () => void;
+  onCreate: (name: string, description: string) => Promise<ProductFamily | null | undefined>;
   onUpdate: (id: string, updates: any) => Promise<any>;
   onDelete: (id: string) => Promise<void>;
 }) {
@@ -1542,6 +1545,7 @@ function ProductFamilyManager({
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const getProductCount = (familyId: string) => {
     return products.filter((p) => p.product_family_id === familyId).length;
@@ -1589,6 +1593,18 @@ function ProductFamilyManager({
     }
   };
 
+  const handleCreateFamily = async (name: string, description: string) => {
+    try {
+      const newFamily = await onCreate(name, description);
+      if (newFamily) {
+        toast.success("Product family created!");
+        setShowCreateModal(false);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create product family");
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
@@ -1613,7 +1629,7 @@ function ProductFamilyManager({
           {productFamilies.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500">No product families yet.</p>
-              <p className="text-sm text-gray-400 mt-1">Create one when adding a new product.</p>
+              <p className="text-sm text-gray-400 mt-1">Use Add below to create your first family.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1703,13 +1719,22 @@ function ProductFamilyManager({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
           <button
-            onClick={onClose}
-            className="w-full px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium inline-flex items-center justify-center gap-2"
           >
-            Close
+            <Plus size={18} />
+            Add
           </button>
         </div>
       </div>
+
+      {showCreateModal && (
+        <CreateProductFamilyModal
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateFamily}
+        />
+      )}
     </div>
   );
 }
