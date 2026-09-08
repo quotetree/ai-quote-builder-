@@ -18,6 +18,7 @@ import {
 } from "@/lib/profitMarginPdf";
 import { isSpreadsheetSourcedQuote } from "@/lib/spreadsheetFromQuote";
 import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
+import { PROPOSAL_BUILDER_UI_ENABLED } from "@/lib/features/proposalBuilderUi";
 
 type QuoteWithExtras = Quote & {
   baked_markups?: any[];
@@ -513,7 +514,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
 
   // Load proposal signature statuses whenever the quote list changes
   useEffect(() => {
-    if (quotes.length === 0) return;
+    if (!PROPOSAL_BUILDER_UI_ENABLED || quotes.length === 0) return;
     const supabase = createClient();
     (async () => {
       try {
@@ -932,6 +933,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
 
   const openDownloadChoice = (quote: Quote, e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    if (!PROPOSAL_BUILDER_UI_ENABLED) {
+      void handleDownloadQuotePDF(quote);
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     setDownloadMenuPosition({
       top: rect.top - 4,
@@ -1026,7 +1031,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   }
 
   // ── Inline Proposal Builder view ──
-  if (proposalQuoteId) {
+  if (PROPOSAL_BUILDER_UI_ENABLED && proposalQuoteId) {
     return (
       <div className="h-full flex flex-col bg-white dark:bg-gray-900">
         {/* Back bar */}
@@ -1143,16 +1148,33 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(quote.created_at).toLocaleDateString()}
                     </td>
-                    {/* Status — shows proposal/signature tracking status */}
+                    {/* Status — quote status, or proposal signature badges when builder UI is on */}
                     <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      {getSignatureStatusBadge(signaturesMap[quote.id] ?? "draft")}
+                      {PROPOSAL_BUILDER_UI_ENABLED ? (
+                        getSignatureStatusBadge(signaturesMap[quote.id] ?? "draft")
+                      ) : (
+                        <select
+                          value={quote.status}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleStatusChange(quote.id, e.target.value as Quote["status"]);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`text-sm px-3 py-1 rounded-full font-medium ${getStatusColor(quote.status)}`}
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="for_approval">For Approval</option>
+                          <option value="approved">Approved</option>
+                          <option value="declined">Declined</option>
+                        </select>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex gap-2 items-center">
                         <button
                           onClick={(e) => openDownloadChoice(quote, e)}
                           className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                          title="Download"
+                          title={PROPOSAL_BUILDER_UI_ENABLED ? "Download" : "Download PDF"}
                         >
                           <Download size={16} />
                         </button>
@@ -1160,6 +1182,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (quote.is_editing) return;
+                            if (!PROPOSAL_BUILDER_UI_ENABLED) {
+                              void handleEditQuote(quote);
+                              return;
+                            }
                             setEditChoiceQuote(quote);
                           }}
                           className="p-2 text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1443,7 +1469,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       )}
 
       {/* Edit choice: quote vs proposal */}
-      {editChoiceQuote && (
+      {PROPOSAL_BUILDER_UI_ENABLED && editChoiceQuote && (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={() => setEditChoiceQuote(null)}
@@ -1494,7 +1520,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       )}
 
       {/* Download choice: quote vs proposal */}
-      {downloadChoiceQuote && (
+      {PROPOSAL_BUILDER_UI_ENABLED && downloadChoiceQuote && (
         <>
           <div
             className="fixed inset-0 z-[9998]"

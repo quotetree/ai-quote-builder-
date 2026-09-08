@@ -5,6 +5,7 @@ import { FileText, Compass, ChevronDown, RotateCcw, X, Hammer } from "lucide-rea
 import ScopeModePanel from "./ScopeModePanel";
 import PlanModePanel, { type ModeChatPanelHandle } from "./PlanModePanel";
 import BuildModePanel from "./BuildModePanel";
+import { PRODUCT_IQ_UI_ENABLED } from "@/lib/features/productIqUi";
 
 export type ChatAssistantMode = "scope" | "plan" | "build";
 
@@ -31,6 +32,9 @@ export default function ProjectChatPanel({
   const planPanelRef = useRef<ModeChatPanelHandle>(null);
   const scopePanelRef = useRef<ModeChatPanelHandle>(null);
   const buildPanelRef = useRef<ModeChatPanelHandle>(null);
+
+  const activeMode: ChatAssistantMode =
+    !PRODUCT_IQ_UI_ENABLED && mode === "plan" ? "build" : mode;
 
   const loadContext = async () => {
     setContextError(null);
@@ -63,14 +67,19 @@ export default function ProjectChatPanel({
   }, []);
 
   const modeLabel =
-    mode === "scope" ? "ScopeIQ" : mode === "build" ? "BuildIQ" : "ProductIQ";
-  const ModeIcon = mode === "scope" ? FileText : mode === "build" ? Hammer : Compass;
+    activeMode === "scope"
+      ? "ScopeIQ"
+      : activeMode === "build"
+        ? "BuildIQ"
+        : "ProductIQ";
+  const ModeIcon =
+    activeMode === "scope" ? FileText : activeMode === "build" ? Hammer : Compass;
 
   const handleClearChat = () => {
     const panel =
-      mode === "plan"
+      activeMode === "plan"
         ? planPanelRef.current
-        : mode === "scope"
+        : activeMode === "scope"
           ? scopePanelRef.current
           : buildPanelRef.current;
     void panel?.clearChat();
@@ -119,13 +128,13 @@ export default function ProjectChatPanel({
       )}
 
       <div className="flex-1 flex flex-col min-h-0">
-        {mode === "scope" ? (
+        {activeMode === "scope" ? (
           <ScopeModePanel
             ref={scopePanelRef}
             projectId={projectId}
             activeSpreadsheetId={activeSpreadsheetId}
           />
-        ) : mode === "build" ? (
+        ) : activeMode === "build" ? (
           <BuildModePanel
             ref={buildPanelRef}
             projectId={projectId}
@@ -160,12 +169,12 @@ export default function ProjectChatPanel({
                   setModeMenuOpen(false);
                 }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                  mode === "build" ? "text-gray-900 font-medium" : "text-gray-600"
+                  activeMode === "build" ? "text-gray-900 font-medium" : "text-gray-600"
                 }`}
               >
                 <Hammer size={14} />
                 BuildIQ
-                {mode === "build" && <span className="ml-auto text-green-600">✓</span>}
+                {activeMode === "build" && <span className="ml-auto text-green-600">✓</span>}
               </button>
               <button
                 type="button"
@@ -174,27 +183,29 @@ export default function ProjectChatPanel({
                   setModeMenuOpen(false);
                 }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                  mode === "scope" ? "text-gray-900 font-medium" : "text-gray-600"
+                  activeMode === "scope" ? "text-gray-900 font-medium" : "text-gray-600"
                 }`}
               >
                 <FileText size={14} />
                 ScopeIQ
-                {mode === "scope" && <span className="ml-auto text-green-600">✓</span>}
+                {activeMode === "scope" && <span className="ml-auto text-green-600">✓</span>}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("plan");
-                  setModeMenuOpen(false);
-                }}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                  mode === "plan" ? "text-gray-900 font-medium" : "text-gray-600"
-                }`}
-              >
-                <Compass size={14} />
-                ProductIQ
-                {mode === "plan" && <span className="ml-auto text-green-600">✓</span>}
-              </button>
+              {PRODUCT_IQ_UI_ENABLED && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("plan");
+                    setModeMenuOpen(false);
+                  }}
+                  className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 ${
+                    activeMode === "plan" ? "text-gray-900 font-medium" : "text-gray-600"
+                  }`}
+                >
+                  <Compass size={14} />
+                  ProductIQ
+                  {activeMode === "plan" && <span className="ml-auto text-green-600">✓</span>}
+                </button>
+              )}
             </div>
           )}
         </div>
