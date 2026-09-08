@@ -36,6 +36,7 @@
     "resend": "^6.5.2",
     "sharp": "^0.34.5",
     "stripe": "^20.0.0",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
     "@types/sharp": "^0.31.1",
+    "@types/xlsx": "^0.0.35",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",

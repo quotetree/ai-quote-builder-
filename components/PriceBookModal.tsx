@@ -8,8 +8,13 @@ import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 import { Product, ProductFamily } from "@/types/database";
 import { trackProductCreated, trackCsvUpload } from "@/lib/analytics";
 import toast from "react-hot-toast";
-import Papa from "papaparse";
 import Link from "next/link";
+import {
+  downloadPricebookCsvExport,
+  downloadPricebookImportTemplate,
+  parsePricebookImportFile,
+  type PricebookTemplateFormat,
+} from "@/lib/pricebook/importTemplate";
 
 interface PriceBookModalProps {
   isOpen: boolean;
@@ -52,6 +57,8 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
   const [unmappedColumnsCount, setUnmappedColumnsCount] = useState(0);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const templateMenuRef = useRef<HTMLDivElement>(null);
   const productFamilyNameMap = useMemo(() => {
     const map = new Map<string, string>();
     productFamilies.forEach((family) => {
@@ -90,6 +97,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
       setShowUnmappedWarning(false);
       setUnmappedColumnsCount(0);
       setSelectedProductIds([]);
+      setTemplateMenuOpen(false);
     }
   }, [isOpen]);
 
@@ -98,6 +106,26 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
       prev.filter((id) => products.some((product) => product.id === id))
     );
   }, [products]);
+
+  useEffect(() => {
+    if (selectedProductIds.length > 0) {
+      setTemplateMenuOpen(false);
+    }
+  }, [selectedProductIds.length]);
+
+  useEffect(() => {
+    if (!templateMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        templateMenuRef.current &&
+        !templateMenuRef.current.contains(e.target as Node)
+      ) {
+        setTemplateMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [templateMenuOpen]);
 
   // Improved search filtering with useMemo for performance and consistency
   // MUST be called before the early return to follow Rules of Hooks
@@ -224,23 +252,6 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
       return;
     }
 
-    const headers = [
-      "Product Name",
-      "Product Code",
-      "Product Family",
-      "Product Brand",
-      "Product Type",
-      "List Price",
-      "Sales Price",
-      "Product Description",
-    ];
-
-    const escapeCsvValue = (value: string | number | null | undefined) => {
-      if (value === null || value === undefined) return "";
-      const stringValue = String(value).replace(/"/g, '""');
-      return /[",\n]/.test(stringValue) ? `"${stringValue}"` : stringValue;
-    };
-
     const rows = selectedProducts.map((product) => [
       product.product_name,
       product.product_number,
@@ -252,21 +263,8 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
       product.description,
     ]);
 
-    const csvContent = [
-      headers.join(","),
-      ...rows.map((row) => row.map(escapeCsvValue).join(",")),
-    ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
     const date = new Date().toISOString().split("T")[0];
-    link.href = url;
-    link.download = `products-export-${date}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadPricebookCsvExport(rows, `products-export-${date}.csv`);
 
     toast.success(
       `${selectedProducts.length} product${
@@ -275,49 +273,64 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
     );
   };
 
+  const handleDownloadTemplate = (format: PricebookTemplateFormat) => {
+    downloadPricebookImportTemplate(format);
+    setTemplateMenuOpen(false);
+    toast.success(`Template downloaded (.${format})`);
+  };
+
   if (!isOpen) return null;
 
-  const handleCsvFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const autoMapImportHeaders = (headers: string[]): Record<string, string> => {
+    const autoMapping: Record<string, string> = {};
+    headers.forEach((header) => {
+      const lower = header.toLowerCase();
+      if (lower.includes("name") && !lower.includes("family")) {
+        autoMapping.product_name = header;
+      } else if (
+        lower.includes("number") ||
+        lower.includes("id") ||
+        lower.includes("sku") ||
+        lower.includes("code")
+      ) {
+        autoMapping.product_number = header;
+      } else if (lower.includes("brand") || lower.includes("manufacturer")) {
+        autoMapping.product_brand = header;
+      } else if (lower.includes("description") || lower.includes("desc")) {
+        autoMapping.description = header;
+      } else if (lower.includes("list") && lower.includes("price")) {
+        autoMapping.list_price = header;
+      } else if (
+        (lower.includes("sale") && lower.includes("price")) ||
+        lower === "price"
+      ) {
+        autoMapping.sales_price = header;
+      } else if (lower.includes("family") || lower.includes("category")) {
+        autoMapping.product_family = header;
+      } else if (lower.includes("type")) {
+        autoMapping.product_type = header;
+      }
+    });
+    return autoMapping;
+  };
+
+  const handleCsvFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    Papa.parse(file, {
-      header: true,
-      complete: (results) => {
-        const headers = results.meta.fields || [];
-        setCsvHeaders(headers);
-        setCsvData(results.data);
-
-        // Auto-detect and map columns
-        const autoMapping: Record<string, string> = {};
-        headers.forEach((header) => {
-          const lower = header.toLowerCase();
-          if (lower.includes("name") && !lower.includes("family")) {
-            autoMapping.product_name = header;
-          } else if (lower.includes("number") || lower.includes("id") || lower.includes("sku") || lower.includes("code")) {
-            autoMapping.product_number = header;
-          } else if (lower.includes("brand") || lower.includes("manufacturer")) {
-            autoMapping.product_brand = header;
-          } else if (lower.includes("description") || lower.includes("desc")) {
-            autoMapping.description = header;
-          } else if (lower.includes("list") && lower.includes("price")) {
-            autoMapping.list_price = header;
-          } else if (lower.includes("sale") && lower.includes("price") || lower === "price") {
-            autoMapping.sales_price = header;
-          } else if (lower.includes("family") || lower.includes("category")) {
-            autoMapping.product_family = header;
-          } else if (lower.includes("type")) {
-            autoMapping.product_type = header;
-          }
-        });
-
-        setColumnMapping(autoMapping);
-        setViewMode("csv-mapping");
-      },
-      error: () => {
-        toast.error("Failed to parse CSV file");
-      },
-    });
+    try {
+      const { headers, rows } = await parsePricebookImportFile(file);
+      if (!headers.length) {
+        toast.error("No columns found in that file");
+        return;
+      }
+      setCsvHeaders(headers);
+      setCsvData(rows);
+      setColumnMapping(autoMapImportHeaders(headers));
+      setViewMode("csv-mapping");
+    } catch {
+      toast.error("Failed to parse import file");
+    }
 
     event.target.value = "";
   };
@@ -601,22 +614,57 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                   <Plus size={18} />
                   New Product
                 </button>
-                <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
-                  <Upload size={18} />
-                  Upload CSV
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleCsvFileSelect}
-                    className="hidden"
-                  />
-                </label>
-                <button
-                  onClick={() => setShowFamilyManager(true)}
-                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
-                >
-                  Manage Families
-                </button>
+                {selectedProductIds.length === 0 && (
+                  <>
+                    <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <Upload size={18} />
+                      Upload CSV
+                      <input
+                        type="file"
+                        accept=".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onChange={handleCsvFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+                    <div className="relative" ref={templateMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setTemplateMenuOpen((open) => !open)}
+                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+                      >
+                        <Download size={18} />
+                        Download template
+                        <ChevronDown size={16} className="text-gray-500" />
+                      </button>
+                      {templateMenuOpen && (
+                        <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                          {(
+                            [
+                              { format: "csv" as const, label: "CSV (.csv)" },
+                              { format: "xlsx" as const, label: "Excel (.xlsx)" },
+                              { format: "xls" as const, label: "Excel (.xls)" },
+                            ] as const
+                          ).map(({ format, label }) => (
+                            <button
+                              key={format}
+                              type="button"
+                              onClick={() => handleDownloadTemplate(format)}
+                              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowFamilyManager(true)}
+                      className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+                    >
+                      Manage Families
+                    </button>
+                  </>
+                )}
               </>
             )}
             {selectedProductIds.length > 0 && (
@@ -771,6 +819,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
           productFamilies={productFamilies}
           products={products}
           onClose={() => setShowFamilyManager(false)}
+          onCreate={createProductFamily}
           onUpdate={updateProductFamily}
           onDelete={deleteFamilyAndRefresh}
         />
@@ -1481,12 +1530,14 @@ function ProductFamilyManager({
   productFamilies,
   products,
   onClose,
+  onCreate,
   onUpdate,
   onDelete,
 }: {
   productFamilies: ProductFamily[];
   products: Product[];
   onClose: () => void;
+  onCreate: (name: string, description: string) => Promise<ProductFamily | null | undefined>;
   onUpdate: (id: string, updates: any) => Promise<any>;
   onDelete: (id: string) => Promise<void>;
 }) {
@@ -1494,6 +1545,7 @@ function ProductFamilyManager({
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const getProductCount = (familyId: string) => {
     return products.filter((p) => p.product_family_id === familyId).length;
@@ -1541,6 +1593,18 @@ function ProductFamilyManager({
     }
   };
 
+  const handleCreateFamily = async (name: string, description: string) => {
+    try {
+      const newFamily = await onCreate(name, description);
+      if (newFamily) {
+        toast.success("Product family created!");
+        setShowCreateModal(false);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create product family");
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
@@ -1565,7 +1629,7 @@ function ProductFamilyManager({
           {productFamilies.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500">No product families yet.</p>
-              <p className="text-sm text-gray-400 mt-1">Create one when adding a new product.</p>
+              <p className="text-sm text-gray-400 mt-1">Use Add below to create your first family.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1655,13 +1719,22 @@ function ProductFamilyManager({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
           <button
-            onClick={onClose}
-            className="w-full px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium inline-flex items-center justify-center gap-2"
           >
-            Close
+            <Plus size={18} />
+            Add
           </button>
         </div>
       </div>
+
+      {showCreateModal && (
+        <CreateProductFamilyModal
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateFamily}
+        />
+      )}
     </div>
   );
 }
