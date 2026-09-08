@@ -108,6 +108,12 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
   }, [products]);
 
   useEffect(() => {
+    if (selectedProductIds.length > 0) {
+      setTemplateMenuOpen(false);
+    }
+  }, [selectedProductIds.length]);
+
+  useEffect(() => {
     if (!templateMenuOpen) return;
     const onDocClick = (e: MouseEvent) => {
       if (
@@ -608,53 +614,57 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                   <Plus size={18} />
                   New Product
                 </button>
-                <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
-                  <Upload size={18} />
-                  Upload CSV
-                  <input
-                    type="file"
-                    accept=".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    onChange={handleCsvFileSelect}
-                    className="hidden"
-                  />
-                </label>
-                <div className="relative" ref={templateMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setTemplateMenuOpen((open) => !open)}
-                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
-                  >
-                    <Download size={18} />
-                    Download template
-                    <ChevronDown size={16} className="text-gray-500" />
-                  </button>
-                  {templateMenuOpen && (
-                    <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                      {(
-                        [
-                          { format: "csv" as const, label: "CSV (.csv)" },
-                          { format: "xlsx" as const, label: "Excel (.xlsx)" },
-                          { format: "xls" as const, label: "Excel (.xls)" },
-                        ] as const
-                      ).map(({ format, label }) => (
-                        <button
-                          key={format}
-                          type="button"
-                          onClick={() => handleDownloadTemplate(format)}
-                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                        >
-                          {label}
-                        </button>
-                      ))}
+                {selectedProductIds.length === 0 && (
+                  <>
+                    <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
+                      <Upload size={18} />
+                      Upload CSV
+                      <input
+                        type="file"
+                        accept=".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onChange={handleCsvFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+                    <div className="relative" ref={templateMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setTemplateMenuOpen((open) => !open)}
+                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+                      >
+                        <Download size={18} />
+                        Download template
+                        <ChevronDown size={16} className="text-gray-500" />
+                      </button>
+                      {templateMenuOpen && (
+                        <div className="absolute left-0 top-full mt-1 z-30 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                          {(
+                            [
+                              { format: "csv" as const, label: "CSV (.csv)" },
+                              { format: "xlsx" as const, label: "Excel (.xlsx)" },
+                              { format: "xls" as const, label: "Excel (.xls)" },
+                            ] as const
+                          ).map(({ format, label }) => (
+                            <button
+                              key={format}
+                              type="button"
+                              onClick={() => handleDownloadTemplate(format)}
+                              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => setShowFamilyManager(true)}
-                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
-                >
-                  Manage Families
-                </button>
+                    <button
+                      onClick={() => setShowFamilyManager(true)}
+                      className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
+                    >
+                      Manage Families
+                    </button>
+                  </>
+                )}
               </>
             )}
             {selectedProductIds.length > 0 && (
