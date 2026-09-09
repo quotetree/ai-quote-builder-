@@ -59,6 +59,11 @@ import {
 } from "@/types/database";
 import SpreadsheetEditor from "@/components/SpreadsheetEditor";
 import toast from "react-hot-toast";
+import {
+  QUOTE_SPREADSHEET_NAME_SYNCED,
+  syncQuoteNamesFromSpreadsheet,
+  type QuoteSpreadsheetNameSyncDetail,
+} from "@/lib/syncQuoteSpreadsheetName";
 
 const DEFAULT_FONT_SIZE = "16px";
 
@@ -1011,6 +1016,23 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
     window.addEventListener("buildSpreadsheetOpened", handleBuildSpreadsheetOpened as EventListener);
     return () =>
       window.removeEventListener("buildSpreadsheetOpened", handleBuildSpreadsheetOpened as EventListener);
+  }, [projectId]);
+
+  // Keep Drive spreadsheet titles in sync when a linked quote is renamed
+  useEffect(() => {
+    const handleNameSynced = (e: Event) => {
+      const detail = (e as CustomEvent<QuoteSpreadsheetNameSyncDetail>).detail;
+      if (!detail?.spreadsheetId || !detail.name) return;
+      if (detail.projectId && detail.projectId !== projectId) return;
+      setSpreadsheets((prev) =>
+        prev.map((s) =>
+          s.id === detail.spreadsheetId ? { ...s, title: detail.name } : s,
+        ),
+      );
+    };
+    window.addEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+    return () =>
+      window.removeEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
   }, [projectId]);
 
 
@@ -2104,6 +2126,11 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
         setSpreadsheets((prev) =>
           prev.map((s) => (s.id === data.id ? (data as ProjectSpreadsheet) : s)),
         );
+        await syncQuoteNamesFromSpreadsheet(supabase, {
+          spreadsheetId: data.id,
+          name: trimmed,
+          projectId,
+        });
       } else {
         const { data, error } = await supabase
           .from("project_notes")

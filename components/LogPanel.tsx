@@ -17,6 +17,10 @@ import {
   profitMarginPdfFilename,
 } from "@/lib/profitMarginPdf";
 import { isSpreadsheetSourcedQuote } from "@/lib/spreadsheetFromQuote";
+import {
+  QUOTE_SPREADSHEET_NAME_SYNCED,
+  type QuoteSpreadsheetNameSyncDetail,
+} from "@/lib/syncQuoteSpreadsheetName";
 import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 import { PROPOSAL_BUILDER_UI_ENABLED } from "@/lib/features/proposalBuilderUi";
 
@@ -511,6 +515,30 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     return () =>
       window.removeEventListener("quoteSpreadsheetLinked", handleSpreadsheetLinked as EventListener);
   }, [projectId, fetchQuotes]);
+
+  // Keep Log quote names in sync when a linked spreadsheet is renamed
+  useEffect(() => {
+    const handleNameSynced = (e: Event) => {
+      const detail = (e as CustomEvent<QuoteSpreadsheetNameSyncDetail>).detail;
+      if (!detail?.name) return;
+      if (detail.projectId && detail.projectId !== projectId) return;
+
+      setSelectedQuote((prev) => {
+        if (!prev) return prev;
+        if (detail.quoteId && prev.id === detail.quoteId) {
+          return { ...prev, quote_name: detail.name };
+        }
+        if (detail.spreadsheetId && prev.spreadsheet_id === detail.spreadsheetId) {
+          return { ...prev, quote_name: detail.name };
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+    return () =>
+      window.removeEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+  }, [projectId]);
 
   // Load proposal signature statuses whenever the quote list changes
   useEffect(() => {

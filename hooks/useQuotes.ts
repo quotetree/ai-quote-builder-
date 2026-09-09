@@ -2,6 +2,11 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Quote, QuoteItem, ProfitOverride } from "@/types/database";
 import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
+import {
+  QUOTE_SPREADSHEET_NAME_SYNCED,
+  syncSpreadsheetTitleFromQuote,
+  type QuoteSpreadsheetNameSyncDetail,
+} from "@/lib/syncQuoteSpreadsheetName";
 
 export function useQuotes(projectId?: string) {
   const [quotes, setQuotes] = useState<Quote[]>([]);
@@ -13,6 +18,31 @@ export function useQuotes(projectId?: string) {
     if (projectId) {
       fetchQuotes(projectId);
     }
+  }, [projectId]);
+
+  // Linked spreadsheet rename → keep quote names in this list in sync
+  useEffect(() => {
+    const handleNameSynced = (e: Event) => {
+      const detail = (e as CustomEvent<QuoteSpreadsheetNameSyncDetail>).detail;
+      if (!detail?.name) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) return;
+
+      setQuotes((prev) =>
+        prev.map((q) => {
+          if (detail.quoteId && q.id === detail.quoteId) {
+            return { ...q, quote_name: detail.name };
+          }
+          if (detail.spreadsheetId && q.spreadsheet_id === detail.spreadsheetId) {
+            return { ...q, quote_name: detail.name };
+          }
+          return q;
+        }),
+      );
+    };
+
+    window.addEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+    return () =>
+      window.removeEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
   }, [projectId]);
 
   async function fetchQuotes(projId: string) {
@@ -169,6 +199,12 @@ export function useQuotes(projectId?: string) {
       if (error) throw error;
       if (data) {
         setQuotes(quotes.map((q) => (q.id === id ? { ...q, quote_name: quoteName } : q)));
+        await syncSpreadsheetTitleFromQuote(supabase, {
+          quoteId: id,
+          spreadsheetId: data.spreadsheet_id,
+          name: quoteName,
+          projectId: data.project_id,
+        });
         // Update project timestamp to mark as recently active
         if (data.project_id) {
           await updateProjectTimestamp(data.project_id);

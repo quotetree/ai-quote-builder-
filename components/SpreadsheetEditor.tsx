@@ -25,6 +25,11 @@ import { filterProducts } from "@/lib/filterProducts";
 import toast from "react-hot-toast";
 import { updateProjectTimestamp } from "@/lib/updateProjectTimestamp";
 import {
+  QUOTE_SPREADSHEET_NAME_SYNCED,
+  syncQuoteNamesFromSpreadsheet,
+  type QuoteSpreadsheetNameSyncDetail,
+} from "@/lib/syncQuoteSpreadsheetName";
+import {
   calcSimpleItemMarkup,
   computeMarkupPerItemDeltas,
   getItemsForMarkupSelector,
@@ -348,11 +353,12 @@ function SpreadsheetRowItem({
           min={0}
           max={100}
           step="any"
-          value={row.discount ?? 0}
+          value={(row.discount ?? 0) || ""}
           onChange={(e) =>
             updateRow(sectionId, row.id, { discount: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })
           }
           onFocus={(e) => e.target.select()}
+          placeholder="0"
           className="py-2 text-sm text-right pr-1 bg-transparent border-none outline-none focus:ring-0 text-gray-700 dark:text-gray-300 tabular-nums w-full min-w-0"
         />
         <span className="text-xs text-gray-400 pr-1 flex-shrink-0">%</span>
@@ -364,10 +370,11 @@ function SpreadsheetRowItem({
           type="number"
           min={0}
           step="any"
-          value={row.quantity}
+          value={row.quantity || ""}
           onChange={(e) =>
             updateRow(sectionId, row.id, { quantity: Math.max(0, parseFloat(e.target.value) || 0) })
           }
+          placeholder="0"
           className="py-2 text-sm text-right pr-3 bg-transparent border-none outline-none focus:ring-0 text-gray-800 dark:text-gray-200 tabular-nums w-full min-w-0"
         />
       </div>
@@ -412,6 +419,7 @@ export default function SpreadsheetEditor({
   const { products } = useProducts();
 
   const [title, setTitle] = useState(spreadsheet.title);
+  const lastSyncedTitle = useRef(spreadsheet.title);
   const [sections, setSections] = useState<SpreadsheetSection[]>(() =>
     spreadsheet.sections.length > 0 ? spreadsheet.sections : [emptySection()],
   );
@@ -510,6 +518,19 @@ export default function SpreadsheetEditor({
       window.removeEventListener("spreadsheetLineItemAdded", handleLineItemAdded as EventListener);
   }, [spreadsheet.id]);
 
+  // Keep editor title in sync when the linked quote (or Drive rename) changes the name
+  useEffect(() => {
+    const handleNameSynced = (e: Event) => {
+      const detail = (e as CustomEvent<QuoteSpreadsheetNameSyncDetail>).detail;
+      if (!detail?.name || detail.spreadsheetId !== spreadsheet.id) return;
+      lastSyncedTitle.current = detail.name;
+      setTitle(detail.name);
+    };
+    window.addEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+    return () =>
+      window.removeEventListener(QUOTE_SPREADSHEET_NAME_SYNCED, handleNameSynced as EventListener);
+  }, [spreadsheet.id]);
+
   // ── Computed ──────────────────────────────────────────────────────────────
 
   const subtotal = sections.reduce(
@@ -576,6 +597,14 @@ export default function SpreadsheetEditor({
             .single();
           if (error) throw error;
           if (data) onUpdate?.(data as ProjectSpreadsheet);
+          if (latestTitle.trim() && latestTitle !== lastSyncedTitle.current) {
+            lastSyncedTitle.current = latestTitle;
+            await syncQuoteNamesFromSpreadsheet(supabase, {
+              spreadsheetId: spreadsheet.id,
+              name: latestTitle,
+              projectId: spreadsheet.project_id,
+            });
+          }
         }
         setSaved(true);
         return true;
