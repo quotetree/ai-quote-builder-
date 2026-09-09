@@ -113,47 +113,19 @@ const getTaxInfo = (quote: any) => {
   };
 };
 
-/** Shared PDF-builder — accepts either real DB data or mock sample data. */
-function buildQuotePDF(opts: {
+type QuotePdfHeaderOpts = {
   quoteNumber: string;
   companyName: string | null;
   companyAddress: string | null;
   logoAsset: ImageAsset | null;
-  items: Array<{
-    product_name: string;
-    unit_price: number;
-    line_total: number;
-    quantity: number;
-    discount_percent: number;
-  }>;
-  subtotal: number;
-  discount_amount: number;
-  discount_rate: number;
-  tax_rate: number;
-  tax_amount: number;
-  total_price: number;
-  charges?: any[];
-  baked_markups?: any[];
-  isMock?: boolean;
-}) {
-  const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
+};
 
-  // Optional "SAMPLE" diagonal watermark for mock/placeholder PDFs
-  if (opts.isMock) {
-    doc.saveGraphicsState();
-    doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(72);
-    doc.setTextColor(0, 0, 0);
-    doc.text("SAMPLE", pageWidth / 2, pageHeight / 2, {
-      align: "center",
-      angle: 45,
-    });
-    doc.restoreGraphicsState();
-  }
-
+/** Draws company logo/name, address, and quote number. Returns Y below the header block. */
+function drawQuoteFrontHeader(
+  doc: jsPDF,
+  opts: QuotePdfHeaderOpts,
+  pageWidth: number,
+): number {
   const headerStartY = 20;
   let leftColumnBottom = headerStartY;
 
@@ -198,7 +170,61 @@ function buildQuotePDF(opts: {
   doc.setTextColor(0, 0, 0);
   doc.text(`Quote Number: ${opts.quoteNumber}`, pageWidth - 20, addressStartY, { align: "right" });
 
-  const tableStartY = Math.max(leftColumnBottom, headerStartY + 25) + 8;
+  return Math.max(leftColumnBottom, headerStartY + 25);
+}
+
+/** Shared PDF-builder — accepts either real DB data or mock sample data. */
+function buildQuotePDF(opts: {
+  quoteNumber: string;
+  companyName: string | null;
+  companyAddress: string | null;
+  logoAsset: ImageAsset | null;
+  items: Array<{
+    product_name: string;
+    unit_price: number;
+    line_total: number;
+    quantity: number;
+    discount_percent: number;
+  }>;
+  subtotal: number;
+  discount_amount: number;
+  discount_rate: number;
+  tax_rate: number;
+  tax_amount: number;
+  total_price: number;
+  charges?: any[];
+  baked_markups?: any[];
+  isMock?: boolean;
+}) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  // Optional "SAMPLE" diagonal watermark for mock/placeholder PDFs
+  if (opts.isMock) {
+    doc.saveGraphicsState();
+    doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(72);
+    doc.setTextColor(0, 0, 0);
+    doc.text("SAMPLE", pageWidth / 2, pageHeight / 2, {
+      align: "center",
+      angle: 45,
+    });
+    doc.restoreGraphicsState();
+  }
+
+  const headerOpts: QuotePdfHeaderOpts = {
+    quoteNumber: opts.quoteNumber,
+    companyName: opts.companyName,
+    companyAddress: opts.companyAddress,
+    logoAsset: opts.logoAsset,
+  };
+
+  const headerBottomY = drawQuoteFrontHeader(doc, headerOpts, pageWidth);
+  const tableStartY = headerBottomY + 8;
+  // Continued pages reserve the same top space so the repeated header never overlaps rows
+  const continuedPageTop = tableStartY;
 
   const bakedMarkups = opts.baked_markups ?? [];
   const tableData = opts.items.map((item) => {
@@ -224,6 +250,10 @@ function buildQuotePDF(opts: {
 
   autoTable(doc, {
     startY: tableStartY,
+    margin: { top: continuedPageTop, left: 14, right: 14, bottom: 24 },
+    showHead: "everyPage",
+    pageBreak: "auto",
+    rowPageBreak: "auto",
     head: [["Product", "List Price", "Discount", "Sales Price", "Quantity", "Total Price"]],
     body: tableData.length > 0 ? tableData : [["No items", "", "", "", "", ""]],
     theme: "grid",
@@ -236,14 +266,31 @@ function buildQuotePDF(opts: {
       4: { halign: "center" },
       5: { halign: "right" },
     },
+    willDrawPage: (data) => {
+      // Page 1 header is already drawn above; redraw before table content on overflow pages
+      if (data.pageNumber > 1) {
+        drawQuoteFrontHeader(doc, headerOpts, pageWidth);
+      }
+    },
   });
 
-  const finalY = ((doc as any).lastAutoTable?.finalY || tableStartY) + 10;
+  const hasDiscount = (opts.discount_amount ?? 0) > 0;
+  // Subtotal + optional discount + tax + total (+ spacing)
+  const totalsBlockHeight = hasDiscount ? 34 : 27;
+  const bottomLimit = pageHeight - 18;
+
+  let currentY = ((doc as any).lastAutoTable?.finalY || tableStartY) + 10;
+  if (currentY + totalsBlockHeight > bottomLimit) {
+    doc.addPage();
+    drawQuoteFrontHeader(doc, headerOpts, pageWidth);
+    currentY = continuedPageTop;
+  }
+
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   doc.setTextColor(0, 0, 0);
 
   const totalsX = pageWidth - 70;
-  let currentY = finalY;
 
   const taxAmount = opts.charges
     ? getTaxInfo({ tax_rate: opts.tax_rate, tax_amount: opts.tax_amount, charges: opts.charges }).amount
@@ -257,7 +304,7 @@ function buildQuotePDF(opts: {
   doc.text("Subtotal:", totalsX, currentY);
   doc.text(formatCurrency(displaySubtotal), pageWidth - 20, currentY, { align: "right" });
 
-  if ((opts.discount_amount ?? 0) > 0) {
+  if (hasDiscount) {
     currentY += 7;
     const discountLabel = formatPercent(opts.discount_rate);
     doc.text(`Discount${discountLabel ? ` (${discountLabel})` : ""}:`, totalsX, currentY);
@@ -273,15 +320,6 @@ function buildQuotePDF(opts: {
   doc.setFont("helvetica", "bold");
   doc.text("Total:", totalsX, currentY);
   doc.text(formatCurrency(opts.total_price), pageWidth - 20, currentY, { align: "right" });
-
-  doc.setFontSize(9);
-  doc.setTextColor(100, 100, 100);
-  doc.text(
-    "This quote is valid until the expiration date shown above.",
-    pageWidth / 2,
-    pageHeight - 20,
-    { align: "center" }
-  );
 
   return doc;
 }
