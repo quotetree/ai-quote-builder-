@@ -344,7 +344,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   };
 
   const getPlanDisplayName = (plan: PlanType) => {
-    if (plan === "free") return "Free Trial";
+    if (plan === "free") return "Free";
     if (plan === "individual") return "Individual";
     return "Organization";
   };
@@ -504,12 +504,21 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                         </div>
                       </div>
 
-                      {/* Trial Banner */}
-                      {isTrialing && (
+                      {/* Free / trial banner */}
+                      {subscription.plan_type === "free" && subscription.status === "active" && (
+                        <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                          <p className="text-sm text-gray-800">
+                            <span className="font-medium">Free plan</span> — Export up to{" "}
+                            <strong>5 unique quotes</strong> per month. Upgrade to Individual or
+                            Organization for unlimited quote exports.
+                          </p>
+                        </div>
+                      )}
+                      {isTrialing && subscription.plan_type !== "free" && (
                         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                           <p className="text-sm text-blue-800">
-                            <span className="font-medium">Free Trial Active</span> — You have{" "}
-                            <strong>{daysRemaining} days</strong> remaining in your 14-day free trial
+                            <span className="font-medium">Trial Active</span> — You have{" "}
+                            <strong>{daysRemaining} days</strong> remaining
                           </p>
                         </div>
                       )}

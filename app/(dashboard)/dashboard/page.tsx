@@ -12,6 +12,9 @@ import {
   AttachmentItem,
 } from "@/hooks/useAttachmentManager";
 import { AttachmentChips } from "@/components/AttachmentChips";
+import OnboardingBanner, {
+  markOnboardingComplete,
+} from "@/components/plg/OnboardingBanner";
 
 export default function DashboardPage() {
   const [projectName, setProjectName] = useState("");
@@ -178,6 +181,7 @@ export default function DashboardPage() {
       if (project) {
         const { failureCount } = await uploadFilesToProject(project.id);
         await trackProjectCreated(project.id, project.project_name);
+        void markOnboardingComplete();
         if (failureCount === 0) {
           toast.success("Project created!");
         } else {
@@ -205,6 +209,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="w-full max-w-2xl px-8">
+        <OnboardingBanner />
         {/* Main Content */}
         <div className="text-center mb-12">
           <h1 className="text-4xl font-semibold mb-4">New project</h1>

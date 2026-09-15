@@ -20,13 +20,22 @@ interface PriceBookModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialView?: ViewMode;
+  /** Logged-out PLG: browse UI and open New Product; auth only on save */
+  guestPreview?: boolean;
+  onRequireAuth?: () => void;
 }
 
 type ViewMode = "list" | "new-product" | "csv-upload" | "csv-mapping" | "product-detail";
 
 const NONE_PRODUCT_FAMILY_LABEL = "-None-";
 
-export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBookModalProps) {
+export default function PriceBookModal({
+  isOpen,
+  onClose,
+  initialView,
+  guestPreview = false,
+  onRequireAuth,
+}: PriceBookModalProps) {
   const {
     products,
     loading,
@@ -45,6 +54,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
     deleteProductFamily,
   } = useProductFamilies();
   const { canManagePriceBook, hasReadOnlyPriceBook } = useOrganizationRole();
+  const canManage = canManagePriceBook() || guestPreview;
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -315,6 +325,11 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
   };
 
   const handleCsvFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (guestPreview) {
+      onRequireAuth?.();
+      event.target.value = "";
+      return;
+    }
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -605,7 +620,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                 <span className="text-sm text-blue-700 font-medium">Read-Only Access</span>
               </div>
             )}
-            {canManagePriceBook() && (
+            {canManage && (
               <>
                 <button
                   onClick={() => setViewMode("new-product")}
@@ -616,7 +631,15 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                 </button>
                 {selectedProductIds.length === 0 && (
                   <>
-                    <label className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer">
+                    <label
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer"
+                      onClick={(e) => {
+                        if (guestPreview) {
+                          e.preventDefault();
+                          onRequireAuth?.();
+                        }
+                      }}
+                    >
                       <Upload size={18} />
                       Upload CSV
                       <input
@@ -624,6 +647,7 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                         accept=".csv,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         onChange={handleCsvFileSelect}
                         className="hidden"
+                        disabled={guestPreview}
                       />
                     </label>
                     <div className="relative" ref={templateMenuRef}>
@@ -658,7 +682,13 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                       )}
                     </div>
                     <button
-                      onClick={() => setShowFamilyManager(true)}
+                      onClick={() => {
+                        if (guestPreview) {
+                          onRequireAuth?.();
+                          return;
+                        }
+                        setShowFamilyManager(true);
+                      }}
                       className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center gap-2 font-medium"
                     >
                       Manage Families
@@ -708,16 +738,24 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
               products={filteredProducts}
               loading={loading}
               productFamilies={productFamilies}
-              canManagePriceBook={canManagePriceBook()}
+              canManagePriceBook={canManage}
               onView={(product) => {
                 setViewingProduct(product);
                 setViewMode("product-detail");
               }}
               onEdit={(product) => {
+                if (guestPreview) {
+                  onRequireAuth?.();
+                  return;
+                }
                 setEditingProduct(product);
                 setViewMode("new-product");
               }}
               onDelete={async (productId) => {
+                if (guestPreview) {
+                  onRequireAuth?.();
+                  return;
+                }
                 if (confirm("Are you sure you want to delete this product?")) {
                   try {
                     await deleteProduct(productId);
@@ -738,15 +776,17 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
           {viewMode === "new-product" && (
             <ProductForm
               product={editingProduct}
-            productFamilies={productFamilies}
-            familiesLoading={productFamiliesLoading}
-            onCreateFamily={createProductFamily}
-            onDeleteFamily={deleteFamilyAndRefresh}
+              productFamilies={productFamilies}
+              familiesLoading={productFamiliesLoading}
               onCancel={() => {
                 setViewMode("list");
                 setEditingProduct(null);
               }}
               onSave={async (data) => {
+                if (guestPreview) {
+                  onRequireAuth?.();
+                  return;
+                }
                 try {
                   if (editingProduct) {
                     await updateProduct(editingProduct.id, data);
@@ -763,6 +803,20 @@ export default function PriceBookModal({ isOpen, onClose, initialView }: PriceBo
                 } catch (error: any) {
                   toast.error(error.message || "Failed to save product");
                 }
+              }}
+              onCreateFamily={async (name, description) => {
+                if (guestPreview) {
+                  onRequireAuth?.();
+                  return null;
+                }
+                return createProductFamily(name, description);
+              }}
+              onDeleteFamily={async (id) => {
+                if (guestPreview) {
+                  onRequireAuth?.();
+                  return;
+                }
+                return deleteFamilyAndRefresh(id);
               }}
             />
           )}

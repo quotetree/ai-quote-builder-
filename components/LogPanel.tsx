@@ -23,6 +23,11 @@ import {
 } from "@/lib/syncQuoteSpreadsheetName";
 import { calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
 import { PROPOSAL_BUILDER_UI_ENABLED } from "@/lib/features/proposalBuilderUi";
+import {
+  formatFreeQuoteUsageLabel,
+  type QuoteExportUsage,
+} from "@/lib/entitlements";
+import BillingModal from "@/components/BillingModal";
 
 type QuoteWithExtras = Quote & {
   baked_markups?: any[];
@@ -484,9 +489,26 @@ export default function LogPanel({ projectId }: LogPanelProps) {
     saving: false,
     saved: true,
   });
+  const [exportUsage, setExportUsage] = useState<QuoteExportUsage | null>(null);
+  const [billingOpen, setBillingOpen] = useState(false);
 
   // Signature status per quote (quoteId → ProposalSignatureStatus)
   const [signaturesMap, setSignaturesMap] = useState<Record<string, ProposalSignatureStatus>>({});
+
+  const refreshExportUsage = async () => {
+    try {
+      const res = await fetch("/api/quotes/export-usage");
+      if (!res.ok) return;
+      const data = (await res.json()) as QuoteExportUsage;
+      setExportUsage(data);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    void refreshExportUsage();
+  }, []);
 
   useEffect(() => {
     if (projectId) {
@@ -905,6 +927,23 @@ export default function LogPanel({ projectId }: LogPanelProps) {
         body: JSON.stringify({ quoteId: quote.id }),
       });
 
+      if (response.status === 402) {
+        let payload: { error?: string } = {};
+        try {
+          payload = await response.json();
+        } catch {
+          /* ignore */
+        }
+        toast.error(
+          payload.error ||
+            "You've used 5 of 5 free quotes this month. Upgrade for unlimited quote exports.",
+          { duration: 6000 },
+        );
+        setBillingOpen(true);
+        void refreshExportUsage();
+        return;
+      }
+
       if (!response.ok) throw new Error("Failed to generate PDF");
 
       const blob = await response.blob();
@@ -916,6 +955,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
       URL.revokeObjectURL(url);
 
       toast.success("Quote PDF downloaded");
+      void refreshExportUsage();
     } catch {
       toast.error("Failed to download quote PDF");
     }
@@ -1103,8 +1143,29 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   return (
     <div className="min-h-full bg-gray-50 dark:bg-gray-950 p-6">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Quote Log</h2>
+      <div className="flex justify-between items-center mb-6 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold">Quote Log</h2>
+          {exportUsage &&
+            !exportUsage.unlimited &&
+            typeof exportUsage.used === "number" &&
+            typeof exportUsage.limit === "number" && (
+              <p className="mt-1 text-sm text-gray-500">
+                {formatFreeQuoteUsageLabel({
+                  used: exportUsage.used,
+                  limit: exportUsage.limit,
+                  period_end: exportUsage.period_end,
+                })}
+                <button
+                  type="button"
+                  onClick={() => setBillingOpen(true)}
+                  className="ml-2 text-brand-green hover:underline font-medium"
+                >
+                  Upgrade
+                </button>
+              </p>
+            )}
+        </div>
         <button 
           onClick={() => setShowNewQuoteModal(true)}
           className="px-4 py-2 bg-brand-green text-white rounded-lg hover:bg-brand-green-dark transition-colors inline-flex items-center gap-2"
@@ -1113,6 +1174,8 @@ export default function LogPanel({ projectId }: LogPanelProps) {
           <span>Add New Quote</span>
         </button>
       </div>
+
+      <BillingModal isOpen={billingOpen} onClose={() => setBillingOpen(false)} />
 
       {/* Quotes Table */}
       {quotes.length === 0 ? (

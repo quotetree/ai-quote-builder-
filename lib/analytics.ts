@@ -58,8 +58,13 @@ class Analytics {
         userId = user?.id;
       }
 
+      // Skip persistence for logged-out visitors (RLS blocks inserts; avoid Next error overlay)
+      if (!userId) {
+        return;
+      }
+
       const event = {
-        user_id: userId || null,
+        user_id: userId,
         event_type: eventType,
         event_data: {
           ...eventData,
@@ -75,10 +80,15 @@ class Analytics {
         .insert(event);
 
       if (error) {
-        console.error("Analytics tracking error:", error);
+        // Soft-fail: never throw; avoid noisy overlays for non-critical tracking
+        if (process.env.NODE_ENV === "development") {
+          console.warn("Analytics tracking skipped:", error.message || error);
+        }
       }
     } catch (error) {
-      console.error("Failed to track event:", error);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Failed to track event:", error);
+      }
     }
   }
 

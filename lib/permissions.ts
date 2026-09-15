@@ -106,7 +106,7 @@ export function getRoleDescription(role: MemberRole): string {
 export function getPlanDisplayName(planType: PlanType): string {
   switch (planType) {
     case "free":
-      return "Free Trial";
+      return "Free";
     case "individual":
       return "Individual";
     case "organization":
@@ -120,11 +120,11 @@ export function getPlanDisplayName(planType: PlanType): string {
 export function getPlanDescription(planType: PlanType): string {
   switch (planType) {
     case "free":
-      return "14-day trial with full access to all features";
+      return "Full access with 5 unique quote exports per month";
     case "individual":
-      return "For solo professionals";
+      return "For solo professionals — unlimited quote exports";
     case "organization":
-      return "For teams & collaboration";
+      return "For teams & collaboration — unlimited quote exports";
   }
 }
 

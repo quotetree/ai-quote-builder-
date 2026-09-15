@@ -6,6 +6,7 @@ import { Home, ChevronRight, Info, AlertTriangle, CheckCircle } from "lucide-rea
 import { getBlogPost, getRelatedPosts, getAllBlogPosts } from "@/lib/blogPosts";
 import { TableOfContentsItem } from "@/types/blog";
 import BlogHeader from "@/components/blog/BlogHeader";
+import BlogAuthActions from "@/components/blog/BlogAuthActions";
 import ShareButtons from "@/components/blog/ShareButtons";
 import TableOfContents from "@/components/blog/TableOfContents";
 import RelatedPosts from "@/components/blog/RelatedPosts";
@@ -97,26 +98,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               <span className="text-2xl font-medium text-green-700">QuoteTree</span>
             </Link>
 
-            <div className="flex gap-4">
-              <Link
-                href="/blog"
-                className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors font-medium"
-              >
-                Blog
-              </Link>
-              <Link
-                href="/auth/signin"
-                className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors font-medium"
-              >
-                Login
-              </Link>
-              <Link
-                href="/auth/signup"
-                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-medium"
-              >
-                Get Started
-              </Link>
-            </div>
+            <BlogAuthActions />
           </nav>
         </header>
 

@@ -1,11 +1,20 @@
--- Function to automatically create profile, organization, and perpetual Free
--- subscription when a user signs up (invite-aware)
+-- Perpetual Free plan on signup (no 14-day trial)
+-- Invite-aware: pending invitees join existing org without creating a subscription
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user();
+
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   target_org_id UUID;
   pending_invite RECORD;
 BEGIN
+  -- Pending invitation takes precedence (no new org / subscription)
   SELECT *
   INTO pending_invite
   FROM organization_invitations
@@ -89,6 +98,7 @@ BEGIN
       NOW()
     );
 
+    -- Perpetual Free (not a trial)
     INSERT INTO subscriptions (
       organization_id,
       plan_type,
@@ -123,9 +133,20 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+COMMENT ON FUNCTION public.handle_new_user() IS
+  'Creates profile; joins invited org or creates workspace with perpetual Free subscription';
+
+-- Migrate existing Free trials → perpetual Free
+UPDATE subscriptions
+SET
+  status = 'active',
+  trial_end_date = NULL,
+  updated_at = NOW()
+WHERE plan_type = 'free'
+  AND status IN ('trialing', 'active');

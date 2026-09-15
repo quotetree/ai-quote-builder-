@@ -194,7 +194,7 @@ const faqs = [
   },
 ];
 
-export default function LandingPageClient() {
+export default function LandingPageMarketing() {
   const [activeStep, setActiveStep] = useState(1);
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
   const [isYearly, setIsYearly] = useState(true); // Default to annual

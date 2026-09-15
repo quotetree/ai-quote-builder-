@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { calcCustomerFacingSubtotal, calcSimpleItemMarkup } from "@/lib/quote/simpleMarkup";
+import {
+  QUOTE_EXPORT_LIMIT_CODE,
+  type QuoteExportReserveResult,
+} from "@/lib/entitlements";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -383,6 +387,42 @@ export async function POST(req: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Atomically reserve Free unique-quote credit (authz + entitlement in DB RPC)
+    const { data: reserveRaw, error: reserveError } = await supabase.rpc(
+      "reserve_quote_export_credit",
+      { p_quote_id: quoteId },
+    );
+
+    if (reserveError) {
+      console.error("reserve_quote_export_credit error:", reserveError);
+      return NextResponse.json(
+        { error: "Unable to verify quote export entitlement" },
+        { status: 500 },
+      );
+    }
+
+    const reserve = reserveRaw as QuoteExportReserveResult;
+    if (!reserve?.allowed) {
+      const status =
+        reserve?.code === "UNAUTHENTICATED"
+          ? 401
+          : reserve?.code === "NOT_AUTHORIZED" || reserve?.code === "QUOTE_NOT_FOUND"
+            ? 403
+            : reserve?.code === QUOTE_EXPORT_LIMIT_CODE
+              ? 402
+              : 403;
+      return NextResponse.json(
+        {
+          error: reserve?.message || "Quote export not allowed",
+          code: reserve?.code || "EXPORT_DENIED",
+          used: reserve?.used ?? null,
+          limit: reserve?.limit ?? null,
+          period_end: reserve?.period_end ?? null,
+        },
+        { status },
+      );
     }
 
     // Get quote with items (RLS will enforce org membership)

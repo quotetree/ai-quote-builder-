@@ -470,6 +470,39 @@ async function handleSubscriptionUpdate(
     ? new Date(sub.current_period_end * 1000).toISOString()
     : null;
 
+  // Terminal paid end → perpetual Free entitlements (preserve org data)
+  // Match by current stripe id first, then clear it so re-subscribe can create a new link.
+  if (
+    sub.status === "canceled" ||
+    sub.status === "unpaid" ||
+    sub.status === "incomplete_expired"
+  ) {
+    const { error: freeError } = await supabase
+      .from("subscriptions")
+      .update({
+        plan_type: "free",
+        status: "active",
+        stripe_subscription_id: null,
+        trial_start_date: null,
+        trial_end_date: null,
+        additional_licenses: 0,
+        base_licenses: 1,
+        base_price_cents: 0,
+        additional_license_price_cents: 0,
+        pending_plan_change: null,
+        cancel_at_period_end: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_subscription_id", subscription.id);
+
+    if (freeError) {
+      console.error("Failed to move canceled subscription to Free:", freeError);
+      throw freeError;
+    }
+    console.log(`Subscription ${subscription.id} ended — moved to Free entitlements`);
+    return;
+  }
+
   const updateData: any = {
     plan_type: planType,
     billing_cycle: billingCycle,
@@ -515,20 +548,32 @@ async function handleSubscriptionDeleted(
   subscription: Stripe.Subscription,
   supabase: any
 ) {
+  // Preserve org data; switch entitlements to perpetual Free
   const { error } = await supabase
     .from("subscriptions")
     .update({
-      status: "canceled",
+      plan_type: "free",
+      status: "active",
+      stripe_subscription_id: null,
+      trial_start_date: null,
+      trial_end_date: null,
+      additional_licenses: 0,
+      base_licenses: 1,
+      base_price_cents: 0,
+      additional_license_price_cents: 0,
+      pending_plan_change: null,
       updated_at: new Date().toISOString(),
     })
     .eq("stripe_subscription_id", subscription.id);
 
   if (error) {
-    console.error("Failed to cancel subscription:", error);
+    console.error("Failed to downgrade canceled subscription to Free:", error);
     throw error;
   }
 
-  console.log(`Subscription ${subscription.id} canceled`);
+  console.log(
+    `Subscription ${subscription.id} ended — organization moved to Free entitlements`,
+  );
 }
 
 async function handlePaymentSucceeded(invoice: Stripe.Invoice, supabase: any) {

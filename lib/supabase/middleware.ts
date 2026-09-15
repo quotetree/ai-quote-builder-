@@ -52,6 +52,7 @@ export async function updateSession(request: NextRequest) {
     !request.nextUrl.pathname.startsWith("/api/stripe/webhook") &&
     !request.nextUrl.pathname.startsWith("/checkout/success") &&
     !request.nextUrl.pathname.startsWith("/blog") &&
+    !request.nextUrl.pathname.startsWith("/welcome") &&
     !(isProposalExport && hasExportToken) &&
     request.nextUrl.pathname !== "/"
   ) {

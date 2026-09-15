@@ -7,43 +7,16 @@ import { Home, ChevronRight } from "lucide-react";
 import { getAllBlogPosts } from "@/lib/blogPosts";
 import BlogCard from "@/components/blog/BlogCard";
 import NewsletterSignup from "@/components/blog/NewsletterSignup";
+import BlogAuthActions from "@/components/blog/BlogAuthActions";
+import AuthPromptModal from "@/components/plg/AuthPromptModal";
 import { Toaster } from "react-hot-toast";
 
 const categories = ["All", "Trade Specific", "Comparisons", "Use Cases"];
 
 export default function BlogPage() {
   const [selectedCategory, setSelectedCategory] = useState("All");
-  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const allPosts = getAllBlogPosts();
-
-  // Handle Stripe checkout for free trial
-  const handleFreeTrialCheckout = async () => {
-    setIsCheckoutLoading(true);
-    try {
-      const response = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planType: 'individual',
-          billingCycle: 'monthly',
-          trialPeriodDays: 14,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create checkout');
-      }
-
-      // Redirect to Stripe checkout
-      window.location.href = data.url;
-    } catch (error: any) {
-      console.error('Checkout error:', error);
-      alert(error.message || 'Failed to start checkout. Please try again.');
-      setIsCheckoutLoading(false);
-    }
-  };
 
   // Filter posts by category
   const filteredPosts =
@@ -54,6 +27,7 @@ export default function BlogPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">
       <Toaster position="top-center" />
+      <AuthPromptModal open={authOpen} onClose={() => setAuthOpen(false)} />
       {/* Header Navigation */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
@@ -68,26 +42,7 @@ export default function BlogPage() {
             <span className="text-2xl font-medium text-green-700">QuoteTree</span>
           </Link>
 
-          <div className="flex gap-4">
-            <Link
-              href="/"
-              className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors font-medium"
-            >
-              Home
-            </Link>
-            <Link
-              href="/auth/signin"
-              className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors font-medium"
-            >
-              Login
-            </Link>
-            <Link
-              href="/auth/signup"
-              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all hover:shadow-lg font-medium"
-            >
-              Get Started
-            </Link>
-          </div>
+          <BlogAuthActions />
         </nav>
       </header>
 
@@ -163,11 +118,11 @@ export default function BlogPage() {
                 Create professional quotes 10x faster with intelligent product recommendations and automated pricing.
               </p>
               <button
-                onClick={handleFreeTrialCheckout}
-                disabled={isCheckoutLoading}
-                className="block w-full px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => setAuthOpen(true)}
+                className="block w-full px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-center"
               >
-                {isCheckoutLoading ? 'Loading...' : 'Try QuoteTree Free'}
+                Try QuoteTree Free
               </button>
             </div>
 

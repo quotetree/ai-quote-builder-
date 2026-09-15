@@ -1,55 +1,59 @@
-import Link from "next/link";
-import { Play, CheckCircle, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import LandingPageClient from "@/components/LandingPageClient";
+import PlgHomePage from "@/components/plg/PlgHomePage";
 
 // Force dynamic rendering - don't cache this page
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { code?: string; type?: string; next?: string; error?: string; error_code?: string; error_description?: string };
+  searchParams: {
+    code?: string;
+    type?: string;
+    next?: string;
+    error?: string;
+    error_code?: string;
+    error_description?: string;
+  };
 }) {
   // Handle password reset codes that come to root URL
   if (searchParams.code) {
-    console.log('=== CODE EXCHANGE ATTEMPT ===');
-    console.log('Code:', searchParams.code);
-    console.log('Next:', searchParams.next);
-    console.log('Type:', searchParams.type);
-    
+    console.log("=== CODE EXCHANGE ATTEMPT ===");
+    console.log("Code:", searchParams.code);
+    console.log("Next:", searchParams.next);
+    console.log("Type:", searchParams.type);
+
     const supabase = await createClient();
-    const { data, error } = await supabase.auth.exchangeCodeForSession(searchParams.code);
-    
-    console.log('Exchange result:', { 
-      hasSession: !!data?.session, 
+    const { data, error } = await supabase.auth.exchangeCodeForSession(
+      searchParams.code,
+    );
+
+    console.log("Exchange result:", {
+      hasSession: !!data?.session,
       hasUser: !!data?.user,
-      error: error?.message 
+      error: error?.message,
     });
-    
+
     if (!error && data.session) {
-      // Successfully exchanged code for session
-      console.log('✅ Code exchange successful, redirecting to reset-password');
+      console.log("✅ Code exchange successful, redirecting to reset-password");
       redirect("/auth/reset-password");
     }
-    
-    // If code exchange failed, log and show error
+
     console.error("❌ Code exchange failed:", error);
-    console.error("Error details:", { 
-      message: error?.message, 
+    console.error("Error details:", {
+      message: error?.message,
       status: error?.status,
-      name: error?.name 
+      name: error?.name,
     });
   }
 
-  // Check for error parameters from Supabase
   if (searchParams.error) {
-    console.error('Supabase redirect error:', {
+    console.error("Supabase redirect error:", {
       error: searchParams.error,
       error_code: searchParams.error_code,
-      error_description: searchParams.error_description
+      error_description: searchParams.error_description,
     });
   }
 
@@ -63,5 +67,5 @@ export default async function Home({
     redirect("/dashboard");
   }
 
-  return <LandingPageClient />;
+  return <PlgHomePage />;
 }
