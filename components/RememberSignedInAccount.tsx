@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { rememberAccount } from "@/lib/rememberedAccounts";
+import { providerFromUser, rememberAccount } from "@/lib/rememberedAccounts";
 
 /** Persist the signed-in user for the auth modal “Welcome back” picker. */
 export default function RememberSignedInAccount() {
@@ -21,7 +21,11 @@ export default function RememberSignedInAccount() {
         (typeof meta?.name === "string" && meta.name) ||
         null;
 
-      rememberAccount({ email: user.email, name });
+      rememberAccount({
+        email: user.email,
+        name,
+        provider: providerFromUser(user),
+      });
     };
 
     void save();
@@ -36,7 +40,11 @@ export default function RememberSignedInAccount() {
         (typeof meta?.full_name === "string" && meta.full_name) ||
         (typeof meta?.name === "string" && meta.name) ||
         null;
-      rememberAccount({ email: user.email, name });
+      rememberAccount({
+        email: user.email,
+        name,
+        provider: providerFromUser(user),
+      });
     });
 
     return () => subscription.unsubscribe();

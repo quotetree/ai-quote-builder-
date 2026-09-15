@@ -1,12 +1,42 @@
 const STORAGE_KEY = "quotetree_remembered_accounts";
 
+export type AuthProvider = "google" | "apple" | "email";
+
 export type RememberedAccount = {
   email: string;
   name: string | null;
+  /** How this account typically signs in. Missing on older saved entries. */
+  provider?: AuthProvider;
 };
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function isAuthProvider(value: unknown): value is AuthProvider {
+  return value === "google" || value === "apple" || value === "email";
+}
+
+/** Infer login method from a Supabase user (identities / app_metadata). */
+export function providerFromUser(user: {
+  app_metadata?: Record<string, unknown> | null;
+  identities?: Array<{ provider?: string | null }> | null;
+}): AuthProvider {
+  const identityProviders =
+    user.identities
+      ?.map((identity) => identity.provider)
+      .filter((provider): provider is string => typeof provider === "string") ??
+    [];
+
+  if (identityProviders.includes("google")) return "google";
+  if (identityProviders.includes("apple")) return "apple";
+
+  const metaProvider = user.app_metadata?.provider;
+  if (metaProvider === "google" || metaProvider === "apple") {
+    return metaProvider;
+  }
+
+  return "email";
 }
 
 export function getRememberedAccounts(): RememberedAccount[] {
@@ -26,7 +56,11 @@ export function getRememberedAccounts(): RememberedAccount[] {
       )
       .map((item) => ({
         email: normalizeEmail(item.email),
-        name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : null,
+        name:
+          typeof item.name === "string" && item.name.trim()
+            ? item.name.trim()
+            : null,
+        provider: isAuthProvider(item.provider) ? item.provider : undefined,
       }));
   } catch {
     return [];
@@ -38,14 +72,21 @@ export function rememberAccount(account: RememberedAccount) {
   const email = normalizeEmail(account.email);
   if (!email.includes("@")) return;
 
+  const existing = getRememberedAccounts();
+  const prev = existing.find((a) => a.email === email);
+
   const next: RememberedAccount = {
     email,
-    name: account.name?.trim() || null,
+    name: account.name?.trim() || prev?.name || null,
+    provider: account.provider ?? prev?.provider,
   };
 
-  const existing = getRememberedAccounts().filter((a) => a.email !== email);
+  const others = existing.filter((a) => a.email !== email);
   // Most recent first
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([next, ...existing].slice(0, 5)));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify([next, ...others].slice(0, 5)),
+  );
 }
 
 export function removeRememberedAccount(email: string) {
@@ -73,4 +114,11 @@ export function displayNameForAccount(account: RememberedAccount): string {
   return local
     .replace(/[._-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function providerLabel(provider?: AuthProvider): string | null {
+  if (provider === "google") return "Google";
+  if (provider === "apple") return "Apple";
+  if (provider === "email") return "Email";
+  return null;
 }

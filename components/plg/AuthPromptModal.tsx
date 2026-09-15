@@ -2,14 +2,17 @@
 
 import { FormEvent, useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { X, Phone } from "lucide-react";
+import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   RememberedAccount,
   accountInitials,
   displayNameForAccount,
   getRememberedAccounts,
+  providerFromUser,
+  providerLabel,
   rememberAccount,
   removeRememberedAccount,
 } from "@/lib/rememberedAccounts";
@@ -105,17 +108,6 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
     }
   };
 
-  const handleEmailContinue = (event: FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    setMessage(null);
-    if (!email.trim() || !email.includes("@")) {
-      setError("Enter a valid email address.");
-      return;
-    }
-    setStep("password");
-  };
-
   const handlePasswordSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -137,7 +129,11 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
             (typeof meta?.full_name === "string" && meta.full_name) ||
             (typeof meta?.name === "string" && meta.name) ||
             null;
-          rememberAccount({ email: user.email, name });
+          rememberAccount({
+            email: user.email,
+            name,
+            provider: providerFromUser(user),
+          });
         }
 
         router.push("/dashboard");
@@ -159,24 +155,45 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
       });
       if (signUpError) throw signUpError;
 
-      rememberAccount({ email: email.trim(), name: null });
+      rememberAccount({
+        email: email.trim(),
+        name: null,
+        provider: "email",
+      });
       setMessage(
         "Check your email for the confirmation link to complete signup.",
       );
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Something went wrong.";
-      setError(msg);
+      const raw = err instanceof Error ? err.message : "Something went wrong.";
+      const looksLikeInvalidCreds =
+        /invalid login credentials|invalid credentials/i.test(raw);
+      setError(
+        looksLikeInvalidCreds
+          ? "Invalid email or password. If you created this account with Google, use Continue with Google — your Gmail password won’t work here."
+          : raw,
+      );
     } finally {
       setLoading(false);
     }
   };
 
   const chooseAccount = (account: RememberedAccount) => {
-    setEmail(account.email);
-    setMode("signin");
-    setPassword("");
     setError(null);
     setMessage(null);
+    setPassword("");
+
+    if (account.provider === "google") {
+      void handleOAuth("google");
+      return;
+    }
+    if (account.provider === "apple") {
+      void handleOAuth("apple");
+      return;
+    }
+
+    // Email accounts, or older saved accounts without a known provider.
+    setEmail(account.email);
+    setMode("signin");
     setStep("password");
   };
 
@@ -196,7 +213,7 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
       : step === "password" && mode === "signup"
         ? "Create your account"
         : step === "password"
-          ? "Enter your password"
+          ? "Log in with email"
           : "Log in or sign up";
 
   const subtitle =
@@ -204,7 +221,9 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
       ? "Choose an account to continue."
       : step === "entry"
         ? "You'll save projects, sync your price book, and keep chat history and quotes in one place."
-        : null;
+        : step === "password"
+          ? "Google and email/password are separate sign-in methods."
+          : null;
 
   const dialog = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto p-4">
@@ -248,37 +267,46 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
           {step === "welcome" ? (
             <>
               <ul className="space-y-2">
-                {accounts.map((account) => (
-                  <li key={account.email}>
-                    <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-3 py-3">
-                      <button
-                        type="button"
-                        onClick={() => chooseAccount(account)}
-                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                      >
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-500 text-sm font-semibold text-white">
-                          {accountInitials(account)}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-semibold text-gray-900">
-                            {displayNameForAccount(account)}
+                {accounts.map((account) => {
+                  const label = providerLabel(account.provider);
+                  return (
+                    <li key={account.email}>
+                      <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => chooseAccount(account)}
+                          disabled={loading}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-60"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-500 text-sm font-semibold text-white">
+                            {accountInitials(account)}
                           </span>
-                          <span className="block truncate text-xs text-gray-500">
-                            {account.email}
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold text-gray-900">
+                              {displayNameForAccount(account)}
+                            </span>
+                            <span className="block truncate text-xs text-gray-500">
+                              {account.email}
+                            </span>
+                            {label && (
+                              <span className="mt-0.5 block text-[11px] font-medium text-gray-400">
+                                Continues with {label}
+                              </span>
+                            )}
                           </span>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveAccount(account)}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                        aria-label={`Remove ${account.email}`}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAccount(account)}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                          aria-label={`Remove ${account.email}`}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
 
               <div className="flex items-center gap-3 py-1">
@@ -327,30 +355,7 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
                 className="flex w-full items-center justify-center gap-3 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50 disabled:opacity-60"
               >
                 <GoogleIcon />
-                Continue with Google
-              </button>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => handleOAuth("apple")}
-                className="flex w-full items-center justify-center gap-3 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50 disabled:opacity-60"
-              >
-                <AppleIcon />
-                Continue with Apple
-              </button>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => {
-                  setError(null);
-                  setMessage(
-                    "Phone sign-in isn’t available yet — continue with email below.",
-                  );
-                }}
-                className="flex w-full items-center justify-center gap-3 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50 disabled:opacity-60"
-              >
-                <Phone size={18} />
-                Continue with phone
+                {loading ? "Redirecting to Google..." : "Continue with Google"}
               </button>
 
               <div className="flex items-center gap-3 py-1">
@@ -361,22 +366,100 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
                 <div className="h-px flex-1 bg-gray-200" />
               </div>
 
-              <form onSubmit={handleEmailContinue} className="space-y-3">
-                <input
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Email address"
-                  className="w-full rounded-full border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
-                />
+              <form onSubmit={handlePasswordSubmit} className="space-y-3 text-left">
+                <div>
+                  <label
+                    htmlFor="plg-auth-email"
+                    className="mb-1 block text-sm font-medium text-gray-700"
+                  >
+                    Email
+                  </label>
+                  <input
+                    id="plg-auth-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full rounded-full border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="plg-auth-password"
+                    className="mb-1 block text-sm font-medium text-gray-700"
+                  >
+                    Password
+                  </label>
+                  <input
+                    id="plg-auth-password"
+                    type="password"
+                    autoComplete={
+                      mode === "signin" ? "current-password" : "new-password"
+                    }
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full rounded-full border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={loading}
                   className="w-full rounded-full bg-gray-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-60"
                 >
-                  Continue
+                  {loading
+                    ? "Please wait…"
+                    : mode === "signin"
+                      ? "Log in"
+                      : "Create account"}
                 </button>
+                {mode === "signin" && (
+                  <p className="text-center">
+                    <Link
+                      href="/auth/forgot-password"
+                      className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                      onClick={onClose}
+                    >
+                      Forgot password?
+                    </Link>
+                  </p>
+                )}
+                <p className="text-center text-sm text-gray-500">
+                  {mode === "signin" ? (
+                    <>
+                      New here?{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-gray-900 underline"
+                        onClick={() => {
+                          setMode("signup");
+                          setError(null);
+                          setMessage(null);
+                        }}
+                      >
+                        Sign up
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      Already have an account?{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-gray-900 underline"
+                        onClick={() => {
+                          setMode("signin");
+                          setError(null);
+                          setMessage(null);
+                        }}
+                      >
+                        Log in
+                      </button>
+                    </>
+                  )}
+                </p>
               </form>
 
               {accounts.length > 0 && (
@@ -394,7 +477,7 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
               )}
             </>
           ) : (
-            <form onSubmit={handlePasswordSubmit} className="space-y-3 text-left">
+            <div className="space-y-3 text-left">
               <button
                 type="button"
                 onClick={() => {
@@ -407,63 +490,96 @@ export default function AuthPromptModal({ open, onClose }: AuthPromptModalProps)
               >
                 ← {email}
               </button>
-              <input
-                type="password"
-                autoComplete={
-                  mode === "signin" ? "current-password" : "new-password"
-                }
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                required
-                autoFocus
-                className="w-full rounded-full border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
-              />
+
+              {/* Older remembered accounts may not know the provider yet — always offer Google. */}
               <button
-                type="submit"
+                type="button"
                 disabled={loading}
-                className="w-full rounded-full bg-gray-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-60"
+                onClick={() => handleOAuth("google")}
+                className="flex w-full items-center justify-center gap-3 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-50 disabled:opacity-60"
               >
-                {loading
-                  ? "Please wait…"
-                  : mode === "signin"
-                    ? "Log in"
-                    : "Create account"}
+                <GoogleIcon />
+                Continue with Google
               </button>
-              <p className="text-center text-sm text-gray-500">
-                {mode === "signin" ? (
-                  <>
-                    New here?{" "}
-                    <button
-                      type="button"
-                      className="font-medium text-gray-900 underline"
-                      onClick={() => {
-                        setMode("signup");
-                        setError(null);
-                        setMessage(null);
-                      }}
+
+              <div className="flex items-center gap-3 py-1">
+                <div className="h-px flex-1 bg-gray-200" />
+                <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                  OR
+                </span>
+                <div className="h-px flex-1 bg-gray-200" />
+              </div>
+
+              <form onSubmit={handlePasswordSubmit} className="space-y-3">
+                <input
+                  type="password"
+                  autoComplete={
+                    mode === "signin" ? "current-password" : "new-password"
+                  }
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                  autoFocus
+                  className="w-full rounded-full border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-full bg-gray-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-black disabled:opacity-60"
+                >
+                  {loading
+                    ? "Please wait…"
+                    : mode === "signin"
+                      ? "Log in"
+                      : "Create account"}
+                </button>
+                {mode === "signin" && (
+                  <p className="text-center">
+                    <Link
+                      href="/auth/forgot-password"
+                      className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                      onClick={onClose}
                     >
-                      Sign up
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    Already have an account?{" "}
-                    <button
-                      type="button"
-                      className="font-medium text-gray-900 underline"
-                      onClick={() => {
-                        setMode("signin");
-                        setError(null);
-                        setMessage(null);
-                      }}
-                    >
-                      Log in
-                    </button>
-                  </>
+                      Forgot password?
+                    </Link>
+                  </p>
                 )}
-              </p>
-            </form>
+                <p className="text-center text-sm text-gray-500">
+                  {mode === "signin" ? (
+                    <>
+                      New here?{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-gray-900 underline"
+                        onClick={() => {
+                          setMode("signup");
+                          setError(null);
+                          setMessage(null);
+                        }}
+                      >
+                        Sign up
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      Already have an account?{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-gray-900 underline"
+                        onClick={() => {
+                          setMode("signin");
+                          setError(null);
+                          setMessage(null);
+                        }}
+                      >
+                        Log in
+                      </button>
+                    </>
+                  )}
+                </p>
+              </form>
+            </div>
           )}
 
           {error && (
@@ -501,14 +617,6 @@ function GoogleIcon() {
         fill="#1976D2"
         d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l.0.0 6.2 5.2C39.2 36.3 44 31 44 24c0-1.3-.1-2.5-.4-3.5z"
       />
-    </svg>
-  );
-}
-
-function AppleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M16.7 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.9-3.5.9-.7 0-1.9-.8-3.1-.8-1.6 0-3.1 1-3.9 2.5-1.7 2.9-.4 7.2 1.2 9.6.8 1.1 1.7 2.4 3 2.4 1.2 0 1.6-.8 3.1-.8s1.8.8 3.1.8c1.3 0 2.1-1.1 2.9-2.2.9-1.3 1.3-2.5 1.3-2.6-.0-.0-2.5-1-2.5-3.5zM14.6 5.5c.6-.8 1.1-1.9.9-3-.9.0-2 .6-2.6 1.4-.6.7-1.1 1.8-.9 2.9 1 .1 2-.5 2.6-1.3z" />
     </svg>
   );
 }
