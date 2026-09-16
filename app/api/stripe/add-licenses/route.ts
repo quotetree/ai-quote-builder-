@@ -1,19 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
-import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
+import { LEGACY_STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 import type { BillingCycle } from "@/types/database";
+import {
+  assertSeatQuantity,
+  getProPriceId,
+  inferSubscriptionFromStripeItems,
+  planTypeFromSeatCount,
+  proPriceFields,
+  totalSeatsFromLicenses,
+} from "@/lib/stripe/pricing";
+import { canDowngradeTo } from "@/lib/permissions";
 
+/**
+ * POST /api/stripe/add-licenses
+ *
+ * Sets absolute seat quantity on the existing subscription (never += N).
+ * Body: { targetSeatCount: number }
+ *
+ * Proration: Stripe standard create_prorations for both increases and decreases.
+ * Floor: targetSeatCount >= 1 while paid remains active.
+ */
 export async function POST(request: NextRequest) {
   try {
-    // Runtime check for Stripe key
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
     }
 
     const supabase = await createClient();
-
-    // Get the authenticated user
     const {
       data: { user },
       error: authError,
@@ -23,32 +38,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse request body
     const body = await request.json();
-    const { additionalLicensesToAdd } = body as {
-      additionalLicensesToAdd: number;
-    };
 
-    if (!additionalLicensesToAdd || additionalLicensesToAdd < 1) {
-      return NextResponse.json(
-        { error: "Invalid number of licenses" },
-        { status: 400 }
-      );
+    let targetSeatCount: number;
+    try {
+      if (body.targetSeatCount != null) {
+        targetSeatCount = assertSeatQuantity(body.targetSeatCount);
+      } else if (body.additionalLicensesToAdd != null) {
+        // Legacy delta API — convert to absolute using current seats (less safe; prefer targetSeatCount)
+        // Resolved after we load subscription below
+        targetSeatCount = -1;
+      } else {
+        return NextResponse.json(
+          { error: "Missing targetSeatCount" },
+          { status: 400 }
+        );
+      }
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
     }
 
-    // Get user's organization context
-    const { data: orgData } = await supabase.rpc(
-      "get_user_organization_membership",
-      { p_user_id: user.id }
-    );
+    const { data: orgData } = await supabase.rpc("get_user_organization_membership", {
+      p_user_id: user.id,
+    });
 
     if (!orgData || orgData.length === 0) {
       return NextResponse.json({ error: "No organization found" }, { status: 404 });
     }
 
     const orgContext = orgData[0];
-
-    // Check if user is owner
     if (orgContext.role !== "owner") {
       return NextResponse.json(
         { error: "Only the owner can manage licenses" },
@@ -56,7 +74,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get subscription
     const { data: subscription, error: subError } = await supabase
       .from("subscriptions")
       .select("*")
@@ -67,172 +84,217 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No subscription found" }, { status: 404 });
     }
 
-    if (subscription.plan_type !== "organization") {
+    if (subscription.plan_type === "free" || !subscription.stripe_subscription_id) {
       return NextResponse.json(
-        { error: "Only organization plans can add licenses" },
+        { error: "No active paid subscription. Upgrade to Pro first." },
         { status: 400 }
       );
     }
 
-    if (!subscription.stripe_subscription_id) {
-      return NextResponse.json(
-        { error: "No Stripe subscription found" },
-        { status: 400 }
-      );
+    const currentSeats = totalSeatsFromLicenses(
+      subscription.base_licenses || 1,
+      subscription.additional_licenses || 0
+    );
+
+    if (targetSeatCount < 0) {
+      try {
+        targetSeatCount = assertSeatQuantity(
+          currentSeats + Number(body.additionalLicensesToAdd)
+        );
+      } catch (e: any) {
+        return NextResponse.json({ error: e.message }, { status: 400 });
+      }
     }
 
-    // Get Stripe subscription
+    if (targetSeatCount === currentSeats) {
+      return NextResponse.json({
+        success: true,
+        message: "Seat count unchanged",
+        targetSeatCount,
+        subscription,
+      });
+    }
+
+    // Block reducing below active member count
+    const usedLicenses = orgContext.used_licenses || 1;
+    const downgradeCheck = canDowngradeTo(
+      planTypeFromSeatCount(targetSeatCount),
+      usedLicenses,
+      targetSeatCount
+    );
+    if (!downgradeCheck.allowed) {
+      return NextResponse.json({ error: downgradeCheck.reason }, { status: 400 });
+    }
+
+    const billingCycle = (subscription.billing_cycle || "yearly") as BillingCycle;
     const stripeSubscription = await stripe.subscriptions.retrieve(
-      subscription.stripe_subscription_id
+      subscription.stripe_subscription_id,
+      { expand: ["items"] }
     );
 
-    // Find the additional license item
-    const billingCycle = subscription.billing_cycle as BillingCycle || "yearly";
-    const licensePriceId =
-      billingCycle === "monthly"
-        ? STRIPE_PRICE_IDS.organization.additionalLicense.monthly
-        : STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
-
-    const licenseItem = stripeSubscription.items.data.find(
-      (item) => item.price.id === licensePriceId
-    );
-
-    // Log current state for debugging
-    console.log('Current license state:', {
-      dbAdditionalLicenses: subscription.additional_licenses,
-      stripeAdditionalLicenses: licenseItem?.quantity || 0,
-      requestedToAdd: additionalLicensesToAdd,
-    });
+    const inferred = inferSubscriptionFromStripeItems(stripeSubscription.items.data);
 
     try {
-      console.log('Before update - Subscription items:', {
-        subscriptionId: stripeSubscription.id,
-        items: stripeSubscription.items.data.map(item => ({
-          id: item.id,
-          priceId: item.price.id,
-          quantity: item.quantity
-        }))
-      });
+      let updatedSubscription;
 
-      // Build items array for subscription update
-      const items: Array<{ id?: string; price?: string; quantity?: number }> = stripeSubscription.items.data.map((item: any) => {
-        if (item.price.id === licensePriceId) {
-          // Update license item quantity
-          const newQuantity = (item.quantity || 0) + additionalLicensesToAdd;
-          console.log(`Updating license item from ${item.quantity} to ${newQuantity}`);
-          return {
-            id: item.id,
-        quantity: newQuantity,
-          };
+      if (inferred.isPro) {
+        let proPriceId: string;
+        try {
+          proPriceId = getProPriceId(billingCycle);
+        } catch (envErr: any) {
+          return NextResponse.json({ error: envErr.message }, { status: 500 });
         }
-        // Keep other items unchanged
-        return { id: item.id };
-      });
 
-      // If no license item exists yet, add it
-      if (!licenseItem) {
-        console.log(`Adding new license item with quantity ${additionalLicensesToAdd}`);
-        items.push({
-          price: licensePriceId,
-          quantity: additionalLicensesToAdd,
+        const proItem = stripeSubscription.items.data.find(
+          (item) => item.price.id === inferred.priceId || item.price.id === proPriceId
+        );
+
+        const items = proItem
+          ? [{ id: proItem.id, price: proPriceId, quantity: targetSeatCount }]
+          : [{ price: proPriceId, quantity: targetSeatCount }];
+
+        // Delete stray items if any
+        const itemUpdates = [
+          ...stripeSubscription.items.data
+            .filter((item) => !proItem || item.id !== proItem.id)
+            .map((item) => ({ id: item.id, deleted: true as const })),
+          ...items,
+        ];
+
+        updatedSubscription = await stripe.subscriptions.update(stripeSubscription.id, {
+          items: itemUpdates,
+          // Standard proration for both increases and decreases
+          proration_behavior: "create_prorations",
+          metadata: {
+            ...stripeSubscription.metadata,
+            plan_type: planTypeFromSeatCount(targetSeatCount),
+            seat_count: String(targetSeatCount),
+            product: "pro",
+            billing_cycle: billingCycle,
+          },
+        });
+
+        const fields = proPriceFields(billingCycle, targetSeatCount);
+        const { data: dbSub, error: updateError } = await supabase
+          .from("subscriptions")
+          .update({
+            ...fields,
+            stripe_price_id: proPriceId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("organization_id", orgContext.organization_id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error("Failed to update database:", updateError);
+        }
+
+        console.log(
+          `[update-seats] ✅ pro | ${currentSeats} → ${targetSeatCount} | plan: ${fields.plan_type}`
+        );
+
+        return NextResponse.json({
+          success: true,
+          message: `Seat count set to ${targetSeatCount}`,
+          targetSeatCount,
+          previousSeatCount: currentSeats,
+          subscription: dbSub,
+          stripeSubscriptionId: updatedSubscription.id,
         });
       }
 
-      console.log('Updating subscription with items:', items);
+      // Grandfathered legacy org: set absolute quantity on additional-license line item
+      // Legacy base = 2 seats; additional licenses = targetSeatCount - 2
+      if (inferred.isLegacy && inferred.planType === "organization") {
+        if (targetSeatCount < 2) {
+          return NextResponse.json(
+            {
+              error:
+                "Legacy Organization plans include 2 base seats. To move to 1 seat, switch to the new Pro plan from Billing.",
+            },
+            { status: 400 }
+          );
+        }
 
-      // Update subscription with immediate proration
-      const updatedSubscription = await stripe.subscriptions.update(
-        stripeSubscription.id,
-        {
+        const additionalQty = targetSeatCount - 2;
+        const licensePriceId =
+          billingCycle === "monthly"
+            ? LEGACY_STRIPE_PRICE_IDS.organization.additionalLicense.monthly
+            : LEGACY_STRIPE_PRICE_IDS.organization.additionalLicense.yearly;
+
+        const licenseItem = stripeSubscription.items.data.find(
+          (item) => item.price.id === licensePriceId
+        );
+
+        const items: Array<{ id?: string; price?: string; quantity?: number; deleted?: boolean }> =
+          [];
+
+        if (additionalQty === 0 && licenseItem) {
+          items.push({ id: licenseItem.id, deleted: true });
+        } else if (licenseItem) {
+          items.push({ id: licenseItem.id, quantity: additionalQty });
+        } else if (additionalQty > 0) {
+          items.push({ price: licensePriceId, quantity: additionalQty });
+        }
+
+        if (items.length === 0) {
+          return NextResponse.json({
+            success: true,
+            message: "Seat count unchanged",
+            targetSeatCount,
+          });
+        }
+
+        updatedSubscription = await stripe.subscriptions.update(stripeSubscription.id, {
           items,
-          proration_behavior: "create_prorations", // Create proration items immediately
-        }
-      );
+          proration_behavior: "create_prorations",
+        });
 
-      console.log('Subscription updated successfully');
+        const { data: dbSub, error: updateError } = await supabase
+          .from("subscriptions")
+          .update({
+            base_licenses: 2,
+            additional_licenses: additionalQty,
+            plan_type: "organization",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("organization_id", orgContext.organization_id)
+          .select()
+          .single();
 
-      // Verify the update by retrieving the subscription again
-      const verifySubscription = await stripe.subscriptions.retrieve(stripeSubscription.id);
-      const verifyLicenseItem = verifySubscription.items.data.find(
-        (item) => item.price.id === licensePriceId
-      );
-      console.log('After update - verified license count:', {
-        additionalLicenses: verifyLicenseItem?.quantity || 0,
-        baseLicenses: 2,
-        totalLicenses: 2 + (verifyLicenseItem?.quantity || 0),
-        expectedMonthlyRate: 158 + (79 * (verifyLicenseItem?.quantity || 0)),
-      });
+        if (updateError) console.error("Failed to update database:", updateError);
 
-      // CRITICAL: Immediately update database with new license counts
-      // Don't wait for webhook - update now so UI reflects change immediately
-      const newAdditionalLicenses = verifyLicenseItem?.quantity || 0;
+        console.log(
+          `[update-seats] ✅ legacy-org | ${currentSeats} → ${targetSeatCount}`
+        );
 
-      console.log('Updating database with new license counts...');
-      const { error: updateError } = await supabase
-        .from('subscriptions')
-        .update({
-          additional_licenses: newAdditionalLicenses,
-          // Note: total_licenses is a generated column (base_licenses + additional_licenses)
-          // so we don't update it directly - it's computed automatically
-          updated_at: new Date().toISOString(),
-        })
-        .eq('organization_id', orgContext.organization_id);
-
-      if (updateError) {
-        console.error('❌ Failed to update database:', updateError);
-        // Don't fail the request - webhook will update as backup
-      } else {
-        const expectedTotalLicenses = 2 + newAdditionalLicenses;
-        console.log('✅ Database updated successfully:', {
-          additional_licenses: newAdditionalLicenses,
-          total_licenses: `${expectedTotalLicenses} (computed automatically)`,
+        return NextResponse.json({
+          success: true,
+          message: `Seat count set to ${targetSeatCount}`,
+          targetSeatCount,
+          previousSeatCount: currentSeats,
+          subscription: dbSub,
+          stripeSubscriptionId: updatedSubscription.id,
         });
       }
 
-      // CRITICAL FIX: When updating subscription with proration_behavior: "create_prorations",
-      // Stripe automatically creates proration invoice items but doesn't charge immediately.
-      // We need to manually create and pay the invoice.
-      
-      console.log('Creating invoice for proration...');
-      
-      try {
-        // Create an invoice to capture the proration items
-        const invoice = await stripe.invoices.create({
-          customer: stripeSubscription.customer as string,
-          subscription: stripeSubscription.id,
-          auto_advance: false, // Don't auto-finalize so we can inspect it
-        });
-
-        console.log('Invoice created:', {
-          id: invoice.id,
-          status: invoice.status,
-          amount_due: invoice.amount_due,
-        });
-
-        // Only finalize and pay if there's an amount due
-        if (invoice.amount_due > 0) {
-          console.log('Invoice has amount due, finalizing and paying...');
-          
-          // Finalize the invoice
-          const finalizedInvoice = await stripe.invoices.finalizeInvoice(invoice.id);
-          console.log('Invoice finalized, status:', finalizedInvoice.status);
-
-          // Pay the invoice immediately
-          if (finalizedInvoice.status === 'open') {
-            const paidInvoice = await stripe.invoices.pay(invoice.id);
-            console.log('✅ Invoice paid successfully! Amount:', paidInvoice.amount_paid / 100);
-          } else if (finalizedInvoice.status === 'paid') {
-            console.log('✅ Invoice already paid automatically');
-          }
-        } else {
-          console.log('No amount due on invoice, voiding it');
-          await stripe.invoices.voidInvoice(invoice.id);
-        }
-      } catch (invoiceError: any) {
-        console.error('Invoice handling error:', invoiceError.message);
-        // Don't fail the whole request if invoice payment fails
-        // The subscription update was successful
+      // Legacy individual wanting more seats → require moving to Pro via checkout
+      if (inferred.isLegacy && inferred.planType === "individual" && targetSeatCount > 1) {
+        return NextResponse.json(
+          {
+            error:
+              "To add seats, upgrade to the current Pro plan from Billing. Your legacy Single User price will be replaced with Pro ($20/user/mo).",
+            requiresProCheckout: true,
+          },
+          { status: 400 }
+        );
       }
+
+      return NextResponse.json(
+        { error: "Unable to update seats for this subscription type" },
+        { status: 400 }
+      );
     } catch (stripeError: any) {
       console.error("Failed to update Stripe subscription:", stripeError);
       return NextResponse.json(
@@ -240,18 +302,11 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-
-    // The webhook will handle updating the database
-    return NextResponse.json({
-      success: true,
-      message: `Added ${additionalLicensesToAdd} license(s) successfully`,
-    });
   } catch (error: any) {
-    console.error("Add licenses error:", error);
+    console.error("Update seats error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to add licenses" },
+      { error: error.message || "Failed to update seats" },
       { status: 500 }
     );
   }
 }
-

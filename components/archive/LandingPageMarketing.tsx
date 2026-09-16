@@ -7,6 +7,7 @@ import { Play, CheckCircle, ChevronDown, X } from "lucide-react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import FreeTrialModal from "@/components/FreeTrialModal";
+import PricingCards from "@/components/pricing/PricingCards";
 
 const userJourneySteps = [
   {
@@ -46,115 +47,6 @@ const userJourneySteps = [
     image: "/screenshots/quote_pdf.png",
   },
 ];
-
-const pricingPlans = {
-  monthly: [
-    {
-      name: "Free Trial",
-      price: 0,
-      period: "forever",
-      description: "Perfect for trying out QuoteTree",
-      features: [
-        "Unlimited quotes",
-        "Advanced AI chat assistant",
-        "Full product library access",
-        "PDF quote generation",
-        "Profit margin breakdown",
-        "Email support",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-    },
-    {
-      name: "Single User",
-      price: 79,
-      period: "month",
-      description: "Ideal for independent contractors",
-      features: [
-        "Everything in Free Trial",
-        "Bulk product import/export",
-        "Profit margin breakdown",
-        "Priority support",
-        "Chat history preservation",
-        "Custom markup presets",
-        "Personalize quote template",
-      ],
-      cta: "Start Free Trial",
-      highlighted: true,
-    },
-    {
-      name: "Organization",
-      price: 158,
-      period: "month",
-      description: "Best for growing teams",
-      features: [
-        "Everything in Single User",
-        "Up to 2 team members",
-        "Shared price book",
-        "Team collaboration",
-        "Centralized quote log",
-        "User permission settings",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-    },
-  ],
-  yearly: [
-    {
-      name: "Free Trial",
-      price: 0,
-      period: "forever",
-      description: "Perfect for trying out QuoteTree",
-      features: [
-        "Unlimited quotes",
-        "Advanced AI chat assistant",
-        "Full product library access",
-        "PDF quote generation",
-        "Profit margin breakdown",
-        "Email support",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-    },
-    {
-      name: "Single User",
-      price: 65,
-      period: "month",
-      yearlyTotal: 780,
-      description: "Ideal for independent contractors",
-      features: [
-        "Everything in Free Trial",
-        "Bulk product import/export",
-        "Profit margin breakdown",
-        "Priority support",
-        "Chat history preservation",
-        "Custom markup presets",
-        "Personalize quote template",
-      ],
-      cta: "Start Free Trial",
-      highlighted: true,
-      savings: "Save $168/year",
-    },
-    {
-      name: "Organization",
-      price: 130,
-      period: "month",
-      yearlyTotal: 1560,
-      description: "Best for growing teams",
-      features: [
-        "Everything in Single User",
-        "Up to 2 team members",
-        "Shared price book",
-        "Team collaboration",
-        "Centralized quote log",
-        "User permission settings",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-      savings: "Save $336/year",
-    },
-  ],
-};
 
 const faqs = [
   {
@@ -197,9 +89,7 @@ const faqs = [
 export default function LandingPageMarketing() {
   const [activeStep, setActiveStep] = useState(1);
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
-  const [isYearly, setIsYearly] = useState(true); // Default to annual
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
-  const [additionalLicenses, setAdditionalLicenses] = useState(0);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -274,12 +164,9 @@ export default function LandingPageMarketing() {
     console.log('ℹ️ No recovery token or code detected, staying on homepage');
   }, [router]); // Run once on mount
 
-  const billingCycle = isYearly ? "yearly" : "monthly";
-  const currentPlans = isYearly ? pricingPlans.yearly : pricingPlans.monthly;
-
-  // Handle checkout for landing page users (unauthenticated)
+  // Legacy FreeTrialModal may still trigger checkout
   const handleCheckout = async (
-    planType: 'individual' | 'organization',
+    _planType: 'individual' | 'organization',
     trialDays?: number,
     forceBillingCycle?: 'monthly' | 'yearly'
   ) => {
@@ -289,9 +176,8 @@ export default function LandingPageMarketing() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          planType,
-          billingCycle: forceBillingCycle || (isYearly ? 'yearly' : 'monthly'),
-          additionalLicenses: planType === 'organization' ? additionalLicenses : 0,
+          billingCycle: forceBillingCycle || 'monthly',
+          seatCount: 1,
           trialPeriodDays: trialDays,
         }),
       });
@@ -345,7 +231,7 @@ export default function LandingPageMarketing() {
                 Blog
               </Link>
               <Link
-                href="#pricing"
+                href="/pricing"
                 className="text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Pricing
@@ -543,7 +429,7 @@ export default function LandingPageMarketing() {
         </div>
       </section>
 
-      {/* Pricing Section */}
+      {/* Pricing Section — siloed page also at /pricing */}
       <section id="pricing" className="py-12 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
@@ -551,250 +437,18 @@ export default function LandingPageMarketing() {
               Simple, Transparent Pricing
             </h2>
             <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-              Choose the plan that fits your business. All plans include a free trial.
+              Free to start. One Pro plan — pay per licensed user.
             </p>
-
-            {/* Billing toggle */}
-            <div className="inline-flex items-center gap-3 bg-gray-100 p-1 rounded-lg">
-              <button
-                onClick={() => setIsYearly(false)}
-                className={`px-6 py-2 rounded-md font-medium transition-all ${
-                  !isYearly
-                    ? "bg-white text-gray-900 shadow-md"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Monthly
-              </button>
-              <button
-                onClick={() => setIsYearly(true)}
-                className={`px-6 py-2 rounded-md font-medium transition-all ${
-                  isYearly
-                    ? "bg-white text-gray-900 shadow-md"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Annual
-                <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                  Save 20%
-                </span>
-              </button>
-            </div>
           </div>
-
-          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Free Trial Card */}
-            <div className="relative rounded-2xl p-8 bg-white text-gray-900 shadow-lg border-2 border-gray-200">
-              <div className="mb-6">
-                <h3 className="text-2xl font-bold mb-2">Free Trial</h3>
-                <p className="text-sm text-gray-600">
-                  Perfect for trying out QuoteTree
-                </p>
-              </div>
-
-              <div className="mb-6">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-bold">$0</span>
-                  <span className="text-lg text-gray-600">/forever</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setIsModalOpen(true)}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isCheckoutLoading ? 'Loading...' : 'Start 14-Day Trial'}
-              </button>
-
-              <ul className="space-y-3">
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Unlimited quotes</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Advanced AI chat assistant</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Full product library access</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">PDF quote generation</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Profit margin breakdown</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Email support</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* Single User Card */}
-            <div className="relative rounded-2xl p-8 bg-green-600 text-white shadow-2xl scale-105 border-4 border-green-500">
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-yellow-400 text-gray-900 px-4 py-1 rounded-full text-sm font-bold">
-                MOST POPULAR
-              </div>
-
-              <div className="mb-6">
-                <h3 className="text-2xl font-bold mb-2">Single User</h3>
-                <p className="text-sm text-green-100">
-                  Ideal for independent contractors
-                </p>
-              </div>
-
-              <div className="mb-6">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-bold">${isYearly ? '65' : '79'}</span>
-                  <span className="text-lg text-green-100">/month</span>
-                </div>
-                {isYearly && (
-                  <>
-                    <p className="text-sm text-green-100 mt-2 font-medium">Save $168/year</p>
-                    <p className="text-sm mt-1 text-green-100">Billed $780 annually</p>
-                  </>
-                )}
-              </div>
-
-              <button
-                onClick={() => handleCheckout('individual')}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-white text-green-600 hover:bg-green-50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
-              </button>
-
-              <ul className="space-y-3">
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Everything in Free Trial</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Bulk product import/export</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Profit margin breakdown</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Priority support</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Chat history preservation</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Custom markup presets</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-white" />
-                  <span className="text-sm text-green-50">Personalize quote template</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* Organization Card */}
-            <div className="relative rounded-2xl p-8 bg-white text-gray-900 shadow-lg border-2 border-gray-200">
-              <div className="mb-6">
-                <h3 className="text-2xl font-bold mb-2">Organization</h3>
-                <p className="text-sm text-gray-600">
-                  Best for growing teams
-                </p>
-              </div>
-
-              <div className="mb-6">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-bold">${isYearly ? '130' : '158'}</span>
-                  <span className="text-lg text-gray-600">/month</span>
-                </div>
-                {isYearly && (
-                  <>
-                    <p className="text-sm text-green-600 mt-2 font-medium">Save $336/year</p>
-                    <p className="text-sm mt-1 text-gray-600">
-                      Billed ${((130 + additionalLicenses * 65) * 12).toLocaleString()} annually
-                    </p>
-                  </>
-                )}
-                {!isYearly && additionalLicenses > 0 && (
-                  <p className="text-sm mt-1 text-gray-600">
-                    ${158 + additionalLicenses * 79}/month total
-                  </p>
-                )}
-                <p className="text-sm text-gray-500 mt-2">2 licenses included</p>
-                <p className="text-sm text-gray-500">${isYearly ? '65' : '79'}/mo per additional license</p>
-              </div>
-
-              {/* License Selector */}
-              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  Additional Licenses
-                </label>
-                <div className="flex items-center justify-between gap-4">
-                  <button
-                    onClick={() => setAdditionalLicenses(Math.max(0, additionalLicenses - 1))}
-                    disabled={additionalLicenses === 0}
-                    className="w-10 h-10 rounded-lg bg-white border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                  >
-                    -
-                  </button>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-gray-900">{additionalLicenses}</div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Total: {2 + additionalLicenses} licenses
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setAdditionalLicenses(additionalLicenses + 1)}
-                    className="w-10 h-10 rounded-lg bg-white border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 flex items-center justify-center"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              <button
-                onClick={() => handleCheckout('organization')}
-                disabled={isCheckoutLoading}
-                className="block w-full py-3 rounded-lg font-semibold text-center mb-6 transition-all bg-green-600 text-white hover:bg-green-700 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isCheckoutLoading ? 'Loading...' : 'Get Started'}
-              </button>
-
-              <ul className="space-y-3">
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Everything in Single User</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Up to 2 team members</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Shared price book</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Team collaboration</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">Centralized quote log</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
-                  <span className="text-sm text-gray-600">User permission settings</span>
-                </li>
-              </ul>
-            </div>
+          <PricingCards showAuthForFree={false} onFreeClick={() => setIsModalOpen(true)} />
+          <div className="text-center mt-8">
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="text-green-700 font-medium hover:underline"
+            >
+              Or start free without a card
+            </button>
           </div>
         </div>
       </section>
@@ -887,7 +541,7 @@ export default function LandingPageMarketing() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="#pricing" className="text-gray-600 hover:text-gray-900">
+                  <Link href="/pricing" className="text-gray-600 hover:text-gray-900">
                     Pricing
                   </Link>
                 </li>

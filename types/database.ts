@@ -125,22 +125,31 @@ export interface OrganizationMemberWithProfile extends OrganizationMembership {
   };
 }
 
-// Plan pricing constants
+// Plan pricing constants — Pro is the only paid product for new customers.
+// Legacy amounts remain for grandfathered subscription display only.
 export const PLAN_PRICING = {
-  individual: {
-    monthly: 7900, // $79.00 in cents
-    yearly: 6500, // $65.00 in cents (per month, billed yearly)
+  pro: {
+    monthlyPerSeatCents: 2000, // $20 / user / month
+    yearlyPerSeatCents: 19200, // $192 / user / year
+    yearlyDisplayedMonthlyCents: 1600, // $16 / user / month (annual display)
   },
-  organization: {
-    monthly: {
-      base: 15800, // $158.00 in cents (2 licenses included)
-      perAdditionalLicense: 7900, // $79.00 in cents
+  /** @deprecated Grandfathered display only — do not use for new checkouts */
+  legacy: {
+    individual: {
+      monthly: 7900,
+      yearly: 6500, // per month, billed yearly
     },
-    yearly: {
-      base: 13000, // $130.00 in cents (per month, billed yearly - 2 licenses included)
-      perAdditionalLicense: 6500, // $65.00 in cents (per month, billed yearly)
+    organization: {
+      monthly: {
+        base: 15800,
+        perAdditionalLicense: 7900,
+      },
+      yearly: {
+        base: 13000,
+        perAdditionalLicense: 6500,
+      },
+      baseLicenses: 2,
     },
-    baseLicenses: 2, // Changed from 3 to 2
   },
 } as const;
 

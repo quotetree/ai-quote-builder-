@@ -102,15 +102,16 @@ export function getRoleDescription(role: MemberRole): string {
 
 /**
  * Get plan display name
+ * Paid plans are Pro; individual/organization is account state from seat count.
  */
 export function getPlanDisplayName(planType: PlanType): string {
   switch (planType) {
     case "free":
       return "Free";
     case "individual":
-      return "Individual";
+      return "Pro (Individual)";
     case "organization":
-      return "Organization";
+      return "Pro (Organization)";
   }
 }
 
@@ -122,9 +123,9 @@ export function getPlanDescription(planType: PlanType): string {
     case "free":
       return "Full access with 5 unique quote exports per month";
     case "individual":
-      return "For solo professionals — unlimited quote exports";
+      return "Pro — 1 license, unlimited quote exports";
     case "organization":
-      return "For teams & collaboration — unlimited quote exports";
+      return "Pro — team licenses, unlimited quote exports";
   }
 }
 
@@ -136,7 +137,8 @@ export function allowsMultipleMembers(planType: PlanType): boolean {
 }
 
 /**
- * Get base license count for a plan
+ * Minimum seat count for an account label (not a priced tier).
+ * Organization is 2+ seats; free/individual are 1 seat.
  */
 export function getBaseLicenseCount(planType: PlanType): number {
   switch (planType) {
@@ -145,8 +147,15 @@ export function getBaseLicenseCount(planType: PlanType): number {
     case "individual":
       return 1;
     case "organization":
-      return 3;
+      return 2;
   }
+}
+
+/**
+ * Whether seat count implies organization account state
+ */
+export function accountTypeFromSeats(seatCount: number): "individual" | "organization" {
+  return seatCount >= 2 ? "organization" : "individual";
 }
 
 /**
@@ -178,21 +187,25 @@ export function isTrialExpired(trialEndDate: string | null): boolean {
 }
 
 /**
- * Check if a plan can be downgraded to based on current member count
+ * Check if seats/plan can be reduced based on current member count
  */
 export function canDowngradeTo(
   targetPlan: PlanType,
-  currentMemberCount: number
+  currentMemberCount: number,
+  targetSeatCount?: number
 ): { allowed: boolean; reason?: string } {
-  const targetLicenses = getBaseLicenseCount(targetPlan);
-  
+  const targetLicenses =
+    typeof targetSeatCount === "number"
+      ? targetSeatCount
+      : getBaseLicenseCount(targetPlan);
+
   if (currentMemberCount > targetLicenses) {
     return {
       allowed: false,
-      reason: `Cannot downgrade: You have ${currentMemberCount} members but ${getPlanDisplayName(targetPlan)} only includes ${targetLicenses} license${targetLicenses !== 1 ? "s" : ""}.`,
+      reason: `Cannot reduce seats: You have ${currentMemberCount} members but only ${targetLicenses} license${targetLicenses !== 1 ? "s" : ""} would remain. Remove members first.`,
     };
   }
-  
+
   return { allowed: true };
 }
 

@@ -286,9 +286,9 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
                     </Link>
                   </li>
                   <li>
-                    <Link href="/#pricing" className="text-gray-600 hover:text-gray-900">
-                      Pricing
-                    </Link>
+                  <Link href="/pricing" className="text-gray-600 hover:text-gray-900">
+                    Pricing
+                  </Link>
                   </li>
                 </ul>
               </div>

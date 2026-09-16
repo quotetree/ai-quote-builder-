@@ -14,7 +14,7 @@ import {
   StripeInvoice,
   ProrationPreview
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange, addLicenses } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange, updateSeats } from "@/lib/stripe/client-utils";
 
 interface BillingModalProps {
   isOpen: boolean;
@@ -22,18 +22,15 @@ interface BillingModalProps {
 }
 
 type ViewMode = "overview" | "edit-plan" | "cancel";
-type PlanTab = "individual" | "organization";
 
 export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
   const [orgContext, setOrgContext] = useState<UserOrganizationContext | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [selectedPlan, setSelectedPlan] = useState<PlanType | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<BillingCycle>("yearly");
-  const [additionalLicenses, setAdditionalLicenses] = useState(0);
+  const [seatCount, setSeatCount] = useState(1);
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
-  const [planTab, setPlanTab] = useState<PlanTab>("individual");
   const [manageDropdownOpen, setManageDropdownOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
@@ -50,9 +47,8 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   const [prorationData, setProrationData] = useState<ProrationPreview | null>(null);
   const [loadingProration, setLoadingProration] = useState(false);
   const [pendingPlanChange, setPendingPlanChange] = useState<{
-    plan: PlanType;
     cycle: BillingCycle;
-    licenses: number;
+    seats: number;
   } | null>(null);
 
   const loadSubscriptionData = useCallback(async () => {
@@ -92,9 +88,10 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
       if (!subData) throw new Error("No subscription found");
 
       setSubscription(subData);
-      setSelectedPlan(subData.plan_type);
       setSelectedCycle(subData.billing_cycle || "yearly");
-      setAdditionalLicenses(subData.additional_licenses);
+      setSeatCount(
+        Math.max(1, (subData.base_licenses || 1) + (subData.additional_licenses || 0))
+      );
       
       // Debug: Log subscription license data
       console.log('Subscription license data:', {
@@ -178,22 +175,15 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     }
   };
 
-  const calculatePrice = (plan: PlanType, cycle: BillingCycle, addLicenses: number = 0) => {
-    if (plan === "free") return { monthly: 0, total: 0 };
-
-    if (plan === "individual") {
-      const monthlyPrice = PLAN_PRICING.individual[cycle];
-      const total = cycle === "yearly" ? monthlyPrice * 12 : monthlyPrice;
-      return { monthly: monthlyPrice, total };
+  const calculateProPrice = (cycle: BillingCycle, seats: number) => {
+    const s = Math.max(1, seats);
+    if (cycle === "monthly") {
+      const monthly = PLAN_PRICING.pro.monthlyPerSeatCents * s;
+      return { monthly, total: monthly, displayMonthly: monthly };
     }
-
-    // Organization plan
-    const basePrice = PLAN_PRICING.organization[cycle].base;
-    const perLicensePrice = PLAN_PRICING.organization[cycle].perAdditionalLicense;
-    const additionalCost = addLicenses * perLicensePrice;
-    const monthlyPrice = basePrice + additionalCost;
-    const total = cycle === "yearly" ? monthlyPrice * 12 : monthlyPrice;
-    return { monthly: monthlyPrice, total };
+    const yearlyTotal = PLAN_PRICING.pro.yearlyPerSeatCents * s;
+    const displayMonthly = PLAN_PRICING.pro.yearlyDisplayedMonthlyCents * s;
+    return { monthly: displayMonthly, total: yearlyTotal, displayMonthly };
   };
 
   const formatCurrency = (cents: number) => {
@@ -212,20 +202,22 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     return Math.max(0, diffDays);
   };
 
-  const handleUpgradePlan = async (plan: PlanType, cycle: BillingCycle) => {
+  const currentSeatCount = subscription
+    ? Math.max(1, (subscription.base_licenses || 1) + (subscription.additional_licenses || 0))
+    : 1;
+
+  const handleUpgradePlan = async (cycle: BillingCycle, seats: number) => {
     if (!isOwner) {
       toast.error("Only the owner can upgrade the plan");
       return;
     }
 
-    // Always show proration preview for all changes (including license-only changes)
-    // User wants to see confirmation before being charged
     try {
       setLoadingProration(true);
-      const preview = await fetchProrationPreview(plan, cycle, additionalLicenses);
+      const preview = await fetchProrationPreview(cycle, seats);
       
       setProrationData(preview);
-      setPendingPlanChange({ plan, cycle, licenses: additionalLicenses });
+      setPendingPlanChange({ cycle, seats });
       setShowProrationPreview(true);
     } catch (error: any) {
       console.error("Proration preview error:", error);
@@ -241,16 +233,23 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
     try {
       const loadingToast = toast.loading("Processing payment...");
 
-      // For all changes on existing subscriptions:
-      // - Upgrades: Stripe automatically charges card on file via subscription update API
-      // - Downgrades: Scheduled for period end, no charge
-      // NO CHECKOUT REDIRECT needed
-      const result = await createCheckoutSession(
-        pendingPlanChange.plan,
-        pendingPlanChange.cycle,
-        pendingPlanChange.licenses,
-        false // Never force checkout for existing subscriptions
-      );
+      const sameCycle =
+        subscription?.billing_cycle === pendingPlanChange.cycle &&
+        subscription?.plan_type !== "free" &&
+        !!subscription?.stripe_subscription_id;
+
+      let result;
+      if (sameCycle && pendingPlanChange.seats !== currentSeatCount) {
+        // Absolute seat update on same cycle
+        result = await updateSeats(pendingPlanChange.seats);
+        result = { updated: true, subscription: result.subscription };
+      } else {
+        result = await createCheckoutSession({
+          billingCycle: pendingPlanChange.cycle,
+          seatCount: pendingPlanChange.seats,
+          forceCheckout: false,
+        });
+      }
       
       toast.dismiss(loadingToast);
       
@@ -685,30 +684,6 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
               {/* EDIT PLAN VIEW */}
               {viewMode === "edit-plan" && (
                 <>
-                  {/* Plan Tabs */}
-                  <div className="flex gap-2 mb-6 border-b border-gray-200">
-                    <button
-                      onClick={() => setPlanTab("individual")}
-                      className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-                        planTab === "individual"
-                          ? "border-gray-900 text-gray-900"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      Individual
-                    </button>
-                    <button
-                      onClick={() => setPlanTab("organization")}
-                      className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-                        planTab === "organization"
-                          ? "border-gray-900 text-gray-900"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      Organization
-                    </button>
-                  </div>
-
                   {/* Billing Cycle Toggle */}
                   <div className="mb-6 flex items-center justify-center gap-3">
                     <button
@@ -729,177 +704,115 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                       }`}
                     >
-                      Yearly
+                      Annual
                       <span className="ml-2 text-xs bg-green-500 text-white px-2 py-0.5 rounded-full">
-                        Save 20%
+                        $16/user/mo
                       </span>
                     </button>
                   </div>
 
-                  {/* Plan Card */}
-                  {planTab === "individual" ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Free */}
                     <div className="border-2 border-gray-200 rounded-xl p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div>
-                          <h3 className="text-xl font-bold text-gray-900">Individual</h3>
-                          <p className="text-sm text-gray-500 mt-1">For solo professionals</p>
-                        </div>
-                        {subscription?.plan_type === "individual" && (
-                          <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
-                            Your current plan
-                          </span>
-                        )}
+                      <h3 className="text-xl font-bold text-gray-900">Free</h3>
+                      <p className="text-sm text-gray-500 mt-1">Get started at no cost</p>
+                      <div className="my-4">
+                        <span className="text-4xl font-bold text-gray-900">$0</span>
                       </div>
-
-                      <div className="mb-6">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-4xl font-bold text-gray-900">
-                            {formatCurrency(PLAN_PRICING.individual[selectedCycle])}
-                          </span>
-                          <span className="text-gray-500">/month</span>
-                        </div>
-                        {selectedCycle === "yearly" && (
-                          <p className="text-sm text-gray-500 mt-1">
-                            Billed {formatCurrency(PLAN_PRICING.individual.yearly * 12)} yearly
-                          </p>
-                        )}
-                      </div>
-
-                      <ul className="space-y-3 mb-6">
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>1 user license</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Unlimited projects</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Full price book access</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>AI quote generation</span>
-                        </li>
+                      <ul className="space-y-2 mb-6 text-sm">
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> 5 quote exports / month</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Full product library</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> AI chat assistant</li>
                       </ul>
-
-                      <button
-                        onClick={() => handleUpgradePlan("individual", selectedCycle)}
-                        disabled={subscription?.plan_type === "individual" && subscription?.billing_cycle === selectedCycle}
-                        className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-                      >
-                        {subscription?.plan_type === "individual" && subscription?.billing_cycle === selectedCycle
-                          ? "Current Plan"
-                          : "Upgrade to Individual"}
-                      </button>
+                      {subscription?.plan_type === "free" ? (
+                        <button disabled className="w-full py-3 bg-gray-300 text-white font-medium rounded-lg cursor-not-allowed">
+                          Current plan
+                        </button>
+                      ) : (
+                        <p className="text-xs text-gray-500 text-center">Downgrade via Cancel in overview</p>
+                      )}
                     </div>
-                  ) : (
-                    <div className="border-2 border-gray-200 rounded-xl p-6 relative">
+
+                    {/* Pro */}
+                    <div className="border-2 border-green-600 rounded-xl p-6 relative">
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-                        RECOMMENDED
+                        PRO
                       </div>
-
-                      <div className="flex items-start justify-between mb-4">
-                        <div>
-                          <h3 className="text-xl font-bold text-gray-900">Organization</h3>
-                          <p className="text-sm text-gray-500 mt-1">For teams & collaboration</p>
-                        </div>
-                        {subscription?.plan_type === "organization" && (
-                          <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
-                            Your current plan
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="mb-6">
+                      <h3 className="text-xl font-bold text-gray-900">Pro</h3>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {seatCount === 1 ? "Individual account" : "Organization account"} · per licensed user
+                      </p>
+                      <div className="my-4">
                         <div className="flex items-baseline gap-1">
                           <span className="text-4xl font-bold text-gray-900">
-                            {formatCurrency(
-                              calculatePrice("organization", selectedCycle, additionalLicenses).monthly
-                            )}
+                            {formatCurrency(calculateProPrice(selectedCycle, seatCount).displayMonthly)}
                           </span>
-                          <span className="text-gray-500">/month</span>
+                          <span className="text-gray-500">/mo</span>
                         </div>
                         {selectedCycle === "yearly" && (
                           <p className="text-sm text-gray-500 mt-1">
-                            Billed {formatCurrency(
-                              calculatePrice("organization", selectedCycle, additionalLicenses).total
-                            )} yearly
+                            Billed {formatCurrency(calculateProPrice(selectedCycle, seatCount).total)} yearly
                           </p>
                         )}
+                        <p className="text-xs text-gray-500 mt-1">
+                          {selectedCycle === "monthly" ? "$20" : "$16"}/user/mo · {seatCount} license{seatCount === 1 ? "" : "s"}
+                        </p>
                       </div>
 
-                      <ul className="space-y-3 mb-6">
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>2 user licenses included</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Add more licenses ({formatCurrency(PLAN_PRICING.organization[selectedCycle].perAdditionalLicense)}/mo each)</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Shared price book</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Team collaboration</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Role-based permissions</span>
-                        </li>
-                        <li className="flex items-start gap-2 text-sm">
-                          <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
-                          <span>Priority support</span>
-                        </li>
-                      </ul>
-
-                      {/* Additional Licenses */}
                       <div className="mb-4 p-3 bg-gray-50 rounded-lg">
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Additional Licenses
+                          Licenses
                         </label>
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={() => setAdditionalLicenses(Math.max(0, additionalLicenses - 1))}
-                            disabled={additionalLicenses === 0}
-                            className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed rounded text-gray-700 font-bold transition-colors"
+                            type="button"
+                            onClick={() => setSeatCount(Math.max(1, seatCount - 1))}
+                            disabled={seatCount <= 1}
+                            className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed rounded text-gray-700 font-bold"
                           >
                             -
                           </button>
-                          <span className="flex-1 text-center font-medium">{additionalLicenses}</span>
+                          <span className="flex-1 text-center font-medium">{seatCount}</span>
                           <button
-                            onClick={() => setAdditionalLicenses(additionalLicenses + 1)}
-                            className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-bold transition-colors"
+                            type="button"
+                            onClick={() => setSeatCount(seatCount + 1)}
+                            className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-bold"
                           >
                             +
                           </button>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">
-                          Total: {2 + additionalLicenses} licenses
+                          1 license = Individual · 2+ = Organization
                         </p>
                       </div>
 
+                      <ul className="space-y-2 mb-6 text-sm">
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Unlimited quote exports</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Team invites (up to licenses)</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Shared price book</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Priority support</li>
+                      </ul>
+
                       <button
-                        onClick={() => handleUpgradePlan("organization", selectedCycle)}
+                        onClick={() => handleUpgradePlan(selectedCycle, seatCount)}
                         disabled={
-                          subscription?.plan_type === "organization" && 
-                          subscription?.billing_cycle === selectedCycle &&
-                          subscription?.additional_licenses === additionalLicenses
+                          loadingProration ||
+                          (subscription?.plan_type !== "free" &&
+                            subscription?.billing_cycle === selectedCycle &&
+                            currentSeatCount === seatCount)
                         }
                         className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
                       >
-                        {subscription?.plan_type === "organization" && 
-                         subscription?.billing_cycle === selectedCycle &&
-                         subscription?.additional_licenses === additionalLicenses
-                          ? "Current Plan"
-                          : "Upgrade to Organization"}
+                        {loadingProration
+                          ? "Calculating..."
+                          : subscription?.plan_type !== "free" &&
+                            subscription?.billing_cycle === selectedCycle &&
+                            currentSeatCount === seatCount
+                            ? "Current plan"
+                            : "Continue with Pro"}
                       </button>
                     </div>
-                  )}
+                  </div>
                 </>
               )}
 

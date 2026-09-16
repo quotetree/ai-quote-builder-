@@ -4,9 +4,14 @@ import { stripe } from "@/lib/stripe/client";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import Stripe from "stripe";
 import { PLAN_PRICING } from "@/types/database";
-import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 import { sendWelcomeEmail } from "@/lib/email/welcomeEmail";
 import { validateStripeSecretKey, validateWebhookSecret } from "@/lib/stripe/env-guards";
+import {
+  inferSubscriptionFromStripeItems,
+  planTypeFromSeatCount,
+  proPriceFields,
+  seatsToLicenseFields,
+} from "@/lib/stripe/pricing";
 
 export async function POST(request: NextRequest) {
   // Runtime check for Stripe key and webhook secret
@@ -106,9 +111,17 @@ async function handleCheckoutCompleted(
 ) {
   let userId = session.metadata?.user_id;
   let organizationId = session.metadata?.organization_id;
-  const planType = session.metadata?.plan_type as "individual" | "organization";
-  const billingCycle = session.metadata?.billing_cycle as "monthly" | "yearly";
-  const additionalLicenses = parseInt(session.metadata?.additional_licenses || "0");
+  const billingCycle = (session.metadata?.billing_cycle || "monthly") as "monthly" | "yearly";
+  const seatCountMeta = parseInt(session.metadata?.seat_count || "0", 10);
+  const additionalLicensesMeta = parseInt(session.metadata?.additional_licenses || "0", 10);
+  // Prefer seat_count; fall back to legacy additional_licenses (+1 base)
+  const seatCount =
+    seatCountMeta > 0
+      ? seatCountMeta
+      : Math.max(1, 1 + additionalLicensesMeta);
+  const planType =
+    (session.metadata?.plan_type as "individual" | "organization") ||
+    planTypeFromSeatCount(seatCount);
   const isLandingPagePurchase = session.metadata?.landing_page_purchase === 'true';
 
   // Handle landing page purchase (no existing user)
@@ -308,16 +321,30 @@ async function handleCheckoutCompleted(
     }
   }
 
-  // Calculate licenses
-  const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
-
-  // Calculate price - ONLY store the base price, not additional licenses
-  let basePriceCents = 0;
-  if (planType === "individual") {
-    basePriceCents = PLAN_PRICING.individual[billingCycle];
-  } else {
-    basePriceCents = PLAN_PRICING.organization[billingCycle].base;
-  }
+  const inferred = inferSubscriptionFromStripeItems(stripeSubscription.items?.data || []);
+  const resolvedSeats = inferred.seatCount || seatCount;
+  const resolvedCycle = inferred.billingCycle || billingCycle;
+  const resolvedPlan = planTypeFromSeatCount(resolvedSeats);
+  const priceFields = inferred.isPro
+    ? proPriceFields(resolvedCycle, resolvedSeats)
+    : inferred.isLegacy
+      ? {
+          ...seatsToLicenseFields(resolvedSeats),
+          // Keep legacy seat mapping: org base 2 + additional
+          base_licenses: inferred.planType === "organization" ? 2 : 1,
+          additional_licenses:
+            inferred.planType === "organization" ? Math.max(0, resolvedSeats - 2) : 0,
+          base_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[resolvedCycle].base
+              : PLAN_PRICING.legacy.individual[resolvedCycle],
+          additional_license_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[resolvedCycle].perAdditionalLicense
+              : 0,
+          plan_type: inferred.planType,
+        }
+      : proPriceFields(resolvedCycle, resolvedSeats);
 
   // Update subscription in database
   const { data: updateData, error } = await supabase
@@ -325,24 +352,20 @@ async function handleCheckoutCompleted(
     .update({
       stripe_subscription_id: subscriptionId,
       stripe_customer_id: customerId,
-      plan_type: planType,
-      billing_cycle: billingCycle,
+      stripe_price_id: inferred.priceId,
+      plan_type: priceFields.plan_type || resolvedPlan,
+      billing_cycle: resolvedCycle,
       status: stripeSubscription.status || "active",
-      base_licenses: baseLicenses,
-      additional_licenses: additionalLicenses,
-      // Remove total_licenses - it's a generated column
-      base_price_cents: basePriceCents,
-      additional_license_price_cents:
-        planType === "organization"
-          ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
-          : 0,
+      base_licenses: priceFields.base_licenses,
+      additional_licenses: priceFields.additional_licenses,
+      base_price_cents: priceFields.base_price_cents,
+      additional_license_price_cents: priceFields.additional_license_price_cents,
       current_period_start: stripeSubscription.current_period_start
         ? new Date(stripeSubscription.current_period_start * 1000).toISOString()
         : null,
       current_period_end: stripeSubscription.current_period_end
         ? new Date(stripeSubscription.current_period_end * 1000).toISOString()
         : null,
-      // IMPORTANT: Set trial dates from Stripe subscription, or null if no trial
       trial_start_date: stripeSubscription.trial_start
         ? new Date(stripeSubscription.trial_start * 1000).toISOString()
         : null,
@@ -396,73 +419,45 @@ async function handleSubscriptionUpdate(
     return;
   }
 
-  // Determine plan details from subscription items
-  const items = sub.items.data;
-  let planType: "individual" | "organization" = "individual";
-  let billingCycle: "monthly" | "yearly" = "monthly";
-  let additionalLicenses = 0;
+  const inferred = inferSubscriptionFromStripeItems(sub.items?.data || []);
+  let billingCycle = inferred.billingCycle;
+  let seatCount = inferred.seatCount;
 
-  // Determine billing cycle from the first item's price interval
-  if (items.length > 0 && items[0].price) {
-    billingCycle = items[0].price.recurring?.interval === "year" ? "yearly" : "monthly";
+  // Metadata overrides when present (from our checkout / seat-update routes)
+  if (sub.metadata?.billing_cycle === "monthly" || sub.metadata?.billing_cycle === "yearly") {
+    billingCycle = sub.metadata.billing_cycle;
+  }
+  if (sub.metadata?.seat_count) {
+    const metaSeats = parseInt(sub.metadata.seat_count, 10);
+    if (Number.isFinite(metaSeats) && metaSeats >= 1) seatCount = metaSeats;
   }
 
-  // Define price IDs for identification
-  const basePriceIds = [
-    STRIPE_PRICE_IDS.organization.base.monthly,
-    STRIPE_PRICE_IDS.organization.base.yearly,
-  ];
-  const licensePriceIds = [
-    STRIPE_PRICE_IDS.organization.additionalLicense.monthly,
-    STRIPE_PRICE_IDS.organization.additionalLicense.yearly,
-  ];
+  const priceFields = inferred.isPro
+    ? proPriceFields(billingCycle, seatCount)
+    : inferred.isLegacy
+      ? {
+          plan_type: inferred.planType,
+          base_licenses: inferred.planType === "organization" ? 2 : 1,
+          additional_licenses:
+            inferred.planType === "organization" ? Math.max(0, seatCount - 2) : 0,
+          base_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[billingCycle].base
+              : PLAN_PRICING.legacy.individual[billingCycle],
+          additional_license_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[billingCycle].perAdditionalLicense
+              : 0,
+        }
+      : proPriceFields(billingCycle, seatCount);
 
-  // Find items by price ID, not array position
-  const baseItem = items.find((item: any) => basePriceIds.includes(item.price?.id));
-  const licenseItem = items.find((item: any) => licensePriceIds.includes(item.price?.id));
-
-  // Determine plan type and additional licenses
-  if (baseItem && licenseItem) {
-    planType = "organization";
-    additionalLicenses = licenseItem.quantity || 0;
-  } else if (baseItem && !licenseItem) {
-    // Org base only, no additional licenses yet
-    planType = "organization";
-    additionalLicenses = 0;
-  } else if (items.length === 1) {
-    // Fallback: check if the single item is an individual plan price
-    const priceId = items[0].price?.id;
-    const individualPriceIds = [
-      STRIPE_PRICE_IDS.individual.monthly,
-      STRIPE_PRICE_IDS.individual.yearly,
-    ];
-    if (individualPriceIds.includes(priceId)) {
-      planType = "individual";
-    }
+  // Prefer seat-derived plan_type for Pro; honor metadata for legacy if set
+  if (inferred.isPro) {
+    // plan_type always from seats
+  } else if (sub.metadata?.plan_type === "individual" || sub.metadata?.plan_type === "organization") {
+    (priceFields as any).plan_type = sub.metadata.plan_type;
   }
 
-  // If metadata has explicit plan info, use that instead (from checkout route)
-  if (sub.metadata?.plan_type) {
-    planType = sub.metadata.plan_type as "individual" | "organization";
-  }
-  if (sub.metadata?.billing_cycle) {
-    billingCycle = sub.metadata.billing_cycle as "monthly" | "yearly";
-  }
-
-  const baseLicenses = planType === "organization" ? PLAN_PRICING.organization.baseLicenses : 1;
-
-  // Calculate pricing based on plan type and billing cycle
-  let basePriceCents = 0;
-  if (planType === "individual") {
-    basePriceCents = PLAN_PRICING.individual[billingCycle];
-  } else {
-    basePriceCents = PLAN_PRICING.organization[billingCycle].base;
-  }
-  const additionalLicensePriceCents = planType === "organization"
-    ? PLAN_PRICING.organization[billingCycle].perAdditionalLicense
-    : 0;
-
-  // Safely handle timestamps
   const currentPeriodStart = sub.current_period_start
     ? new Date(sub.current_period_start * 1000).toISOString()
     : null;
@@ -471,7 +466,6 @@ async function handleSubscriptionUpdate(
     : null;
 
   // Terminal paid end → perpetual Free entitlements (preserve org data)
-  // Match by current stripe id first, then clear it so re-subscribe can create a new link.
   if (
     sub.status === "canceled" ||
     sub.status === "unpaid" ||
@@ -483,6 +477,7 @@ async function handleSubscriptionUpdate(
         plan_type: "free",
         status: "active",
         stripe_subscription_id: null,
+        stripe_price_id: null,
         trial_start_date: null,
         trial_end_date: null,
         additional_licenses: 0,
@@ -504,18 +499,18 @@ async function handleSubscriptionUpdate(
   }
 
   const updateData: any = {
-    plan_type: planType,
+    plan_type: priceFields.plan_type,
     billing_cycle: billingCycle,
     status: sub.status,
     cancel_at_period_end: sub.cancel_at_period_end,
-    base_licenses: baseLicenses,
-    additional_licenses: additionalLicenses,
-    base_price_cents: basePriceCents,
-    additional_license_price_cents: additionalLicensePriceCents,
+    base_licenses: priceFields.base_licenses,
+    additional_licenses: priceFields.additional_licenses,
+    base_price_cents: priceFields.base_price_cents,
+    additional_license_price_cents: priceFields.additional_license_price_cents,
+    stripe_price_id: inferred.priceId,
     updated_at: new Date().toISOString(),
   };
 
-  // Only add timestamps if they exist
   if (currentPeriodStart) updateData.current_period_start = currentPeriodStart;
   if (currentPeriodEnd) updateData.current_period_end = currentPeriodEnd;
 

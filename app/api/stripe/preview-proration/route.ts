@@ -1,44 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
-import { STRIPE_PRICE_IDS } from "@/lib/stripe/config";
-import type { PlanType, BillingCycle } from "@/types/database";
+import type { BillingCycle } from "@/types/database";
 import { PLAN_PRICING } from "@/types/database";
+import {
+  assertSeatQuantity,
+  getProPriceId,
+  planTypeFromSeatCount,
+  proMonthlyEquivalentCents,
+  totalSeatsFromLicenses,
+} from "@/lib/stripe/pricing";
 
-// Helper: Get price per period (monthly equivalent)
-function getPricePerPeriod(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
-  if (planType === "individual") {
-    return PLAN_PRICING.individual[billingCycle] / 100; // Convert cents to dollars
-  } else {
-    const base = PLAN_PRICING.organization[billingCycle].base / 100; // Convert cents to dollars
-    const licenseRate = PLAN_PRICING.organization[billingCycle].perAdditionalLicense / 100;
-    return base + (additionalLicenses * licenseRate);
-  }
-}
-
-// Helper: Get total charge for the billing period (in cents)
-function getTotalCharge(planType: PlanType, billingCycle: BillingCycle, additionalLicenses: number = 0): number {
-  if (planType === "individual") {
-    const pricePerMonth = PLAN_PRICING.individual[billingCycle];
-    return billingCycle === "monthly" ? pricePerMonth : pricePerMonth * 12;
-  } else {
-    const basePerMonth = PLAN_PRICING.organization[billingCycle].base;
-    const licensePerMonth = PLAN_PRICING.organization[billingCycle].perAdditionalLicense;
-    const totalPerMonth = basePerMonth + (additionalLicenses * licensePerMonth);
-    return billingCycle === "monthly" ? totalPerMonth : totalPerMonth * 12;
-  }
-}
-
+/**
+ * POST /api/stripe/preview-proration
+ *
+ * Body: { billingCycle, seatCount }
+ * Used especially for monthly ↔ annual switches before commit.
+ * Seat-only changes use Stripe standard proration (create_prorations) on apply.
+ */
 export async function POST(request: NextRequest) {
   try {
-    // Runtime check for Stripe key
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
     }
 
     const supabase = await createClient();
-
-    // Verify authentication
     const {
       data: { user },
       error: userError,
@@ -48,28 +34,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse request body
-    const { planType, billingCycle, additionalLicenses = 0 } = await request.json() as {
-      planType: PlanType;
-      billingCycle: BillingCycle;
-      additionalLicenses: number;
-    };
+    const body = await request.json();
+    const billingCycle = body.billingCycle as BillingCycle;
 
-    // Get organization ID
-    const { data: orgData } = await supabase.rpc(
-      "get_user_organization_membership",
-      { p_user_id: user.id }
-    );
+    if (billingCycle !== "monthly" && billingCycle !== "yearly") {
+      return NextResponse.json({ error: "Invalid billingCycle" }, { status: 400 });
+    }
+
+    let seatCount: number;
+    try {
+      if (body.seatCount != null) {
+        seatCount = assertSeatQuantity(body.seatCount);
+      } else if (body.planType === "organization") {
+        seatCount = assertSeatQuantity(2 + (body.additionalLicenses || 0));
+      } else {
+        seatCount = assertSeatQuantity(body.additionalLicenses != null ? 1 + body.additionalLicenses : 1);
+      }
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
+
+    const { data: orgData } = await supabase.rpc("get_user_organization_membership", {
+      p_user_id: user.id,
+    });
     const organizationId = orgData?.[0]?.organization_id;
 
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     }
 
-    // Get current subscription
     const { data: currentSubscription } = await supabase
       .from("subscriptions")
       .select("*")
@@ -77,209 +70,117 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!currentSubscription?.stripe_subscription_id) {
-      return NextResponse.json(
-        { error: "No active subscription found" },
-        { status: 404 }
-      );
+      // Free → paid: no proration, full charge at checkout
+      const total =
+        billingCycle === "monthly"
+          ? PLAN_PRICING.pro.monthlyPerSeatCents * seatCount
+          : PLAN_PRICING.pro.yearlyPerSeatCents * seatCount;
+      return NextResponse.json({
+        prorationAmount: total,
+        isUpgrade: true,
+        requiresCheckout: true,
+        scheduledForPeriodEnd: false,
+        resetsBillingAnchor: true,
+        effectiveDate: new Date().toISOString(),
+        currentPlanDescription: "Free",
+        newPlanDescription: formatProDescription(billingCycle, seatCount),
+        billingMessage: `You'll be charged ${formatCurrency(total)} to start Pro.`,
+      });
     }
 
-    const currentPlan = currentSubscription.plan_type;
-    const currentCycle = currentSubscription.billing_cycle;
-    const currentLicenses = currentSubscription.additional_licenses || 0;
-    const newPlan = planType;
-    const newCycle = billingCycle;
-    const newLicenses = additionalLicenses;
+    const currentSeats = totalSeatsFromLicenses(
+      currentSubscription.base_licenses || 1,
+      currentSubscription.additional_licenses || 0
+    );
+    const currentCycle = (currentSubscription.billing_cycle || "monthly") as BillingCycle;
+    const newPlanType = planTypeFromSeatCount(seatCount);
 
-    const currentPricePerPeriod = getPricePerPeriod(currentPlan, currentCycle, currentLicenses);
-    const newPricePerPeriod = getPricePerPeriod(newPlan, newCycle, newLicenses);
-    const currentTotalCharge = getTotalCharge(currentPlan, currentCycle, currentLicenses);
-    const newTotalCharge = getTotalCharge(newPlan, newCycle, newLicenses);
-
-    const currentPlanDescription = formatPlanDescription(currentPlan, currentCycle, currentLicenses);
-    const newPlanDescription = formatPlanDescription(newPlan, newCycle, newLicenses);
+    const currentMonthly = proMonthlyEquivalentCents(currentCycle, currentSeats);
+    const newMonthly = proMonthlyEquivalentCents(billingCycle, seatCount);
+    const cycleChanged = currentCycle !== billingCycle;
+    const seatsChanged = currentSeats !== seatCount;
 
     let prorationAmount = 0;
-    let requiresCheckout = false;
-    let isUpgrade = false;
+    let requiresCheckout = true;
+    let isUpgrade = newMonthly > currentMonthly;
     let scheduledForPeriodEnd = false;
-    let billingMessage = "";
     let resetsBillingAnchor = false;
+    let billingMessage = "";
 
-    // Check if this is a license quantity change ONLY (same plan type and billing cycle)
-    const isLicenseOnlyChange = (
-      currentPlan === newPlan &&
-      currentCycle === newCycle &&
-      currentPlan === "organization" &&
-      currentLicenses !== newLicenses
-    );
+    // Try Stripe upcoming invoice preview when possible
+    try {
+      const priceId = getProPriceId(billingCycle);
+      const stripeSub = await stripe.subscriptions.retrieve(
+        currentSubscription.stripe_subscription_id,
+        { expand: ["items"] }
+      );
+      const itemId = stripeSub.items.data[0]?.id;
 
-    // Branch 0: License quantity change only - TRUE SAAS PRORATION
-    if (isLicenseOnlyChange) {
-      if (newLicenses > currentLicenses) {
-        // Adding licenses - prorate for remaining period
-        const licenseDiff = newLicenses - currentLicenses;
-        // TypeScript: currentCycle is guaranteed non-null here due to isLicenseOnlyChange check
-        const cycle = currentCycle as BillingCycle;
-        const pricePerLicensePerMonth = PLAN_PRICING.organization[cycle].perAdditionalLicense;
-        const pricePerLicensePerCycle = cycle === "monthly" 
-          ? pricePerLicensePerMonth 
-          : pricePerLicensePerMonth * 12;
-        
-        // Calculate proration based on remaining days in current period
-        if (currentSubscription.current_period_start && currentSubscription.current_period_end) {
-          const currentPeriodStart = new Date(currentSubscription.current_period_start);
-          const currentPeriodEnd = new Date(currentSubscription.current_period_end);
-          const now = new Date();
-          
-          if (!isNaN(currentPeriodStart.getTime()) && !isNaN(currentPeriodEnd.getTime())) {
-            const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
-            const remainingDays = Math.max(1, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-            const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 1;
-            
-            // Prorated amount for the additional licenses
-            prorationAmount = Math.round((pricePerLicensePerCycle * licenseDiff) * remainingFraction);
-            requiresCheckout = true;
-            isUpgrade = true;
-            scheduledForPeriodEnd = false;
-            resetsBillingAnchor = false; // KEEP the billing anchor
-            
-            const nextRenewalAmount = formatCurrency(newTotalCharge / (currentCycle === "monthly" ? 1 : 12));
-            billingMessage = `You'll be charged a prorated amount of ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''} (${remainingDays} days remaining in current period). Next billing date remains ${formatDate(currentSubscription.current_period_end)} — renewal will be ${nextRenewalAmount}/month.`;
-          } else {
-            // Invalid dates - charge full period for new licenses
-            prorationAmount = pricePerLicensePerCycle * licenseDiff;
-            requiresCheckout = true;
-            isUpgrade = true;
-            scheduledForPeriodEnd = false;
-            resetsBillingAnchor = false;
-            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''}.`;
-          }
-        } else {
-          // No period dates - charge full period for new licenses
-          prorationAmount = pricePerLicensePerCycle * licenseDiff;
-          requiresCheckout = true;
-          isUpgrade = true;
-          scheduledForPeriodEnd = false;
-          resetsBillingAnchor = false;
-          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for ${licenseDiff} additional license${licenseDiff > 1 ? 's' : ''}.`;
-        }
-      } else {
-        // Removing licenses - schedule for period end (downgrade)
-        const licenseDiff = currentLicenses - newLicenses;
-        prorationAmount = 0;
-        requiresCheckout = false;
-        isUpgrade = false;
-        scheduledForPeriodEnd = true;
-        const changeDate = currentSubscription.current_period_end || "your next renewal date";
-        billingMessage = `${licenseDiff} license${licenseDiff > 1 ? 's' : ''} will be removed on ${formatDate(changeDate)}.`;
+      if (itemId) {
+        const upcoming = await stripe.invoices.createPreview({
+          customer: stripeSub.customer as string,
+          subscription: stripeSub.id,
+          subscription_details: {
+            items: [
+              {
+                id: itemId,
+                price: priceId,
+                quantity: seatCount,
+              },
+            ],
+            proration_behavior: "create_prorations",
+          },
+        });
+        prorationAmount = upcoming.amount_due;
+      }
+    } catch (previewErr: any) {
+      console.warn("Stripe upcoming invoice preview failed:", previewErr.message);
+      // Fallback estimate
+      if (billingCycle === "yearly" && currentCycle === "monthly") {
+        prorationAmount = PLAN_PRICING.pro.yearlyPerSeatCents * seatCount;
+      } else if (seatsChanged && !cycleChanged) {
+        const perSeat =
+          billingCycle === "monthly"
+            ? PLAN_PRICING.pro.monthlyPerSeatCents
+            : PLAN_PRICING.pro.yearlyPerSeatCents;
+        prorationAmount = Math.max(0, (seatCount - currentSeats) * perSeat);
       }
     }
-    // CRITICAL: Check cycle changes FIRST before price comparisons
-    // Monthly → Yearly always requires immediate payment (pay full year upfront)
-    else if (currentCycle === "monthly" && newCycle === "yearly") {
-      // Switching to yearly = immediate charge for full year
-      prorationAmount = newTotalCharge;
-      requiresCheckout = true;
-      isUpgrade = true;
-      scheduledForPeriodEnd = false;
+
+    if (cycleChanged) {
       resetsBillingAnchor = true;
-      const nextRenewal = new Date();
-      nextRenewal.setFullYear(nextRenewal.getFullYear() + 1);
-      billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for a full year today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
-    }
-    // Yearly → Monthly is always a downgrade (less commitment), schedule for period end
-    else if (currentCycle === "yearly" && newCycle === "monthly") {
-      prorationAmount = 0;
-      requiresCheckout = false;
-      isUpgrade = false;
-      scheduledForPeriodEnd = true;
-      const changeDate = currentSubscription.current_period_end || "your next renewal date";
-      billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
-    }
-    // Branch 1: Compare prices (handles same-cycle plan changes)
-    else if (newPricePerPeriod > currentPricePerPeriod) {
-      // Price increase = UPGRADE (regardless of other factors)
-      // Example: Individual Yearly ($79/mo) → Organization Monthly ($158/mo)
-      
-      if (currentCycle === "monthly" && newCycle === "monthly") {
-        // Monthly → Monthly upgrade
-        prorationAmount = newTotalCharge;
-        requiresCheckout = true;
-        isUpgrade = true;
-        scheduledForPeriodEnd = false;
-        resetsBillingAnchor = true;
-        const nextRenewal = new Date();
-        nextRenewal.setMonth(nextRenewal.getMonth() + 1);
-        billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} for the new monthly rate today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
-      } else if (currentCycle === "yearly" && newCycle === "yearly") {
-        // Yearly → Yearly upgrade - calculate prorated difference
-        const priceDiff = newTotalCharge - currentTotalCharge;
-        
-        if (currentSubscription.current_period_start && currentSubscription.current_period_end) {
-          const currentPeriodStart = new Date(currentSubscription.current_period_start);
-          const currentPeriodEnd = new Date(currentSubscription.current_period_end);
-          const now = new Date();
-          
-          if (!isNaN(currentPeriodStart.getTime()) && !isNaN(currentPeriodEnd.getTime())) {
-            const totalDays = Math.ceil((currentPeriodEnd.getTime() - currentPeriodStart.getTime()) / (1000 * 60 * 60 * 24));
-            const remainingDays = Math.max(1, Math.ceil((currentPeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-            const remainingFraction = totalDays > 0 ? remainingDays / totalDays : 1;
-            
-            prorationAmount = Math.max(0, Math.round(priceDiff * remainingFraction));
-            requiresCheckout = true;
-            isUpgrade = true;
-            scheduledForPeriodEnd = false;
-            resetsBillingAnchor = false;
-            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today (prorated for ${remainingDays} days remaining). Your renewal date stays ${formatDate(currentSubscription.current_period_end)}.`;
-          } else {
-            prorationAmount = priceDiff;
-            requiresCheckout = true;
-            isUpgrade = true;
-            scheduledForPeriodEnd = false;
-            resetsBillingAnchor = false;
-            billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for the upgrade.`;
-          }
+      requiresCheckout = true;
+      scheduledForPeriodEnd = false;
+      isUpgrade =
+        currentCycle === "monthly" && billingCycle === "yearly"
+          ? true
+          : newMonthly >= currentMonthly;
+      if (currentCycle === "yearly" && billingCycle === "monthly" && newMonthly <= currentMonthly) {
+        // Treat yearly → monthly as scheduled downgrade unless seats increase enough
+        if (newMonthly < currentMonthly) {
+          scheduledForPeriodEnd = true;
+          requiresCheckout = false;
+          prorationAmount = 0;
+          billingMessage = `Your plan will switch to monthly on ${formatDate(currentSubscription.current_period_end)}.`;
         } else {
-          prorationAmount = priceDiff;
-          requiresCheckout = true;
-          isUpgrade = true;
-          scheduledForPeriodEnd = false;
-          resetsBillingAnchor = false;
-          billingMessage = `You'll be charged ${formatCurrency(prorationAmount)} today for the upgrade.`;
+          billingMessage = `Preview: estimated charge ${formatCurrency(prorationAmount)} when switching to monthly with ${seatCount} seat(s).`;
         }
       } else {
-        // Cross-cycle upgrade (monthly → yearly or yearly → monthly with price increase)
-        prorationAmount = newTotalCharge;
-        requiresCheckout = true;
-        isUpgrade = true;
-        scheduledForPeriodEnd = false;
-        resetsBillingAnchor = true;
-        const nextRenewal = new Date();
-        if (newCycle === "yearly") {
-          nextRenewal.setFullYear(nextRenewal.getFullYear() + 1);
-        } else {
-          nextRenewal.setMonth(nextRenewal.getMonth() + 1);
-        }
-        billingMessage = `You'll be charged ${formatCurrency(newTotalCharge)} today. Your billing date will reset to today. Next renewal: ${formatDate(nextRenewal.toISOString())}.`;
+        billingMessage = `Preview: estimated charge ${formatCurrency(prorationAmount)} when switching to ${billingCycle} billing with ${seatCount} seat(s). Confirm to apply.`;
       }
-    }
-    // Branch 2: Price decrease = DOWNGRADE (scheduled for period end)
-    else if (newPricePerPeriod < currentPricePerPeriod) {
-      prorationAmount = 0;
-      requiresCheckout = false;
-      isUpgrade = false;
-      scheduledForPeriodEnd = true;
-      const changeDate = currentSubscription.current_period_end || "your next renewal date";
-      billingMessage = `Your plan will change on ${formatDate(changeDate)}.`;
-    }
-    // Branch 4: No change (shouldn't happen, but handle gracefully)
-    else {
-      prorationAmount = 0;
-      requiresCheckout = false;
-      isUpgrade = true;
+    } else if (seatsChanged) {
+      // Same cycle seat change — standard proration on apply
+      isUpgrade = seatCount > currentSeats;
       scheduledForPeriodEnd = false;
+      requiresCheckout = true;
       resetsBillingAnchor = false;
-      billingMessage = `No changes needed.`;
+      billingMessage = isUpgrade
+        ? `Adding seats to ${seatCount}. Estimated prorated charge today: ${formatCurrency(prorationAmount)}.`
+        : `Reducing seats to ${seatCount}. Estimated prorated adjustment today: ${formatCurrency(prorationAmount)}.`;
+    } else {
+      billingMessage = "No changes needed.";
+      requiresCheckout = false;
+      prorationAmount = 0;
     }
 
     return NextResponse.json({
@@ -288,11 +189,15 @@ export async function POST(request: NextRequest) {
       requiresCheckout,
       scheduledForPeriodEnd,
       resetsBillingAnchor,
-      effectiveDate: scheduledForPeriodEnd ? currentSubscription.current_period_end : new Date().toISOString(),
-      currentPlanDescription,
-      newPlanDescription,
+      effectiveDate: scheduledForPeriodEnd
+        ? currentSubscription.current_period_end
+        : new Date().toISOString(),
+      currentPlanDescription: formatProDescription(currentCycle, currentSeats),
+      newPlanDescription: formatProDescription(billingCycle, seatCount),
       currentPeriodEnd: currentSubscription.current_period_end,
       billingMessage,
+      seatCount,
+      planType: newPlanType,
     });
   } catch (error: any) {
     console.error("Proration preview error:", error);
@@ -304,35 +209,30 @@ export async function POST(request: NextRequest) {
 }
 
 function formatCurrency(cents: number): string {
-  return `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${(cents / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function formatDate(dateString: string | null): string {
-  if (!dateString || dateString === "your next renewal date") return "your next renewal date";
+  if (!dateString) return "your next renewal date";
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return "your next renewal date";
-  return date.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric'
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
   });
 }
 
-function formatPlanDescription(
-  planType: PlanType,
-  billingCycle: BillingCycle,
-  additionalLicenses: number
-): string {
-  const cycleText = billingCycle === "monthly" ? "Monthly" : "Yearly";
-  
-  if (planType === "individual") {
-    const priceInDollars = PLAN_PRICING.individual[billingCycle] / 100;
-    return `Individual ${cycleText} ($${priceInDollars}/month)`;
-  } else {
-    const baseInDollars = PLAN_PRICING.organization[billingCycle].base / 100;
-    const licenseRateInDollars = PLAN_PRICING.organization[billingCycle].perAdditionalLicense / 100;
-    const total = baseInDollars + (additionalLicenses * licenseRateInDollars);
-    return `Organization ${cycleText} ($${total}/month)`;
+function formatProDescription(billingCycle: BillingCycle, seatCount: number): string {
+  const cycleText = billingCycle === "monthly" ? "Monthly" : "Annual";
+  const account = planTypeFromSeatCount(seatCount) === "organization" ? "Organization" : "Individual";
+  if (billingCycle === "monthly") {
+    const total = (PLAN_PRICING.pro.monthlyPerSeatCents * seatCount) / 100;
+    return `Pro ${account} · ${seatCount} seat${seatCount === 1 ? "" : "s"} · ${cycleText} ($${total}/mo)`;
   }
+  const total = (PLAN_PRICING.pro.yearlyPerSeatCents * seatCount) / 100;
+  return `Pro ${account} · ${seatCount} seat${seatCount === 1 ? "" : "s"} · ${cycleText} ($${total}/yr)`;
 }
-

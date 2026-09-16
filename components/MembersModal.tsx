@@ -13,7 +13,7 @@ import {
   BillingCycle,
   PLAN_PRICING
 } from "@/types/database";
-import { addLicenses } from "@/lib/stripe/client-utils";
+import { updateSeats } from "@/lib/stripe/client-utils";
 import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
 interface MembersModalProps {
@@ -358,44 +358,40 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
       return;
     }
 
-    // If on Individual plan, prompt to upgrade
-    if (subscription.plan_type === "individual") {
-      toast.error(
-        "You need to upgrade to an Organization plan to add team members. Please go to Billing to upgrade.",
-        { duration: 5000 }
-      );
-      setShowAddLicenseModal(false);
-      return;
-    }
-
-    // If on Free plan, prompt to select a plan
+    // Free: need Pro first
     if (subscription.plan_type === "free") {
       toast.error(
-        "Please select a plan in the Billing section before adding licenses.",
+        "Please upgrade to Pro in Billing before adding licenses.",
         { duration: 5000 }
       );
       setShowAddLicenseModal(false);
       return;
     }
 
-    // For Organization plan, add licenses via Stripe
+    // Paid Pro (individual or organization): set absolute target seat count
     try {
-      toast.loading("Adding licenses...");
-      
-      const result = await addLicenses(additionalLicensesToAdd);
-      
+      const currentSeats =
+        (subscription.base_licenses || 1) + (subscription.additional_licenses || 0);
+      const targetSeatCount = currentSeats + additionalLicensesToAdd;
+
+      toast.loading("Updating licenses...");
+
+      const result = await updateSeats(targetSeatCount);
+
       toast.dismiss();
-      toast.success(result.message || `Successfully added ${additionalLicensesToAdd} license${additionalLicensesToAdd !== 1 ? "s" : ""}!`);
-      
+      toast.success(
+        result.message ||
+          `Successfully set licenses to ${targetSeatCount}`
+      );
+
       setAdditionalLicensesToAdd(1);
       setShowAddLicenseModal(false);
-      
-      // Reload data immediately - DB is updated synchronously now
+
       loadData();
     } catch (error: any) {
-      console.error("Failed to add licenses:", error);
+      console.error("Failed to update licenses:", error);
       toast.dismiss();
-      toast.error(error.message || "Failed to add licenses");
+      toast.error(error.message || "Failed to update licenses");
     }
   };
 
@@ -800,156 +796,20 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
             {/* Content */}
             <div className="px-6 py-6 space-y-5">
-              {/* Email Input with Pills */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
-                  Add Invitees
-                </label>
-                <div className="w-full min-h-[100px] px-3 py-2 border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-gray-900 focus-within:border-transparent bg-white">
-                  <div className="flex flex-wrap gap-2 items-center">
-                    {/* Email Pills */}
-                    {emailPills.map((email) => (
-                      <div
-                        key={email}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-900 rounded-full text-sm"
-                      >
-                        <span>{email}</span>
-                        <button
-                          onClick={() => removeEmailPill(email)}
-                          className="hover:bg-amber-200 rounded-full p-0.5 transition-colors"
-                          type="button"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                    {/* Input Field */}
-                    <input
-                      type="text"
-                      value={currentEmailInput}
-                      onChange={(e) => handleEmailInput(e.target.value)}
-                      onKeyDown={handleEmailKeyDown}
-                      placeholder={emailPills.length === 0 ? "Use commas or spaces to separate email addresses" : ""}
-                      className="flex-1 min-w-[200px] border-none outline-none bg-transparent text-sm py-1"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Role Selection */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
-                  Role
-                </label>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as "super_admin" | "admin")}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-                >
-                  <option value="super_admin">Super Admin</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-
-              {/* License Usage */}
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">License Usage</span>
-                  <span className="text-2xl font-bold text-gray-900">
-                    {orgContext?.available_licenses || 0}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">
-                  {orgContext?.used_licenses || 0} of {orgContext?.total_licenses || 0} licenses used
-                </p>
-                <p className="text-xs text-gray-600 mt-1">
-                  {orgContext?.available_licenses || 0} available
-                </p>
-
-                {/* Warning if no licenses */}
-                {orgContext && orgContext.available_licenses === 0 && (
-                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
-                    <AlertCircle size={16} className="text-yellow-600 mt-0.5 flex-shrink-0" />
-                    <p className="text-xs text-yellow-800 font-medium">
-                      No licenses available. Go to Billing to add more licenses before inviting
-                      members.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Add License Button */}
-              {orgContext?.role === "owner" && (
-                <button
-                  onClick={() => {
-                    setShowInviteModal(false);
-                    setShowAddLicenseModal(true);
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-lg transition-colors"
-                >
-                  <Plus size={18} />
-                  Add license
-                </button>
-              )}
-
-              {/* Invite Button */}
-              <button
-                onClick={handleInviteMembers}
-                disabled={
-                  inviting ||
-                  (emailPills.length === 0 && !currentEmailInput.trim()) ||
-                  !orgContext ||
-                  orgContext.available_licenses === 0
-                }
-                className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  emailPills.length > 0 || currentEmailInput.trim().length > 0
-                    ? "bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-200"
-                    : "bg-gray-200 hover:bg-gray-300 text-gray-700 disabled:bg-gray-200"
-                }`}
-              >
-                <Plus size={18} />
-                {inviting ? "Inviting..." : "Invite Team Member"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add License Modal */}
-      {showAddLicenseModal && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Add Additional Licenses</h3>
-              <button
-                onClick={() => {
-                  setShowAddLicenseModal(false);
-                  setAdditionalLicensesToAdd(1);
-                }}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="px-6 py-6 space-y-5">
-              {subscription && subscription.plan_type === "individual" ? (
+              {subscription && subscription.plan_type === "free" ? (
                 <>
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                     <p className="text-sm text-blue-900">
-                      <strong>Upgrade Required</strong>
+                      <strong>Upgrade required</strong>
                     </p>
                     <p className="text-sm text-blue-800 mt-2">
-                      You're currently on an Individual plan. To add team members, you need to
-                      upgrade to an Organization plan.
+                      Upgrade to Pro in Billing to add licenses and invite teammates.
                     </p>
                   </div>
                   <button
                     onClick={() => {
                       setShowAddLicenseModal(false);
-                      toast("Please go to Billing to upgrade to an Organization plan", {
+                      toast("Open Billing to upgrade to Pro", {
                         duration: 4000,
                         icon: "ℹ️",
                       });
@@ -959,7 +819,9 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                     Go to Billing
                   </button>
                 </>
-              ) : subscription && subscription.plan_type === "organization" ? (
+              ) : subscription &&
+                (subscription.plan_type === "organization" ||
+                  subscription.plan_type === "individual") ? (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-3">
@@ -986,51 +848,60 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                     </div>
                   </div>
 
-                  {/* Pricing Info */}
-                  <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">
-                        {additionalLicensesToAdd} license
-                        {additionalLicensesToAdd !== 1 ? "s" : ""} ×{" "}
-                        {formatCurrency(
-                          PLAN_PRICING.organization[subscription.billing_cycle || "yearly"]
-                            .perAdditionalLicense
-                        )}
-                        /mo
-                      </span>
-                      <span className="font-semibold text-gray-900">
-                        {formatCurrency(
-                          PLAN_PRICING.organization[subscription.billing_cycle || "yearly"]
-                            .perAdditionalLicense * additionalLicensesToAdd
-                        )}
-                        /mo
-                      </span>
-                    </div>
-                    <div className="pt-2 border-t border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-900">New Monthly Total</span>
-                        <span className="text-lg font-bold text-gray-900">
-                          {formatCurrency(
-                            PLAN_PRICING.organization[subscription.billing_cycle || "yearly"].base +
-                              (subscription.additional_licenses + additionalLicensesToAdd) *
-                                PLAN_PRICING.organization[subscription.billing_cycle || "yearly"]
-                                  .perAdditionalLicense
-                          )}
-                          /mo
-                        </span>
+                  {(() => {
+                    const currentSeats =
+                      (subscription.base_licenses || 1) +
+                      (subscription.additional_licenses || 0);
+                    const targetSeats = currentSeats + additionalLicensesToAdd;
+                    const cycle = subscription.billing_cycle || "yearly";
+                    const perSeat =
+                      cycle === "monthly"
+                        ? PLAN_PRICING.pro.monthlyPerSeatCents
+                        : PLAN_PRICING.pro.yearlyDisplayedMonthlyCents;
+                    const periodTotal =
+                      cycle === "monthly"
+                        ? PLAN_PRICING.pro.monthlyPerSeatCents * targetSeats
+                        : PLAN_PRICING.pro.yearlyPerSeatCents * targetSeats;
+                    return (
+                      <div className="p-4 bg-gray-50 rounded-lg space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600">
+                            New total: {targetSeats} license{targetSeats !== 1 ? "s" : ""} ×{" "}
+                            {formatCurrency(perSeat)}/mo
+                          </span>
+                          <span className="font-semibold text-gray-900">
+                            {formatCurrency(perSeat * targetSeats)}/mo
+                          </span>
+                        </div>
+                        <div className="pt-2 border-t border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-900">
+                              {cycle === "yearly" ? "Annual total" : "Monthly total"}
+                            </span>
+                            <span className="text-lg font-bold text-gray-900">
+                              {formatCurrency(periodTotal)}
+                              {cycle === "yearly" ? "/yr" : "/mo"}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          {targetSeats >= 2
+                            ? "Account type: Organization"
+                            : "Account type: Individual"}
+                        </p>
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
 
                   <button
                     onClick={handleAddLicenses}
                     className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
                   >
-                    Add License{additionalLicensesToAdd !== 1 ? "s" : ""}
+                    Confirm license update
                   </button>
 
                   <p className="text-xs text-gray-500 text-center">
-                    You'll be charged prorated amount immediately
+                    Seat count is set absolutely. Proration applies immediately.
                   </p>
                 </>
               ) : (
