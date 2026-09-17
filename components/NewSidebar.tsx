@@ -52,6 +52,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const [personalizationSubMenuOpen, setPersonalizationSubMenuOpen] = useState(false);
   const [proposalTemplateOpen, setProposalTemplateOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [billingInitialView, setBillingInitialView] = useState<"overview" | "edit-plan">("overview");
   const [membersOpen, setMembersOpen] = useState(false);
   const [profile, setProfile] = useState<{
     company_name: string | null;
@@ -521,6 +522,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               onClick={() => {
                 if (canManageBilling()) {
                   setAccountMenuOpen(false);
+                  setBillingInitialView("edit-plan");
                   setBillingOpen(true);
                 }
               }}
@@ -636,12 +638,21 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
 
       <BillingModal
         isOpen={billingOpen}
-        onClose={() => setBillingOpen(false)}
+        initialView={billingInitialView}
+        onClose={() => {
+          setBillingOpen(false);
+          setBillingInitialView("overview");
+        }}
       />
 
       <MembersModal
         isOpen={membersOpen}
         onClose={() => setMembersOpen(false)}
+        onOpenBilling={(opts) => {
+          setMembersOpen(false);
+          setBillingInitialView(opts?.upgrade ? "edit-plan" : "overview");
+          setBillingOpen(true);
+        }}
       />
     </>
   );

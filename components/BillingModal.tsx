@@ -16,14 +16,20 @@ import {
 } from "@/types/database";
 import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange, updateSeats } from "@/lib/stripe/client-utils";
 
+type ViewMode = "overview" | "edit-plan" | "cancel";
+
 interface BillingModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Open directly to upgrade card (e.g. free limit / members upgrade CTAs) */
+  initialView?: ViewMode;
 }
 
-type ViewMode = "overview" | "edit-plan" | "cancel";
-
-export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
+export default function BillingModal({
+  isOpen,
+  onClose,
+  initialView = "overview",
+}: BillingModalProps) {
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
   const [orgContext, setOrgContext] = useState<UserOrganizationContext | null>(null);
@@ -146,9 +152,9 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
   useEffect(() => {
     if (isOpen) {
       loadSubscriptionData();
-      setViewMode("overview");
+      setViewMode(initialView);
     }
-  }, [isOpen, loadSubscriptionData]);
+  }, [isOpen, loadSubscriptionData, initialView]);
 
   const loadMoreInvoices = async () => {
     if (!invoicesPagination || loadingInvoices) return;
@@ -508,8 +514,8 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                         <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                           <p className="text-sm text-gray-800">
                             <span className="font-medium">Free plan</span> — Export up to{" "}
-                            <strong>5 unique quotes</strong> per month. Upgrade to Individual or
-                            Organization for unlimited quote exports.
+                            <strong>5 unique quotes</strong> per month. Upgrade to Pro for
+                            unlimited quote exports.
                           </p>
                         </div>
                       )}
@@ -684,7 +690,6 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
               {/* EDIT PLAN VIEW */}
               {viewMode === "edit-plan" && (
                 <>
-                  {/* Billing Cycle Toggle */}
                   <div className="mb-6 flex items-center justify-center gap-3">
                     <button
                       onClick={() => setSelectedCycle("monthly")}
@@ -705,24 +710,26 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       }`}
                     >
                       Annual
-                      <span className="ml-2 text-xs bg-green-500 text-white px-2 py-0.5 rounded-full">
-                        $16/user/mo
+                      <span className="ml-2 inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-800">
+                        Save <span className="ml-1 text-sm font-extrabold text-green-700">20%</span>
                       </span>
                     </button>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
-                    {/* Free */}
-                    <div className="border-2 border-gray-200 rounded-xl p-6">
+                    <div className="border-2 border-gray-200 rounded-xl p-6 flex flex-col">
                       <h3 className="text-xl font-bold text-gray-900">Free</h3>
-                      <p className="text-sm text-gray-500 mt-1">Get started at no cost</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Everything you need to start quoting — 5 exports per month
+                      </p>
                       <div className="my-4">
                         <span className="text-4xl font-bold text-gray-900">$0</span>
                       </div>
-                      <ul className="space-y-2 mb-6 text-sm">
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> 5 quote exports / month</li>
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Full product library</li>
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> AI chat assistant</li>
+                      <ul className="space-y-2 mb-6 text-sm flex-1">
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> 5 unique quote exports per month</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> AI chat assistant</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Product library &amp; price book</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Profit margin generation</li>
                       </ul>
                       {subscription?.plan_type === "free" ? (
                         <button disabled className="w-full py-3 bg-gray-300 text-white font-medium rounded-lg cursor-not-allowed">
@@ -733,30 +740,43 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                       )}
                     </div>
 
-                    {/* Pro */}
-                    <div className="border-2 border-green-600 rounded-xl p-6 relative">
+                    <div className="border-2 border-green-600 rounded-xl p-6 relative flex flex-col">
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-600 text-white text-xs font-bold px-3 py-1 rounded-full">
                         PRO
                       </div>
                       <h3 className="text-xl font-bold text-gray-900">Pro</h3>
                       <p className="text-sm text-gray-500 mt-1">
-                        {seatCount === 1 ? "Individual account" : "Organization account"} · per licensed user
+                        Unlimited quoting for individuals and teams
                       </p>
                       <div className="my-4">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-4xl font-bold text-gray-900">
-                            {formatCurrency(calculateProPrice(selectedCycle, seatCount).displayMonthly)}
-                          </span>
-                          <span className="text-gray-500">/mo</span>
-                        </div>
+                        {seatCount === 1 ? (
+                          <div className="flex items-baseline gap-1 flex-wrap">
+                            <span className="text-4xl font-bold text-gray-900">
+                              {formatCurrency(
+                                selectedCycle === "yearly"
+                                  ? PLAN_PRICING.pro.yearlyDisplayedMonthlyCents
+                                  : PLAN_PRICING.pro.monthlyPerSeatCents
+                              )}
+                            </span>
+                            <span className="text-gray-500">/ user / month</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-baseline gap-1 flex-wrap">
+                            <span className="text-4xl font-bold text-gray-900">
+                              {formatCurrency(calculateProPrice(selectedCycle, seatCount).displayMonthly)}
+                            </span>
+                            <span className="text-gray-500">
+                              /month for {seatCount} licenses
+                            </span>
+                          </div>
+                        )}
                         {selectedCycle === "yearly" && (
-                          <p className="text-sm text-gray-500 mt-1">
-                            Billed {formatCurrency(calculateProPrice(selectedCycle, seatCount).total)} yearly
+                          <p className="text-sm text-gray-500 mt-2">
+                            Billed {formatCurrency(calculateProPrice(selectedCycle, seatCount).total)}
+                            /yr
+                            {seatCount > 1 ? ` for ${seatCount} licenses` : ""}
                           </p>
                         )}
-                        <p className="text-xs text-gray-500 mt-1">
-                          {selectedCycle === "monthly" ? "$20" : "$16"}/user/mo · {seatCount} license{seatCount === 1 ? "" : "s"}
-                        </p>
                       </div>
 
                       <div className="mb-4 p-3 bg-gray-50 rounded-lg">
@@ -782,15 +802,16 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                           </button>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">
-                          1 license = Individual · 2+ = Organization
+                          1 license for yourself · Add licenses for your team
                         </p>
                       </div>
 
-                      <ul className="space-y-2 mb-6 text-sm">
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Unlimited quote exports</li>
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Team invites (up to licenses)</li>
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Shared price book</li>
-                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5" /> Priority support</li>
+                      <ul className="space-y-2 mb-6 text-sm flex-1">
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Everything in Free</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Unlimited quote exports</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Invite teammates up to your license count</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Shared price book &amp; collaboration</li>
+                        <li className="flex gap-2"><Check size={16} className="text-green-600 mt-0.5 shrink-0" /> Priority support</li>
                       </ul>
 
                       <button
@@ -809,7 +830,7 @@ export default function BillingModal({ isOpen, onClose }: BillingModalProps) {
                             subscription?.billing_cycle === selectedCycle &&
                             currentSeatCount === seatCount
                             ? "Current plan"
-                            : "Continue with Pro"}
+                            : "Upgrade to Pro"}
                       </button>
                     </div>
                   </div>

@@ -19,9 +19,11 @@ import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 interface MembersModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Opens Billing modal — pass upgrade to land on the Pro upgrade card */
+  onOpenBilling?: (opts?: { upgrade?: boolean }) => void;
 }
 
-export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
+export default function MembersModal({ isOpen, onClose, onOpenBilling }: MembersModalProps) {
   const supabase = createClient();
   const { canViewMembers } = useOrganizationRole();
   const [loading, setLoading] = useState(false);
@@ -769,7 +771,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
         </div>
       </div>
 
-      {/* Invite Members Modal */}
+{/* Invite Members Modal */}
       {showInviteModal && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl">
@@ -796,7 +798,7 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
 
             {/* Content */}
             <div className="px-6 py-6 space-y-5">
-              {subscription && subscription.plan_type === "free" ? (
+              {subscription?.plan_type === "free" ? (
                 <>
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                     <p className="text-sm text-blue-900">
@@ -807,12 +809,172 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
                     </p>
                   </div>
                   <button
+                    type="button"
                     onClick={() => {
+                      setShowInviteModal(false);
                       setShowAddLicenseModal(false);
-                      toast("Open Billing to upgrade to Pro", {
-                        duration: 4000,
-                        icon: "ℹ️",
-                      });
+                      onClose();
+                      onOpenBilling?.({ upgrade: true });
+                    }}
+                    className="w-full py-3 px-4 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Go to Billing
+                  </button>
+                </>
+              ) : (
+                <>
+                {/* Email Input with Pills */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
+                    Add Invitees
+                  </label>
+                  <div className="w-full min-h-[100px] px-3 py-2 border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-gray-900 focus-within:border-transparent bg-white">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      {/* Email Pills */}
+                      {emailPills.map((email) => (
+                        <div
+                          key={email}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-900 rounded-full text-sm"
+                        >
+                          <span>{email}</span>
+                          <button
+                            onClick={() => removeEmailPill(email)}
+                            className="hover:bg-amber-200 rounded-full p-0.5 transition-colors"
+                            type="button"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      {/* Input Field */}
+                      <input
+                        type="text"
+                        value={currentEmailInput}
+                        onChange={(e) => handleEmailInput(e.target.value)}
+                        onKeyDown={handleEmailKeyDown}
+                        placeholder={emailPills.length === 0 ? "Use commas or spaces to separate email addresses" : ""}
+                        className="flex-1 min-w-[200px] border-none outline-none bg-transparent text-sm py-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Role Selection */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
+                    Role
+                  </label>
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as "super_admin" | "admin")}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  >
+                    <option value="super_admin">Super Admin</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+
+                {/* License Usage */}
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700">License Usage</span>
+                    <span className="text-2xl font-bold text-gray-900">
+                      {orgContext?.available_licenses || 0}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600">
+                    {orgContext?.used_licenses || 0} of {orgContext?.total_licenses || 0} licenses used
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {orgContext?.available_licenses || 0} available
+                  </p>
+
+                  {/* Warning if no licenses */}
+                  {orgContext && orgContext.available_licenses === 0 && (
+                    <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
+                      <AlertCircle size={16} className="text-yellow-600 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-yellow-800 font-medium">
+                        No licenses available. Go to Billing to add more licenses before inviting
+                        members.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Add License Button */}
+                {orgContext?.role === "owner" && (
+                  <button
+                    onClick={() => {
+                      setShowInviteModal(false);
+                      setShowAddLicenseModal(true);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium rounded-lg transition-colors"
+                  >
+                    <Plus size={18} />
+                    Add license
+                  </button>
+                )}
+
+                {/* Invite Button */}
+                <button
+                  onClick={handleInviteMembers}
+                  disabled={
+                    inviting ||
+                    (emailPills.length === 0 && !currentEmailInput.trim()) ||
+                    !orgContext ||
+                    orgContext.available_licenses === 0
+                  }
+                  className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    emailPills.length > 0 || currentEmailInput.trim().length > 0
+                      ? "bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-200"
+                      : "bg-gray-200 hover:bg-gray-300 text-gray-700 disabled:bg-gray-200"
+                  }`}
+                >
+                  <Plus size={18} />
+                  {inviting ? "Inviting..." : "Invite Team Member"}
+                </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add License Modal */}
+      {showAddLicenseModal && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Add Additional Licenses</h3>
+              <button
+                onClick={() => {
+                  setShowAddLicenseModal(false);
+                  setAdditionalLicensesToAdd(1);
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="px-6 py-6 space-y-5">
+              {subscription?.plan_type === "free" ? (
+                <>
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-900">
+                      <strong>Upgrade required</strong>
+                    </p>
+                    <p className="text-sm text-blue-800 mt-2">
+                      Upgrade to Pro in Billing to add licenses and invite teammates.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInviteModal(false);
+                      setShowAddLicenseModal(false);
+                      onClose();
+                      onOpenBilling?.({ upgrade: true });
                     }}
                     className="w-full py-3 px-4 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-lg transition-colors"
                   >
@@ -918,4 +1080,3 @@ export default function MembersModal({ isOpen, onClose }: MembersModalProps) {
     </>
   );
 }
-

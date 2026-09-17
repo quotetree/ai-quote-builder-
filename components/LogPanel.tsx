@@ -491,6 +491,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   });
   const [exportUsage, setExportUsage] = useState<QuoteExportUsage | null>(null);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [billingInitialView, setBillingInitialView] = useState<"overview" | "edit-plan">("overview");
 
   // Signature status per quote (quoteId → ProposalSignatureStatus)
   const [signaturesMap, setSignaturesMap] = useState<Record<string, ProposalSignatureStatus>>({});
@@ -939,6 +940,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             "You've used 5 of 5 free quotes this month. Upgrade for unlimited quote exports.",
           { duration: 6000 },
         );
+        setBillingInitialView("edit-plan");
         setBillingOpen(true);
         void refreshExportUsage();
         return;
@@ -1158,7 +1160,10 @@ export default function LogPanel({ projectId }: LogPanelProps) {
                 })}
                 <button
                   type="button"
-                  onClick={() => setBillingOpen(true)}
+                  onClick={() => {
+                    setBillingInitialView("edit-plan");
+                    setBillingOpen(true);
+                  }}
                   className="ml-2 text-brand-green hover:underline font-medium"
                 >
                   Upgrade
@@ -1175,7 +1180,14 @@ export default function LogPanel({ projectId }: LogPanelProps) {
         </button>
       </div>
 
-      <BillingModal isOpen={billingOpen} onClose={() => setBillingOpen(false)} />
+      <BillingModal
+        isOpen={billingOpen}
+        initialView={billingInitialView}
+        onClose={() => {
+          setBillingOpen(false);
+          setBillingInitialView("overview");
+        }}
+      />
 
       {/* Quotes Table */}
       {quotes.length === 0 ? (
