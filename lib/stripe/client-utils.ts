@@ -25,6 +25,47 @@ export type CheckoutOptions = {
   customerEmail?: string;
 };
 
+/** Structured error when a seat/plan payment fails or needs customer action (HTTP 402). */
+export class SeatPaymentError extends Error {
+  status: number;
+  reason: "payment_failed" | "requires_action" | "incomplete" | string;
+  requiresAction: boolean;
+  pendingUpdate: boolean;
+  clientSecret: string | null;
+  paymentIntentStatus: string | null;
+  invoiceId: string | null;
+  seatsGranted: boolean;
+  previousSeatCount?: number;
+  targetSeatCount?: number;
+  raw: Record<string, unknown>;
+
+  constructor(payload: Record<string, any>, status = 402) {
+    super(
+      payload.error ||
+        payload.message ||
+        "Payment for the seat change failed. No additional seats were granted."
+    );
+    this.name = "SeatPaymentError";
+    this.status = status;
+    this.reason = payload.reason || "payment_failed";
+    this.requiresAction = !!payload.requiresAction || payload.reason === "requires_action";
+    this.pendingUpdate = !!payload.pendingUpdate;
+    this.clientSecret = payload.clientSecret ?? null;
+    this.paymentIntentStatus = payload.paymentIntentStatus ?? null;
+    this.invoiceId = payload.invoiceId ?? null;
+    this.seatsGranted = payload.seatsGranted === true;
+    this.previousSeatCount = payload.previousSeatCount;
+    this.targetSeatCount = payload.targetSeatCount;
+    this.raw = payload;
+  }
+}
+
+function throwIfPaymentRequired(response: Response, payload: Record<string, any>) {
+  if (response.status === 402 || (payload.seatsGranted === false && payload.reason)) {
+    throw new SeatPaymentError(payload, response.status);
+  }
+}
+
 /**
  * Fetch proration preview for seat / cycle changes.
  */
@@ -108,12 +149,12 @@ export async function createCheckoutSession(
     body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to create checkout session");
-  }
+  const data = await response.json().catch(() => ({}));
 
-  const data = await response.json();
+  if (!response.ok) {
+    throwIfPaymentRequired(response, data);
+    throw new Error(data.error || "Failed to create checkout session");
+  }
 
   if (data.updated) {
     return data;
@@ -161,12 +202,14 @@ export async function updateSeats(targetSeatCount: number) {
     body: JSON.stringify({ targetSeatCount }),
   });
 
+  const data = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to update seats");
+    throwIfPaymentRequired(response, data);
+    throw new Error(data.error || "Failed to update seats");
   }
 
-  return await response.json();
+  return data;
 }
 
 /** @deprecated Prefer updateSeats(absoluteCount) */
@@ -177,12 +220,14 @@ export async function addLicenses(additionalLicensesToAdd: number) {
     body: JSON.stringify({ additionalLicensesToAdd }),
   });
 
+  const data = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to add licenses");
+    throwIfPaymentRequired(response, data);
+    throw new Error(data.error || "Failed to add licenses");
   }
 
-  return await response.json();
+  return data;
 }
 
 export async function fetchPaymentMethods() {

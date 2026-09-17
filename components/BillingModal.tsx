@@ -14,7 +14,7 @@ import {
   StripeInvoice,
   ProrationPreview
 } from "@/types/database";
-import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange, updateSeats } from "@/lib/stripe/client-utils";
+import { createCheckoutSession, openCustomerPortal, fetchPaymentMethods, fetchInvoices, fetchProrationPreview, cancelPendingPlanChange, updateSeats, SeatPaymentError } from "@/lib/stripe/client-utils";
 
 type ViewMode = "overview" | "edit-plan" | "cancel";
 
@@ -236,9 +236,9 @@ export default function BillingModal({
   const handleConfirmPlanChange = async () => {
     if (!pendingPlanChange || !prorationData) return;
 
-    try {
-      const loadingToast = toast.loading("Processing payment...");
+    const loadingToast = toast.loading("Processing payment...");
 
+    try {
       const sameCycle =
         subscription?.billing_cycle === pendingPlanChange.cycle &&
         subscription?.plan_type !== "free" &&
@@ -294,8 +294,19 @@ export default function BillingModal({
         window.location.href = result.url;
       }
     } catch (error: any) {
+      toast.dismiss(loadingToast);
       console.error("Plan change error:", error);
-      toast.error(error.message || "Failed to update plan");
+      if (error instanceof SeatPaymentError) {
+        toast.error(
+          error.requiresAction
+            ? "Card authentication required. Open the customer portal to authenticate or update your card, then try again."
+            : error.message ||
+                "Payment failed. Your plan and seat count were not changed.",
+          { duration: 7000 }
+        );
+      } else {
+        toast.error(error.message || "Failed to update plan");
+      }
     }
   };
 

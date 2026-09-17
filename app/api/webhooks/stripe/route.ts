@@ -413,23 +413,34 @@ async function handleSubscriptionUpdate(
   // Type assertion to work around Stripe type issues
   const sub = subscription as any;
   const organizationId = sub.metadata?.organization_id;
+  const hasPendingUpdate = !!sub.pending_update;
 
   if (!organizationId) {
-    console.error("Missing organization_id in subscription metadata");
-    return;
+    console.warn(
+      `[webhook] subscription ${subscription.id} missing organization_id in metadata — syncing by stripe_subscription_id`
+    );
   }
 
   const inferred = inferSubscriptionFromStripeItems(sub.items?.data || []);
   let billingCycle = inferred.billingCycle;
+  // Source of truth for entitlements: applied item quantities — never pending metadata
   let seatCount = inferred.seatCount;
 
-  // Metadata overrides when present (from our checkout / seat-update routes)
-  if (sub.metadata?.billing_cycle === "monthly" || sub.metadata?.billing_cycle === "yearly") {
-    billingCycle = sub.metadata.billing_cycle;
-  }
-  if (sub.metadata?.seat_count) {
-    const metaSeats = parseInt(sub.metadata.seat_count, 10);
-    if (Number.isFinite(metaSeats) && metaSeats >= 1) seatCount = metaSeats;
+  // Metadata overrides only when the pending update has been applied (no pending_update).
+  // While payment is incomplete, metadata may already list the target seat_count —
+  // granting those seats early would bypass pending_if_incomplete semantics.
+  if (!hasPendingUpdate) {
+    if (sub.metadata?.billing_cycle === "monthly" || sub.metadata?.billing_cycle === "yearly") {
+      billingCycle = sub.metadata.billing_cycle;
+    }
+    if (sub.metadata?.seat_count) {
+      const metaSeats = parseInt(sub.metadata.seat_count, 10);
+      if (Number.isFinite(metaSeats) && metaSeats >= 1) seatCount = metaSeats;
+    }
+  } else {
+    console.log(
+      `[webhook] subscription.updated with pending_update — keeping applied seats=${seatCount} (not granting pending quantity)`
+    );
   }
 
   const priceFields = inferred.isPro
@@ -454,7 +465,10 @@ async function handleSubscriptionUpdate(
   // Prefer seat-derived plan_type for Pro; honor metadata for legacy if set
   if (inferred.isPro) {
     // plan_type always from seats
-  } else if (sub.metadata?.plan_type === "individual" || sub.metadata?.plan_type === "organization") {
+  } else if (
+    !hasPendingUpdate &&
+    (sub.metadata?.plan_type === "individual" || sub.metadata?.plan_type === "organization")
+  ) {
     (priceFields as any).plan_type = sub.metadata.plan_type;
   }
 
@@ -516,6 +530,7 @@ async function handleSubscriptionUpdate(
 
   console.log("Updating subscription with data:", {
     stripe_subscription_id: subscription.id,
+    pending_update: hasPendingUpdate,
     updateData,
   });
 
@@ -536,7 +551,9 @@ async function handleSubscriptionUpdate(
     throw new Error("Subscription update returned no rows");
   }
 
-  console.log(`Subscription ${subscription.id} updated`, updatedData[0]);
+  console.log(
+    `[webhook] ✅ subscription.updated | ${subscription.id} | seats: ${seatCount} | pending: ${hasPendingUpdate}`
+  );
 }
 
 async function handleSubscriptionDeleted(
@@ -571,12 +588,92 @@ async function handleSubscriptionDeleted(
   );
 }
 
+async function syncSubscriptionSeatsFromStripe(
+  stripeSubscriptionId: string,
+  supabase: any
+) {
+  const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+    expand: ["items"],
+  });
+  const sub = subscription as any;
+
+  // If payment still incomplete, do not grant pending seats
+  if (sub.pending_update) {
+    console.log(
+      `[webhook] skip seat sync — pending_update still present on ${stripeSubscriptionId}`
+    );
+    return;
+  }
+
+  const inferred = inferSubscriptionFromStripeItems(sub.items?.data || []);
+  let billingCycle = inferred.billingCycle;
+  let seatCount = inferred.seatCount;
+
+  if (sub.metadata?.billing_cycle === "monthly" || sub.metadata?.billing_cycle === "yearly") {
+    billingCycle = sub.metadata.billing_cycle;
+  }
+
+  const priceFields = inferred.isPro
+    ? proPriceFields(billingCycle, seatCount)
+    : inferred.isLegacy
+      ? {
+          plan_type: inferred.planType,
+          base_licenses: inferred.planType === "organization" ? 2 : 1,
+          additional_licenses:
+            inferred.planType === "organization" ? Math.max(0, seatCount - 2) : 0,
+          base_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[billingCycle].base
+              : PLAN_PRICING.legacy.individual[billingCycle],
+          additional_license_price_cents:
+            inferred.planType === "organization"
+              ? PLAN_PRICING.legacy.organization[billingCycle].perAdditionalLicense
+              : 0,
+        }
+      : proPriceFields(billingCycle, seatCount);
+
+  const { error } = await supabase
+    .from("subscriptions")
+    .update({
+      plan_type: priceFields.plan_type,
+      billing_cycle: billingCycle,
+      status: sub.status === "active" ? "active" : sub.status,
+      base_licenses: priceFields.base_licenses,
+      additional_licenses: priceFields.additional_licenses,
+      base_price_cents: priceFields.base_price_cents,
+      additional_license_price_cents: priceFields.additional_license_price_cents,
+      stripe_price_id: inferred.priceId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("stripe_subscription_id", stripeSubscriptionId);
+
+  if (error) {
+    console.error("[webhook] failed to sync seats after payment:", error);
+    throw error;
+  }
+
+  console.log(
+    `[webhook] ✅ payment sync | ${stripeSubscriptionId} | seats: ${seatCount}`
+  );
+}
+
 async function handlePaymentSucceeded(invoice: Stripe.Invoice, supabase: any) {
-  console.log(`Payment succeeded for invoice ${invoice.id}`);
-  // You could add logic here to:
-  // - Send receipt emails
-  // - Update payment history
-  // - Log the transaction
+  const inv = invoice as any;
+  const subscriptionId =
+    typeof inv.subscription === "string" ? inv.subscription : inv.subscription?.id;
+  const billingReason = inv.billing_reason as string | undefined;
+
+  console.log(
+    `[webhook] invoice.payment_succeeded | ${invoice.id} | reason: ${billingReason} | sub: ${subscriptionId}`
+  );
+
+  // Mid-cycle seat / plan changes invoice after pending_if_incomplete + always_invoice
+  if (
+    subscriptionId &&
+    (billingReason === "subscription_update" || billingReason === "manual")
+  ) {
+    await syncSubscriptionSeatsFromStripe(subscriptionId, supabase);
+  }
 }
 
 async function handlePaymentFailed(invoice: Stripe.Invoice, supabase: any) {
@@ -584,10 +681,26 @@ async function handlePaymentFailed(invoice: Stripe.Invoice, supabase: any) {
   const inv = invoice as any;
   const subscriptionId =
     typeof inv.subscription === "string" ? inv.subscription : inv.subscription?.id;
+  const billingReason = inv.billing_reason as string | undefined;
 
   if (!subscriptionId) return;
 
-  // Update subscription status to reflect payment failure
+  // Mid-cycle seat increase failures: keep current entitlements; do not mark past_due.
+  // Stripe leaves the subscription active with pending_update (or discards it).
+  if (billingReason === "subscription_update") {
+    console.log(
+      `[webhook] ❌ seat/plan update payment failed | invoice: ${invoice.id} | sub: ${subscriptionId} — seats not granted`
+    );
+    // Ensure DB still reflects applied (pre-update) quantity
+    try {
+      await syncSubscriptionSeatsFromStripe(subscriptionId, supabase);
+    } catch (e) {
+      console.error("[webhook] resync after failed update payment:", e);
+    }
+    return;
+  }
+
+  // Renewal / first invoice failures → past_due
   const { error } = await supabase
     .from("subscriptions")
     .update({
@@ -600,10 +713,6 @@ async function handlePaymentFailed(invoice: Stripe.Invoice, supabase: any) {
     console.error("Failed to update subscription after payment failure:", error);
   }
 
-  console.log(`Payment failed for subscription ${subscriptionId}`);
-  // You could add logic here to:
-  // - Send payment failure emails
-  // - Notify the user
-  // - Implement retry logic
+  console.log(`[webhook] ❌ payment failed | sub: ${subscriptionId} | reason: ${billingReason}`);
 }
 

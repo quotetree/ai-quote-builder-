@@ -12,6 +12,7 @@ import {
   inferSubscriptionFromStripeItems,
   totalSeatsFromLicenses,
 } from "@/lib/stripe/pricing";
+import { increaseProSeatsWithImmediateInvoice } from "@/lib/stripe/seatUpdates";
 import Stripe from "stripe";
 
 /**
@@ -260,11 +261,77 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          // Upgrade / seat increase / cycle change: apply now with standard proration
+          // Pro same-cycle seat increase: pending_if_incomplete + always_invoice
+          const cycleChanged = currentCycle !== billingCycle;
+          if (
+            inferred.isPro &&
+            !cycleChanged &&
+            seatCount > currentSeats &&
+            existingSubscription.stripe_subscription_id
+          ) {
+            const seatResult = await increaseProSeatsWithImmediateInvoice({
+              stripeSubscriptionId: existingSubscription.stripe_subscription_id,
+              billingCycle,
+              previousSeatCount: currentSeats,
+              targetSeatCount: seatCount,
+              metadata: {
+                user_id: user.id,
+                organization_id: organizationId!,
+              },
+            });
+
+            if (!seatResult.ok) {
+              return NextResponse.json(
+                {
+                  updated: false,
+                  success: false,
+                  error: seatResult.message,
+                  reason: seatResult.reason,
+                  requiresAction: seatResult.reason === "requires_action",
+                  pendingUpdate: seatResult.pendingUpdate,
+                  clientSecret: seatResult.clientSecret,
+                  paymentIntentStatus: seatResult.paymentIntentStatus,
+                  invoiceId: seatResult.invoiceId,
+                  seatsGranted: false,
+                  previousSeatCount: currentSeats,
+                  targetSeatCount: seatCount,
+                },
+                { status: 402 }
+              );
+            }
+
+            const fields = proPriceFields(billingCycle, seatCount);
+            const { data: dbUpdate, error: dbError } = await supabase
+              .from("subscriptions")
+              .update({
+                ...fields,
+                billing_cycle: billingCycle,
+                stripe_price_id: proPriceId,
+                pending_plan_change: null,
+                status: "active",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("organization_id", organizationId)
+              .select()
+              .single();
+
+            if (dbError) console.error("Database update error:", dbError);
+
+            return NextResponse.json({
+              updated: true,
+              success: true,
+              seatsGranted: true,
+              message: "Seats updated and prorated charge collected",
+              invoiceId: seatResult.invoiceId,
+              subscription: dbUpdate,
+              subscriptionId: seatResult.subscription.id,
+            });
+          }
+
+          // Upgrade / cycle change / other plan moves
           const itemUpdates: Stripe.SubscriptionUpdateParams.Item[] = [];
 
           if (inferred.isPro) {
-            // Absolute quantity on existing Pro item; swap price if cycle changed
             const proItem = stripeSubscription.items.data.find((item: any) =>
               inferred.priceId ? item.price.id === inferred.priceId : true
             );
@@ -283,26 +350,18 @@ export async function POST(request: NextRequest) {
               itemUpdates.push({ price: proPriceId, quantity: seatCount });
             }
           } else {
-            // Grandfathered → voluntary move onto Pro (same subscription, replace items)
             stripeSubscription.items.data.forEach((item: any) => {
               itemUpdates.push({ id: item.id, deleted: true });
             });
             itemUpdates.push({ price: proPriceId, quantity: seatCount });
           }
 
-          const cycleChanged = currentCycle !== billingCycle;
+          // pending_if_incomplete only allows a limited attribute set (no metadata)
           const updateParams: Stripe.SubscriptionUpdateParams = {
             items: itemUpdates,
-            // Seat changes: standard proration. Cycle change: also prorate; preview shown in UI first.
-            proration_behavior: "create_prorations",
-            metadata: {
-              user_id: user.id,
-              organization_id: organizationId,
-              plan_type: planType,
-              billing_cycle: billingCycle,
-              seat_count: String(seatCount),
-              product: "pro",
-            },
+            proration_behavior: "always_invoice",
+            payment_behavior: "pending_if_incomplete",
+            expand: ["latest_invoice.payment_intent"],
           };
 
           if (cycleChanged) {
@@ -313,10 +372,62 @@ export async function POST(request: NextRequest) {
             updateParams.trial_end = "now";
           }
 
-          const updatedSubscription = await stripe.subscriptions.update(
+          let updatedSubscription = await stripe.subscriptions.update(
             existingSubscription.stripe_subscription_id,
             updateParams
           );
+
+          if (updatedSubscription.pending_update) {
+            const latestInvoice = updatedSubscription.latest_invoice;
+            const invoiceObj =
+              latestInvoice && typeof latestInvoice !== "string" ? latestInvoice : null;
+            const pi =
+              invoiceObj &&
+              typeof (invoiceObj as any).payment_intent === "object"
+                ? ((invoiceObj as any).payment_intent as Stripe.PaymentIntent)
+                : null;
+            const piStatus = pi?.status ?? null;
+            const requiresAction =
+              piStatus === "requires_action" ||
+              piStatus === "requires_confirmation" ||
+              piStatus === "requires_payment_method";
+
+            return NextResponse.json(
+              {
+                updated: false,
+                success: false,
+                error: requiresAction
+                  ? "Additional authentication is required to complete payment for this plan change."
+                  : "Payment for the plan change failed or requires action. Changes were not applied.",
+                reason: requiresAction ? "requires_action" : "payment_failed",
+                requiresAction,
+                pendingUpdate: true,
+                clientSecret: pi?.client_secret ?? null,
+                paymentIntentStatus: piStatus,
+                invoiceId: invoiceObj?.id ?? null,
+                seatsGranted: false,
+              },
+              { status: 402 }
+            );
+          }
+
+          try {
+            updatedSubscription = await stripe.subscriptions.update(
+              existingSubscription.stripe_subscription_id,
+              {
+                metadata: {
+                  user_id: user.id,
+                  organization_id: organizationId!,
+                  plan_type: planType,
+                  billing_cycle: billingCycle,
+                  seat_count: String(seatCount),
+                  product: "pro",
+                },
+              }
+            );
+          } catch (metaErr) {
+            console.warn("[checkout] post-success metadata update failed:", metaErr);
+          }
 
           const fields = proPriceFields(billingCycle, seatCount);
           const sub = updatedSubscription as any;
@@ -327,6 +438,7 @@ export async function POST(request: NextRequest) {
               billing_cycle: billingCycle,
               stripe_price_id: proPriceId,
               pending_plan_change: null,
+              status: "active",
               current_period_start: sub.current_period_start
                 ? new Date(sub.current_period_start * 1000).toISOString()
                 : null,

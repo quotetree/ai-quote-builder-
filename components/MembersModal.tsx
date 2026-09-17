@@ -13,7 +13,7 @@ import {
   BillingCycle,
   PLAN_PRICING
 } from "@/types/database";
-import { updateSeats } from "@/lib/stripe/client-utils";
+import { SeatPaymentError, updateSeats } from "@/lib/stripe/client-utils";
 import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
 interface MembersModalProps {
@@ -393,7 +393,17 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
     } catch (error: any) {
       console.error("Failed to update licenses:", error);
       toast.dismiss();
-      toast.error(error.message || "Failed to update licenses");
+      if (error instanceof SeatPaymentError) {
+        toast.error(
+          error.requiresAction
+            ? "Card authentication required. Update your payment method in Billing, then try again."
+            : error.message ||
+                "Payment failed. No additional licenses were granted.",
+          { duration: 7000 }
+        );
+      } else {
+        toast.error(error.message || "Failed to update licenses");
+      }
     }
   };
 

@@ -12,6 +12,10 @@ import {
   totalSeatsFromLicenses,
 } from "@/lib/stripe/pricing";
 import { canDowngradeTo } from "@/lib/permissions";
+import {
+  increaseProSeatsWithImmediateInvoice,
+  proSeatDbFields,
+} from "@/lib/stripe/seatUpdates";
 
 /**
  * POST /api/stripe/add-licenses
@@ -19,8 +23,9 @@ import { canDowngradeTo } from "@/lib/permissions";
  * Sets absolute seat quantity on the existing subscription (never += N).
  * Body: { targetSeatCount: number }
  *
- * Proration: Stripe standard create_prorations for both increases and decreases.
- * Floor: targetSeatCount >= 1 while paid remains active.
+ * Seat increases (Pro): pending_if_incomplete + always_invoice — quantity applies
+ * only after successful payment; DB seats update only on success.
+ * Seat decreases: update quantity with create_prorations; floor = 1 while paid.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -45,14 +50,9 @@ export async function POST(request: NextRequest) {
       if (body.targetSeatCount != null) {
         targetSeatCount = assertSeatQuantity(body.targetSeatCount);
       } else if (body.additionalLicensesToAdd != null) {
-        // Legacy delta API — convert to absolute using current seats (less safe; prefer targetSeatCount)
-        // Resolved after we load subscription below
         targetSeatCount = -1;
       } else {
-        return NextResponse.json(
-          { error: "Missing targetSeatCount" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Missing targetSeatCount" }, { status: 400 });
       }
     } catch (e: any) {
       return NextResponse.json({ error: e.message }, { status: 400 });
@@ -115,7 +115,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Block reducing below active member count
     const usedLicenses = orgContext.used_licenses || 1;
     const downgradeCheck = canDowngradeTo(
       planTypeFromSeatCount(targetSeatCount),
@@ -131,13 +130,89 @@ export async function POST(request: NextRequest) {
       subscription.stripe_subscription_id,
       { expand: ["items"] }
     );
-
     const inferred = inferSubscriptionFromStripeItems(stripeSubscription.items.data);
 
     try {
-      let updatedSubscription;
+      // ——— Pro seat INCREASE: pending update + immediate proration invoice ———
+      if (inferred.isPro && targetSeatCount > currentSeats) {
+        const result = await increaseProSeatsWithImmediateInvoice({
+          stripeSubscriptionId: subscription.stripe_subscription_id,
+          billingCycle,
+          previousSeatCount: currentSeats,
+          targetSeatCount,
+          metadata: {
+            organization_id: orgContext.organization_id,
+            user_id: user.id,
+          },
+        });
 
-      if (inferred.isPro) {
+        if (!result.ok) {
+          console.log(
+            `[update-seats] ❌ pro increase pending/failed | ${currentSeats} → ${targetSeatCount} | reason: ${result.reason} | pi: ${result.paymentIntentStatus}`
+          );
+          return NextResponse.json(
+            {
+              success: false,
+              error: result.message,
+              reason: result.reason,
+              requiresAction: result.reason === "requires_action",
+              pendingUpdate: result.pendingUpdate,
+              clientSecret: result.clientSecret,
+              paymentIntentStatus: result.paymentIntentStatus,
+              invoiceId: result.invoiceId,
+              invoiceStatus: result.invoiceStatus,
+              previousSeatCount: currentSeats,
+              targetSeatCount,
+              // Seats were NOT granted
+              seatsGranted: false,
+            },
+            { status: result.reason === "requires_action" ? 402 : 402 }
+          );
+        }
+
+        const fields = proSeatDbFields(billingCycle, targetSeatCount);
+        let proPriceId: string;
+        try {
+          proPriceId = getProPriceId(billingCycle);
+        } catch {
+          proPriceId = result.subscription.items.data[0]?.price.id || "";
+        }
+
+        const { data: dbSub, error: updateError } = await supabase
+          .from("subscriptions")
+          .update({
+            ...fields,
+            stripe_price_id: proPriceId,
+            status: result.subscription.status === "active" ? "active" : subscription.status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("organization_id", orgContext.organization_id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error("Failed to update database after successful seat payment:", updateError);
+        }
+
+        console.log(
+          `[update-seats] ✅ pro increase paid | ${currentSeats} → ${targetSeatCount} | invoice: ${result.invoiceId}`
+        );
+
+        return NextResponse.json({
+          success: true,
+          message: `Seat count set to ${targetSeatCount}. Prorated charge collected.`,
+          targetSeatCount,
+          previousSeatCount: currentSeats,
+          seatsGranted: true,
+          invoiceId: result.invoiceId,
+          paymentIntentStatus: result.paymentIntentStatus,
+          subscription: dbSub,
+          stripeSubscriptionId: result.subscription.id,
+        });
+      }
+
+      // ——— Pro seat DECREASE (or same-path legacy handling below) ———
+      if (inferred.isPro && targetSeatCount < currentSeats) {
         let proPriceId: string;
         try {
           proPriceId = getProPriceId(billingCycle);
@@ -148,31 +223,25 @@ export async function POST(request: NextRequest) {
         const proItem = stripeSubscription.items.data.find(
           (item) => item.price.id === inferred.priceId || item.price.id === proPriceId
         );
+        if (!proItem) {
+          return NextResponse.json({ error: "Pro subscription item not found" }, { status: 400 });
+        }
 
-        const items = proItem
-          ? [{ id: proItem.id, price: proPriceId, quantity: targetSeatCount }]
-          : [{ price: proPriceId, quantity: targetSeatCount }];
-
-        // Delete stray items if any
-        const itemUpdates = [
-          ...stripeSubscription.items.data
-            .filter((item) => !proItem || item.id !== proItem.id)
-            .map((item) => ({ id: item.id, deleted: true as const })),
-          ...items,
-        ];
-
-        updatedSubscription = await stripe.subscriptions.update(stripeSubscription.id, {
-          items: itemUpdates,
-          // Standard proration for both increases and decreases
-          proration_behavior: "create_prorations",
-          metadata: {
-            ...stripeSubscription.metadata,
-            plan_type: planTypeFromSeatCount(targetSeatCount),
-            seat_count: String(targetSeatCount),
-            product: "pro",
-            billing_cycle: billingCycle,
-          },
-        });
+        const updatedSubscription = await stripe.subscriptions.update(
+          stripeSubscription.id,
+          {
+            items: [{ id: proItem.id, quantity: targetSeatCount }],
+            proration_behavior: "create_prorations",
+            metadata: {
+              ...stripeSubscription.metadata,
+              plan_type: planTypeFromSeatCount(targetSeatCount),
+              seat_count: String(targetSeatCount),
+              seat_change: "decrease",
+              product: "pro",
+              billing_cycle: billingCycle,
+            },
+          }
+        );
 
         const fields = proPriceFields(billingCycle, targetSeatCount);
         const { data: dbSub, error: updateError } = await supabase
@@ -186,12 +255,10 @@ export async function POST(request: NextRequest) {
           .select()
           .single();
 
-        if (updateError) {
-          console.error("Failed to update database:", updateError);
-        }
+        if (updateError) console.error("Failed to update database:", updateError);
 
         console.log(
-          `[update-seats] ✅ pro | ${currentSeats} → ${targetSeatCount} | plan: ${fields.plan_type}`
+          `[update-seats] ✅ pro decrease | ${currentSeats} → ${targetSeatCount}`
         );
 
         return NextResponse.json({
@@ -199,13 +266,13 @@ export async function POST(request: NextRequest) {
           message: `Seat count set to ${targetSeatCount}`,
           targetSeatCount,
           previousSeatCount: currentSeats,
+          seatsGranted: true,
           subscription: dbSub,
           stripeSubscriptionId: updatedSubscription.id,
         });
       }
 
-      // Grandfathered legacy org: set absolute quantity on additional-license line item
-      // Legacy base = 2 seats; additional licenses = targetSeatCount - 2
+      // Grandfathered legacy org
       if (inferred.isLegacy && inferred.planType === "organization") {
         if (targetSeatCount < 2) {
           return NextResponse.json(
@@ -246,10 +313,29 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        updatedSubscription = await stripe.subscriptions.update(stripeSubscription.id, {
+        const isIncrease = targetSeatCount > currentSeats;
+        const updatedSubscription = await stripe.subscriptions.update(stripeSubscription.id, {
           items,
-          proration_behavior: "create_prorations",
+          proration_behavior: isIncrease ? "always_invoice" : "create_prorations",
+          ...(isIncrease ? { payment_behavior: "pending_if_incomplete" as const } : {}),
+          expand: isIncrease ? ["latest_invoice.payment_intent"] : undefined,
         });
+
+        if (isIncrease && updatedSubscription.pending_update) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                "Payment for the prorated license increase failed or requires action. No additional seats were granted.",
+              reason: "payment_failed",
+              pendingUpdate: true,
+              seatsGranted: false,
+              previousSeatCount: currentSeats,
+              targetSeatCount,
+            },
+            { status: 402 }
+          );
+        }
 
         const { data: dbSub, error: updateError } = await supabase
           .from("subscriptions")
@@ -265,21 +351,17 @@ export async function POST(request: NextRequest) {
 
         if (updateError) console.error("Failed to update database:", updateError);
 
-        console.log(
-          `[update-seats] ✅ legacy-org | ${currentSeats} → ${targetSeatCount}`
-        );
-
         return NextResponse.json({
           success: true,
           message: `Seat count set to ${targetSeatCount}`,
           targetSeatCount,
           previousSeatCount: currentSeats,
+          seatsGranted: true,
           subscription: dbSub,
           stripeSubscriptionId: updatedSubscription.id,
         });
       }
 
-      // Legacy individual wanting more seats → require moving to Pro via checkout
       if (inferred.isLegacy && inferred.planType === "individual" && targetSeatCount > 1) {
         return NextResponse.json(
           {
@@ -297,6 +379,27 @@ export async function POST(request: NextRequest) {
       );
     } catch (stripeError: any) {
       console.error("Failed to update Stripe subscription:", stripeError);
+      // Stripe often throws on incomplete payment with certain API modes
+      const code = stripeError?.code || stripeError?.raw?.code;
+      if (
+        code === "subscription_payment_incomplete" ||
+        stripeError?.message?.includes("payment") ||
+        stripeError?.type === "StripeCardError"
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              stripeError.message ||
+              "Payment for the prorated license increase failed. No additional seats were granted.",
+            reason: "payment_failed",
+            seatsGranted: false,
+            previousSeatCount: currentSeats,
+            targetSeatCount,
+          },
+          { status: 402 }
+        );
+      }
       return NextResponse.json(
         { error: stripeError.message || "Failed to update subscription in Stripe" },
         { status: 500 }
