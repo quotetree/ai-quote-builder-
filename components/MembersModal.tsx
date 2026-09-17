@@ -11,9 +11,10 @@ import {
   UserOrganizationContext,
   Subscription,
   BillingCycle,
-  PLAN_PRICING
+  PLAN_PRICING,
+  ProrationPreview,
 } from "@/types/database";
-import { SeatPaymentError, updateSeats } from "@/lib/stripe/client-utils";
+import { SeatPaymentError, updateSeats, fetchProrationPreview } from "@/lib/stripe/client-utils";
 import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
 interface MembersModalProps {
@@ -35,6 +36,10 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
   const [searchFilter, setSearchFilter] = useState("");
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showAddLicenseModal, setShowAddLicenseModal] = useState(false);
+  const [showLicenseConfirm, setShowLicenseConfirm] = useState(false);
+  const [licenseProration, setLicenseProration] = useState<ProrationPreview | null>(null);
+  const [pendingTargetSeats, setPendingTargetSeats] = useState<number | null>(null);
+  const [loadingProration, setLoadingProration] = useState(false);
   const [emailPills, setEmailPills] = useState<string[]>([]);
   const [currentEmailInput, setCurrentEmailInput] = useState("");
   const [inviteRole, setInviteRole] = useState<"super_admin" | "admin">("super_admin");
@@ -349,7 +354,17 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
     }
   };
 
-  const handleAddLicenses = async () => {
+  const resetLicenseFlow = () => {
+    setShowAddLicenseModal(false);
+    setShowLicenseConfirm(false);
+    setLicenseProration(null);
+    setPendingTargetSeats(null);
+    setAdditionalLicensesToAdd(1);
+    setLoadingProration(false);
+  };
+
+  /** Step 1: preview prorated charge — do not charge yet */
+  const handlePreviewLicenseAdd = async () => {
     if (!orgContext || orgContext.role !== "owner") {
       toast.error("Only the owner can manage licenses");
       return;
@@ -360,35 +375,50 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
       return;
     }
 
-    // Free: need Pro first
     if (subscription.plan_type === "free") {
       toast.error(
         "Please upgrade to Pro in Billing before adding licenses.",
         { duration: 5000 }
       );
-      setShowAddLicenseModal(false);
+      resetLicenseFlow();
       return;
     }
 
-    // Paid Pro (individual or organization): set absolute target seat count
+    const currentSeats =
+      (subscription.base_licenses || 1) + (subscription.additional_licenses || 0);
+    const targetSeatCount = currentSeats + additionalLicensesToAdd;
+    const cycle = (subscription.billing_cycle || "yearly") as BillingCycle;
+
     try {
-      const currentSeats =
-        (subscription.base_licenses || 1) + (subscription.additional_licenses || 0);
-      const targetSeatCount = currentSeats + additionalLicensesToAdd;
+      setLoadingProration(true);
+      const preview = await fetchProrationPreview(cycle, targetSeatCount);
+      setLicenseProration(preview);
+      setPendingTargetSeats(targetSeatCount);
+      setShowLicenseConfirm(true);
+    } catch (error: any) {
+      console.error("Failed to preview license change:", error);
+      toast.error(error.message || "Failed to preview license charge");
+    } finally {
+      setLoadingProration(false);
+    }
+  };
 
-      toast.loading("Updating licenses...");
+  /** Step 2: after user confirms the charge on the preview page */
+  const handleConfirmLicenseCharge = async () => {
+    if (!pendingTargetSeats || !licenseProration) return;
 
-      const result = await updateSeats(targetSeatCount);
+    try {
+      toast.loading("Processing payment...");
+
+      const result = await updateSeats(pendingTargetSeats);
 
       toast.dismiss();
       toast.success(
         result.message ||
-          `Successfully set licenses to ${targetSeatCount}`
+          `Successfully set licenses to ${pendingTargetSeats}`
       );
 
-      setAdditionalLicensesToAdd(1);
-      setShowAddLicenseModal(false);
-
+      resetLicenseFlow();
       loadData();
     } catch (error: any) {
       console.error("Failed to update licenses:", error);
@@ -951,16 +981,13 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
       )}
 
       {/* Add License Modal */}
-      {showAddLicenseModal && (
+      {showAddLicenseModal && !showLicenseConfirm && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Add Additional Licenses</h3>
               <button
-                onClick={() => {
-                  setShowAddLicenseModal(false);
-                  setAdditionalLicensesToAdd(1);
-                }}
+                onClick={resetLicenseFlow}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <X size={18} />
@@ -1066,14 +1093,15 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
                   })()}
 
                   <button
-                    onClick={handleAddLicenses}
-                    className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+                    onClick={handlePreviewLicenseAdd}
+                    disabled={loadingProration}
+                    className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
                   >
-                    Confirm license update
+                    {loadingProration ? "Calculating charge..." : "Continue"}
                   </button>
 
                   <p className="text-xs text-gray-500 text-center">
-                    Seat count is set absolutely. Proration applies immediately.
+                    Next you&apos;ll review the prorated charge before payment.
                   </p>
                 </>
               ) : (
@@ -1083,6 +1111,95 @@ export default function MembersModal({ isOpen, onClose, onOpenBilling }: Members
                   </p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* License charge confirmation — same step as Billing "Confirm Plan Change" */}
+      {showLicenseConfirm && licenseProration && pendingTargetSeats != null && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-xl font-semibold text-gray-900">Confirm license change</h3>
+            </div>
+
+            <div className="px-6 py-6 space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Current</span>
+                  <span className="font-medium text-gray-900">
+                    {licenseProration.currentPlanDescription}
+                  </span>
+                </div>
+                <div className="flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border-2 border-blue-200">
+                  <span className="text-sm text-blue-700 font-medium">New</span>
+                  <span className="font-semibold text-blue-900">
+                    {licenseProration.newPlanDescription}
+                  </span>
+                </div>
+              </div>
+
+              <div
+                className={`p-4 rounded-lg ${
+                  licenseProration.isUpgrade
+                    ? "bg-green-50 border-2 border-green-200"
+                    : "bg-blue-50 border-2 border-blue-200"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <AlertCircle
+                    className={`w-5 h-5 mt-0.5 ${
+                      licenseProration.isUpgrade ? "text-green-600" : "text-blue-600"
+                    }`}
+                  />
+                  <div className="flex-1">
+                    <p
+                      className={`font-semibold mb-1 ${
+                        licenseProration.isUpgrade ? "text-green-900" : "text-blue-900"
+                      }`}
+                    >
+                      {licenseProration.isUpgrade ? "Upgrade charge" : "Change scheduled"}
+                    </p>
+                    <p
+                      className={`text-sm ${
+                        licenseProration.isUpgrade ? "text-green-700" : "text-blue-700"
+                      }`}
+                    >
+                      {licenseProration.billingMessage ||
+                        (licenseProration.isUpgrade
+                          ? `You'll be charged ${formatCurrency(licenseProration.prorationAmount)} now for the added license(s).`
+                          : "Your license change will take effect at the end of the billing period.")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLicenseConfirm(false);
+                  setLicenseProration(null);
+                  setPendingTargetSeats(null);
+                }}
+                className="flex-1 py-3 px-4 bg-white border-2 border-gray-300 hover:bg-gray-50 text-gray-700 font-medium rounded-lg transition-colors"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLicenseCharge}
+                className="flex-1 py-3 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+              >
+                Confirm &amp; pay
+              </button>
             </div>
           </div>
         </div>
