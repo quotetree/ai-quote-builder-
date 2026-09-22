@@ -170,8 +170,9 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   }, [accountMenuOpen]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
     setAccountMenuOpen(false);
+    if (isMobile) closeSidebar();
+    await supabase.auth.signOut();
     router.push("/");
   };
 
@@ -207,7 +208,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-screen bg-[#f9f9f9] border-r border-gray-200 transition-all duration-300 z-50 flex flex-col safe-area-top safe-area-bottom ${sidebarWidthClass}`}
+        className={`fixed left-0 top-0 h-[100dvh] bg-[#f9f9f9] border-r border-gray-200 transition-all duration-300 z-50 flex flex-col overflow-hidden safe-area-top ${sidebarWidthClass}`}
         aria-hidden={isMobile && !isOpen}
       >
         {/* Header Section */}
@@ -322,7 +323,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
 
         {/* Projects List Section - Only show when open */}
         {showExpanded && (
-          <div className="flex-1 overflow-y-auto px-2 py-3 min-h-0 flex flex-col">
+          <div className="flex-1 overflow-y-auto px-2 py-3 min-h-0 flex flex-col overscroll-contain">
             <div className="px-3 mb-2 space-y-2 shrink-0">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -407,14 +408,18 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         {/* Spacer to push user section to bottom when collapsed */}
         {!showExpanded && <div className="flex-1" />}
 
-        {/* User Profile Section */}
-        <div className={`border-t border-gray-200 ${showExpanded ? "p-3" : "p-2 flex flex-col items-center"}`}>
+        {/* User Profile Section — pinned so Sign Out stays visible on mobile */}
+        <div
+          className={`border-t border-gray-200 shrink-0 bg-[#f9f9f9] ${
+            showExpanded ? "p-3 pb-safe" : "p-2 flex flex-col items-center pb-safe"
+          }`}
+        >
           {showExpanded ? (
             <>
               <button
                 ref={accountButtonRef}
                 onClick={() => setAccountMenuOpen((prev) => !prev)}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-left mb-2"
+                className="w-full flex items-center gap-3 px-3 py-2.5 min-h-11 rounded-lg hover:bg-gray-200 transition-colors text-left mb-1"
               >
                 <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
                   {userName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || "U"}
@@ -433,8 +438,9 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                 />
               </button>
               <button
+                type="button"
                 onClick={handleSignOut}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors text-sm"
+                className="w-full flex items-center gap-2 px-3 py-2.5 min-h-11 rounded-lg text-red-600 hover:bg-red-50 transition-colors text-sm font-medium"
               >
                 <LogOut size={16} />
                 <span>Sign Out</span>
@@ -444,7 +450,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
             <button
               ref={accountButtonRef}
               onClick={() => setAccountMenuOpen((prev) => !prev)}
-              className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+              className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200 rounded-lg transition-colors"
               title={userName || userEmail || "User"}
             >
               <div className="w-6 h-6 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-medium">
@@ -566,7 +572,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                 }
               }}
               disabled={!canManageBilling()}
-              className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+              className={`w-full flex items-center justify-between px-4 py-2.5 min-h-11 text-sm transition-colors ${
                 canManageBilling()
                   ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
                   : "text-gray-400 cursor-not-allowed opacity-60"
@@ -578,6 +584,15 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                 {!canManageBilling() && <Lock size={14} className="text-gray-400" />}
               </span>
               <ChevronRight size={14} className="text-gray-400" />
+            </button>
+            <div className="my-1 border-t border-gray-100" />
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="w-full flex items-center gap-2 px-4 py-2.5 min-h-11 text-sm text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <LogOut size={16} />
+              <span>Sign Out</span>
             </button>
           </div>
         </div>
