@@ -2260,7 +2260,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
             </p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-right">
+        <div className="flex flex-col items-end gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-right">
           <span className="text-xs text-green-600 dark:text-green-400">Click to open</span>
           <button
             type="button"
@@ -2347,7 +2347,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
             </p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-right">
+        <div className="flex flex-col items-end gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-right">
           <span className="text-xs text-green-600 dark:text-green-400">Click to open</span>
           <button
             type="button"
@@ -2585,7 +2585,7 @@ export default function DrivePanel({ projectId, onActiveSpreadsheetChange }: Dri
           <span>{formatFileSize(doc.file_size)}</span>
           <span>{new Date(doc.created_at).toLocaleDateString()}</span>
         </div>
-        <div className="mt-4 text-sm text-green-600 dark:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="mt-4 text-sm text-green-600 dark:text-green-400 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           Click to preview
         </div>
       </div>

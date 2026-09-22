@@ -59,11 +59,26 @@ export default function ProductSearchDropdown({
 
   if (!anchorRect) return null;
 
+  const width = Math.min(
+    Math.max(anchorRect.width, minWidth),
+    typeof window !== "undefined" ? window.innerWidth - 16 : minWidth,
+  );
+  const left = Math.min(
+    Math.max(8, anchorRect.left),
+    typeof window !== "undefined" ? Math.max(8, window.innerWidth - width - 8) : anchorRect.left,
+  );
+  const maxHeight =
+    typeof window !== "undefined"
+      ? Math.max(160, Math.min(280, window.innerHeight - anchorRect.bottom - 16))
+      : 280;
+
   const style: React.CSSProperties = {
     position: "fixed",
     top: anchorRect.bottom + 4,
-    left: anchorRect.left,
-    width: Math.max(anchorRect.width, minWidth),
+    left,
+    width,
+    maxHeight,
+    overflowY: "auto",
     zIndex: 9999,
   };
 

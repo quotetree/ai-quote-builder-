@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { 
-  Menu, 
   X, 
   Search, 
   BookOpen, 
@@ -41,7 +40,7 @@ interface NewSidebarProps {
 }
 
 export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
-  const { isOpen, closeSidebar, openSidebar } = useSidebar();
+  const { isOpen, isMobile, closeSidebar, openSidebar } = useSidebar();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [familyFilter, setFamilyFilter] = useState<string>("all");
@@ -178,19 +177,44 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
 
   const isHomePage = pathname === "/dashboard" || pathname === "/projects/new";
 
+  // On mobile the drawer is either fully open (overlay) or fully hidden.
+  // On desktop keep the existing expanded / icon-rail behavior.
+  const showExpanded = isMobile ? isOpen : isOpen;
+  const sidebarWidthClass = isMobile
+    ? isOpen
+      ? "translate-x-0 w-72"
+      : "-translate-x-full w-72"
+    : isOpen
+      ? "w-64"
+      : "w-14";
+
+  const navigateAndClose = (href: string) => {
+    router.push(href);
+    if (isMobile) closeSidebar();
+  };
+
   return (
     <>
+      {/* Mobile backdrop */}
+      {isMobile && isOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          aria-label="Close navigation menu"
+          onClick={closeSidebar}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-screen bg-[#f9f9f9] border-r border-gray-200 transition-all duration-300 z-40 flex flex-col ${
-          isOpen ? "w-64" : "w-14"
-        }`}
+        className={`fixed left-0 top-0 h-screen bg-[#f9f9f9] border-r border-gray-200 transition-all duration-300 z-50 flex flex-col safe-area-top safe-area-bottom ${sidebarWidthClass}`}
+        aria-hidden={isMobile && !isOpen}
       >
         {/* Header Section */}
-        <div className={`p-3 border-b border-gray-200 ${isOpen ? "" : "flex flex-col items-center"}`}>
-          <div className={`flex items-center ${isOpen ? "justify-between mb-4" : "justify-center mb-3"}`}>
+        <div className={`p-3 border-b border-gray-200 ${showExpanded ? "" : "flex flex-col items-center"}`}>
+          <div className={`flex items-center ${showExpanded ? "justify-between mb-4" : "justify-center mb-3"}`}>
             {/* Logo / Toggle Button */}
-            {isOpen ? (
+            {showExpanded ? (
               <>
                 <div className="flex items-center gap-2">
                   <Image
@@ -202,10 +226,13 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                     style={{ background: 'transparent' }}
                     priority
                   />
+                  {isMobile && (
+                    <span className="text-sm font-semibold text-gray-900">QuoteTree</span>
+                  )}
                 </div>
                 <button
                   onClick={closeSidebar}
-                  className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200 rounded-lg transition-colors"
                   aria-label="Close sidebar"
                 >
                   <svg
@@ -251,44 +278,50 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
           </div>
 
           {/* Navigation Items */}
-          <div className={`space-y-1 ${isOpen ? "" : "flex flex-col items-center"}`}>
+          <div className={`space-y-1 ${showExpanded ? "" : "flex flex-col items-center"}`}>
             <button
-              onClick={() => setSearchOpen(true)}
-              className={`flex items-center gap-3 rounded-lg hover:bg-gray-200 transition-colors text-sm ${
-                isOpen ? "w-full px-3 py-2" : "p-2"
+              onClick={() => {
+                setSearchOpen(true);
+                if (isMobile) closeSidebar();
+              }}
+              className={`flex items-center gap-3 rounded-lg hover:bg-gray-200 transition-colors text-sm min-h-11 ${
+                showExpanded ? "w-full px-3 py-2" : "p-2"
               }`}
               title="Search Projects"
             >
               <Search size={18} />
-              {isOpen && <span>Search Projects</span>}
+              {showExpanded && <span>Search Projects</span>}
             </button>
 
             <button
-              onClick={() => setPriceBookOpen(true)}
-              className={`flex items-center gap-3 rounded-lg hover:bg-gray-200 transition-colors text-sm ${
-                isOpen ? "w-full px-3 py-2" : "p-2"
+              onClick={() => {
+                setPriceBookOpen(true);
+                if (isMobile) closeSidebar();
+              }}
+              className={`flex items-center gap-3 rounded-lg hover:bg-gray-200 transition-colors text-sm min-h-11 ${
+                showExpanded ? "w-full px-3 py-2" : "p-2"
               }`}
               title="Price Book"
             >
               <BookOpen size={18} />
-              {isOpen && <span>Price Book</span>}
+              {showExpanded && <span>Price Book</span>}
             </button>
 
             <button
-              onClick={() => router.push("/dashboard")}
-              className={`flex items-center gap-3 rounded-lg transition-colors text-sm ${
-                isOpen ? "w-full px-3 py-2" : "p-2"
+              onClick={() => navigateAndClose("/dashboard")}
+              className={`flex items-center gap-3 rounded-lg transition-colors text-sm min-h-11 ${
+                showExpanded ? "w-full px-3 py-2" : "p-2"
               } ${isHomePage ? "bg-gray-200" : "hover:bg-gray-200"}`}
               title="New Project"
             >
               <FolderPlus size={18} />
-              {isOpen && <span>New Project</span>}
+              {showExpanded && <span>New Project</span>}
             </button>
           </div>
         </div>
 
         {/* Projects List Section - Only show when open */}
-        {isOpen && (
+        {showExpanded && (
           <div className="flex-1 overflow-y-auto px-2 py-3 min-h-0 flex flex-col">
             <div className="px-3 mb-2 space-y-2 shrink-0">
               <div className="flex items-center justify-between gap-2">
@@ -357,8 +390,8 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                 {filteredProjects.map((project) => (
                   <button
                     key={project.id}
-                    onClick={() => router.push(`/projects/${project.id}`)}
-                    className={`w-full text-left px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm truncate ${
+                    onClick={() => navigateAndClose(`/projects/${project.id}`)}
+                    className={`w-full text-left px-3 py-2.5 min-h-11 rounded-lg hover:bg-gray-200 transition-colors text-sm truncate ${
                       pathname === `/projects/${project.id}` ? "bg-gray-200" : ""
                     }`}
                     title={project.project_name}
@@ -372,11 +405,11 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         )}
 
         {/* Spacer to push user section to bottom when collapsed */}
-        {!isOpen && <div className="flex-1" />}
+        {!showExpanded && <div className="flex-1" />}
 
         {/* User Profile Section */}
-        <div className={`border-t border-gray-200 ${isOpen ? "p-3" : "p-2 flex flex-col items-center"}`}>
-          {isOpen ? (
+        <div className={`border-t border-gray-200 ${showExpanded ? "p-3" : "p-2 flex flex-col items-center"}`}>
+          {showExpanded ? (
             <>
               <button
                 ref={accountButtonRef}
@@ -425,11 +458,17 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
       {accountMenuOpen && (
         <div
           ref={accountMenuRef}
-          className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-200 w-72"
-          style={{
-            left: isOpen ? 24 : 68,
-            bottom: 120,
-          }}
+          className={`fixed z-[60] bg-white rounded-xl shadow-xl border border-gray-200 w-[min(18rem,calc(100vw-1.5rem))] ${
+            isMobile ? "left-3 right-3 bottom-20 mx-auto" : ""
+          }`}
+          style={
+            isMobile
+              ? undefined
+              : {
+                  left: showExpanded ? 24 : 68,
+                  bottom: 120,
+                }
+          }
         >
           <div className="px-4 py-3 border-b border-gray-200">
             <p className="text-sm font-semibold text-gray-900">
@@ -472,7 +511,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
                     className="fixed inset-0 z-40"
                     onClick={() => setPersonalizationSubMenuOpen(false)}
                   />
-                  <div className="absolute left-full top-0 ml-1 z-50 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                  <div className="absolute left-0 sm:left-full top-full sm:top-0 mt-1 sm:mt-0 sm:ml-1 z-50 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
                     <button
                       onClick={() => {
                         setPersonalizationSubMenuOpen(false);

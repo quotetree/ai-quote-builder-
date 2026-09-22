@@ -101,7 +101,7 @@ export default function ProjectChatPanel({
           <button
             type="button"
             onClick={handleClearChat}
-            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-2 min-h-11 text-xs font-medium text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600"
             title="Clear conversation"
           >
             <RotateCcw size={14} className="shrink-0" aria-hidden />
@@ -111,7 +111,7 @@ export default function ProjectChatPanel({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex items-center justify-center rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+              className="inline-flex items-center justify-center rounded-lg p-2 min-h-11 min-w-11 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
               aria-label="Close chat"
               title="Close chat"
             >

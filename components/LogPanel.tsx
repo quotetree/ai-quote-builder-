@@ -1143,7 +1143,7 @@ export default function LogPanel({ projectId }: LogPanelProps) {
   }
 
   return (
-    <div className="min-h-full bg-gray-50 dark:bg-gray-950 p-6">
+    <div className="min-h-full bg-gray-50 dark:bg-gray-950 p-3 sm:p-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6 gap-4 flex-wrap">
         <div>
@@ -1201,7 +1201,143 @@ export default function LogPanel({ projectId }: LogPanelProps) {
           </p>
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <>
+          {/* Mobile quote cards */}
+          <div className="md:hidden space-y-3">
+            {quotes.map((quote) => (
+              <div
+                key={quote.id}
+                className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4"
+              >
+                <button
+                  type="button"
+                  className="w-full text-left"
+                  onClick={() => handleSelectQuote(quote)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-blue-600">{quote.quote_number}</p>
+                      <h3 className="font-semibold text-gray-900 dark:text-gray-100 truncate">
+                        {quote.quote_name}
+                      </h3>
+                    </div>
+                    <p className="text-base font-semibold tabular-nums shrink-0">
+                      ${quote.total_price.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                    <span>
+                      Markup ${formatCurrency(getMarkupAmount(quote as QuoteWithExtras))}
+                    </span>
+                    <span>{new Date(quote.created_at).toLocaleDateString()}</span>
+                  </div>
+                </button>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                  <div onClick={(e) => e.stopPropagation()}>
+                    {PROPOSAL_BUILDER_UI_ENABLED ? (
+                      getSignatureStatusBadge(signaturesMap[quote.id] ?? "draft")
+                    ) : (
+                      <select
+                        value={quote.status}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleStatusChange(quote.id, e.target.value as Quote["status"]);
+                        }}
+                        className={`text-sm px-3 py-2 min-h-11 rounded-full font-medium ${getStatusColor(quote.status)}`}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="for_approval">For Approval</option>
+                        <option value="approved">Approved</option>
+                        <option value="declined">Declined</option>
+                      </select>
+                    )}
+                  </div>
+                  <div className="flex gap-1 items-center">
+                    <button
+                      onClick={(e) => openDownloadChoice(quote, e)}
+                      className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded-lg"
+                      title={PROPOSAL_BUILDER_UI_ENABLED ? "Download" : "Download PDF"}
+                    >
+                      <Download size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (quote.is_editing) return;
+                        if (!PROPOSAL_BUILDER_UI_ENABLED) {
+                          void handleEditQuote(quote);
+                          return;
+                        }
+                        setEditChoiceQuote(quote);
+                      }}
+                      className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+                      title={quote.is_editing ? "Quote is being edited" : "Edit/View"}
+                      disabled={quote.is_editing}
+                    >
+                      <Edit size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setMenuPosition({
+                          top: rect.top - 4,
+                          right: window.innerWidth - rect.right,
+                        });
+                        setShowActionsMenu(showActionsMenu === quote.id ? null : quote.id);
+                      }}
+                      className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
+                      title="More actions"
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                  </div>
+                </div>
+                {showActionsMenu === quote.id && (
+                  <div
+                    className="actions-menu mt-2 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-2 bg-white dark:bg-gray-800"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDuplicateQuote(quote.id);
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3 min-h-11"
+                    >
+                      <Copy size={16} />
+                      Duplicate
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setNewQuoteName(quote.quote_name);
+                        setShowRenameModal(quote.id);
+                        setShowActionsMenu(null);
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3 min-h-11"
+                    >
+                      <FileEdit size={16} />
+                      Rename
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteQuote(quote.id, quote.quote_name);
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 min-h-11"
+                    >
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
@@ -1367,31 +1503,32 @@ export default function LogPanel({ projectId }: LogPanelProps) {
             </table>
           </div>
         </div>
+        </>
       )}
 
       {/* Quote Detail Modal */}
       {selectedQuote && (
         <div
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
           onClick={() => setSelectedQuote(null)}
         >
           <div
-            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-gray-900 rounded-t-2xl sm:rounded-lg shadow-xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto safe-area-bottom"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-start">
-              <div>
-                <h3 className="text-2xl font-bold">{selectedQuote.quote_name}</h3>
+            <div className="p-4 sm:p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-start gap-3">
+              <div className="min-w-0">
+                <h3 className="text-xl sm:text-2xl font-bold truncate">{selectedQuote.quote_name}</h3>
                 <p className="text-gray-500">{selectedQuote.quote_number}</p>
               </div>
               <button
                 onClick={() => setSelectedQuote(null)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg shrink-0"
               >
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6 relative">
+            <div className="p-4 sm:p-6 relative">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 {(() => {
                   const { rate, amount } = getTaxInfo(selectedQuote as QuoteWithExtras);

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import NewSidebar from "@/components/NewSidebar";
 import DashboardContent from "@/components/DashboardContent";
+import MobileAppHeader from "@/components/MobileAppHeader";
 import { Toaster } from "react-hot-toast";
 import { SidebarProvider } from "@/contexts/SidebarContext";
 
@@ -28,10 +29,11 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen bg-white">
+      <div className="min-h-screen bg-white overflow-x-hidden">
+        <MobileAppHeader />
         <NewSidebar userEmail={user.email} userName={profile?.full_name} />
         <DashboardContent>{children}</DashboardContent>
-        <Toaster position="top-right" />
+        <Toaster position="top-center" />
       </div>
     </SidebarProvider>
   );

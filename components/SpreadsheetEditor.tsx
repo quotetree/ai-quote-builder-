@@ -19,6 +19,7 @@ import type {
   Product,
 } from "@/types/database";
 import { useProducts } from "@/hooks/useProducts";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import PriceBookModal from "@/components/PriceBookModal";
 import ProductSearchDropdown from "@/components/ProductSearchDropdown";
 import { filterProducts } from "@/lib/filterProducts";
@@ -160,6 +161,7 @@ interface RowItemProps {
   sectionId: string;
   products: Product[];
   gridTemplate: string;
+  layout?: "grid" | "card";
   updateRow: (sectionId: string, rowId: string, patch: Partial<SpreadsheetRow>) => void;
   deleteRow: (sectionId: string, rowId: string) => void;
   onAddNew: () => void;
@@ -173,6 +175,7 @@ function SpreadsheetRowItem({
   sectionId,
   products,
   gridTemplate,
+  layout = "grid",
   updateRow,
   deleteRow,
   onAddNew,
@@ -238,6 +241,176 @@ function SpreadsheetRowItem({
 
   const nameSuggestions = openField === "name" ? filterProducts(products, row.product_name) : [];
   const codeSuggestions = openField === "code" ? filterProducts(products, row.product_code) : [];
+
+  const fieldLabel = "block text-xs font-medium text-gray-500 mb-1";
+  const fieldInput =
+    "w-full min-h-11 px-3 py-2 text-base rounded-lg border border-gray-200 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500";
+
+  if (layout === "card") {
+    return (
+      <div className="border-b border-gray-100 last:border-b-0 p-4 space-y-3 bg-white">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <label className={fieldLabel}>Scope category</label>
+            <input
+              type="text"
+              value={row.custom_label}
+              onChange={(e) => updateRow(sectionId, row.id, { custom_label: e.target.value })}
+              placeholder="Category…"
+              className={fieldInput}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => deleteRow(sectionId, row.id)}
+            className="mt-6 inline-flex items-center justify-center min-h-11 min-w-11 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            aria-label="Delete row"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+
+        <div ref={nameRef}>
+          <label className={fieldLabel}>Product / service</label>
+          <input
+            type="text"
+            value={row.product_name}
+            onChange={(e) => {
+              updateRow(sectionId, row.id, { product_name: e.target.value, product_id: null });
+              openDropdown("name");
+            }}
+            onFocus={() => openDropdown("name")}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpenField(null);
+            }}
+            placeholder="Search products…"
+            className={fieldInput}
+            autoComplete="off"
+          />
+          {openField === "name" && (
+            <ProductSearchDropdown
+              suggestions={nameSuggestions}
+              onSelect={selectProduct}
+              onAddNew={() => {
+                setOpenField(null);
+                onAddNew();
+              }}
+              anchorRect={anchorRect}
+              dropdownRef={nameDropdownRef}
+              searchQuery={row.product_name}
+              onSearchChange={(value) => {
+                updateRow(sectionId, row.id, { product_name: value, product_id: null });
+              }}
+            />
+          )}
+        </div>
+
+        <div ref={codeRef}>
+          <label className={fieldLabel}>Product code</label>
+          <input
+            type="text"
+            value={row.product_code}
+            onChange={(e) => {
+              updateRow(sectionId, row.id, { product_code: e.target.value, product_id: null });
+              openDropdown("code");
+            }}
+            onFocus={() => openDropdown("code")}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpenField(null);
+            }}
+            placeholder="Code…"
+            className={fieldInput}
+            autoComplete="off"
+          />
+          {openField === "code" && (
+            <ProductSearchDropdown
+              suggestions={codeSuggestions}
+              onSelect={selectProduct}
+              onAddNew={() => {
+                setOpenField(null);
+                onAddNew();
+              }}
+              anchorRect={anchorRect}
+              dropdownRef={codeDropdownRef}
+              searchQuery={row.product_code}
+              onSearchChange={(value) => {
+                updateRow(sectionId, row.id, { product_code: value, product_id: null });
+              }}
+            />
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={fieldLabel}>List price</label>
+            <div className="min-h-11 px-3 py-2 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 tabular-nums flex items-center">
+              {row.list_price > 0 ? fmt(row.list_price) : "—"}
+            </div>
+          </div>
+          <div>
+            <label className={fieldLabel}>Sales price</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              value={row.sales_price || ""}
+              onChange={(e) =>
+                updateRow(sectionId, row.id, {
+                  sales_price: Math.max(0, parseFloat(e.target.value) || 0),
+                })
+              }
+              placeholder="—"
+              className={`${fieldInput} text-right tabular-nums`}
+            />
+          </div>
+          <div>
+            <label className={fieldLabel}>Discount %</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={100}
+              step="any"
+              value={(row.discount ?? 0) || ""}
+              onChange={(e) =>
+                updateRow(sectionId, row.id, {
+                  discount: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
+                })
+              }
+              onFocus={(e) => e.target.select()}
+              placeholder="0"
+              className={`${fieldInput} text-right tabular-nums`}
+            />
+          </div>
+          <div>
+            <label className={fieldLabel}>Quantity</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              value={row.quantity || ""}
+              onChange={(e) =>
+                updateRow(sectionId, row.id, {
+                  quantity: Math.max(0, parseFloat(e.target.value) || 0),
+                })
+              }
+              placeholder="0"
+              className={`${fieldInput} text-right tabular-nums`}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Amount</span>
+          <span className="text-base font-semibold tabular-nums text-gray-900">
+            {rowAmount(row) > 0 ? fmt(rowAmount(row)) : "—"}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   const cellCls = "border-r border-gray-200 dark:border-gray-700 flex items-center min-w-0 overflow-hidden";
 
@@ -417,6 +590,8 @@ export default function SpreadsheetEditor({
 }: SpreadsheetEditorProps) {
   const supabase = createClient();
   const { products } = useProducts();
+  const isMobile = useIsMobile();
+  const rowLayout = isMobile ? "card" : "grid";
 
   const [title, setTitle] = useState(spreadsheet.title);
   const lastSyncedTitle = useRef(spreadsheet.title);
@@ -1053,8 +1228,8 @@ export default function SpreadsheetEditor({
     <div className="absolute inset-0 bg-gray-50 dark:bg-gray-950 z-30 flex flex-col overflow-hidden">
 
       {/* ── Title bar ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
-        <div className="inline-flex items-center gap-3 min-w-0 shrink">
+      <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0 min-w-0">
+        <div className="inline-flex items-center gap-2 sm:gap-3 min-w-0 shrink">
           <div className="w-8 h-8 rounded-lg bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0">
             <FileSpreadsheet size={16} />
           </div>
@@ -1065,15 +1240,15 @@ export default function SpreadsheetEditor({
             saved={saved}
           />
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           {templateMode && (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
+            <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
               <FileSpreadsheet size={12} />
               Editing template
             </div>
           )}
           {editQuoteId && (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
+            <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-medium text-amber-800 flex-shrink-0">
               <FileSpreadsheet size={12} />
               Editing {editQuoteNumber ?? "quote"}
               {editVersion != null ? ` (v${editVersion})` : ""}
@@ -1083,11 +1258,11 @@ export default function SpreadsheetEditor({
             <button
               type="button"
               onClick={onSaveAsTemplate}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-green-700 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 transition-all"
+              className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 min-h-11 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-green-700 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 transition-all"
               aria-label="Save as template"
             >
               <BookmarkPlus size={15} />
-              Save as template
+              <span className="hidden sm:inline">Save as template</span>
             </button>
           )}
           {!templateMode && onDelete && (
@@ -1098,7 +1273,7 @@ export default function SpreadsheetEditor({
                   onDelete(spreadsheet.id);
                 }
               }}
-              className="p-2 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
               aria-label="Delete spreadsheet"
             >
               <Trash2 size={16} />
@@ -1107,7 +1282,7 @@ export default function SpreadsheetEditor({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             aria-label="Close spreadsheet"
           >
             <X size={18} />
@@ -1116,94 +1291,116 @@ export default function SpreadsheetEditor({
       </div>
 
       {/* ── Scrollable body ───────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 pb-safe">
         {sections.map((section) => (
           <div
             key={section.id}
             className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden"
           >
             {/* Section header */}
-            <div className="flex items-center justify-between px-5 py-3 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
               <input
                 type="text"
                 value={section.label}
                 onChange={(e) => updateSectionLabel(section.id, e.target.value)}
                 aria-label="Section label"
-                className="font-semibold text-sm text-gray-800 dark:text-gray-200 bg-transparent border-none outline-none focus:ring-0 w-full"
+                className="font-semibold text-base sm:text-sm text-gray-800 dark:text-gray-200 bg-transparent border-none outline-none focus:ring-0 w-full min-w-0"
               />
               <button
                 type="button"
                 onClick={() => deleteSection(section.id)}
-                className="ml-2 p-1 rounded text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
+                className="ml-2 p-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
                 aria-label="Delete section"
               >
                 <Trash2 size={14} />
               </button>
             </div>
 
-            {/* Horizontally scrollable table */}
-            <div className="overflow-x-auto">
-              {/* Column headers with resize handles */}
-              <div
-                className="grid items-stretch bg-gray-50 dark:bg-gray-800/40 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide select-none"
-                style={{ gridTemplateColumns: gridTemplate }}
-              >
-                {/* drag-handle placeholder */}
-                <div className="px-4 py-2" />
-
-                {[
-                  { label: "Scope Category", align: "left" },
-                  { label: "Product / Service Name", align: "left" },
-                  { label: "Product Code", align: "left" },
-                  { label: "List Price", align: "right" },
-                  { label: "Sales Price", align: "right" },
-                  { label: "Disc %", align: "right" },
-                  { label: "Qty", align: "right" },
-                  { label: "Amount", align: "right" },
-                ].map(({ label, align }, i) => (
-                  <div
-                    key={label}
-                    className="relative border-r border-gray-200 dark:border-gray-700 hover:border-green-400 dark:hover:border-green-500 flex items-center py-2 min-w-0 overflow-hidden transition-colors"
-                  >
-                    <span className={`flex-1 ${align === "right" ? "text-right pr-3" : "pl-2 pr-4"} truncate`}>
-                      {label}
-                    </span>
-                    {/* Invisible wide hit-area for resize cursor */}
-                    <div
-                      className="absolute inset-y-0 right-0 w-3 cursor-col-resize z-10"
-                      onMouseDown={(e) => handleResizeMouseDown(i, e)}
-                    />
-                  </div>
+            {/* Desktop grid / Mobile cards */}
+            {isMobile ? (
+              <div>
+                {section.rows.map((row) => (
+                  <SpreadsheetRowItem
+                    key={row.id}
+                    row={row}
+                    sectionId={section.id}
+                    products={products}
+                    gridTemplate={gridTemplate}
+                    layout={rowLayout}
+                    updateRow={updateRow}
+                    deleteRow={deleteRow}
+                    onAddNew={() => setShowPriceBook(true)}
+                    onDragStart={() => handleRowDragStart(row.id, section.id)}
+                    onDragOver={(e) => handleRowDragOver(e, row.id, section.id)}
+                    onDrop={() => handleRowDrop(section.id)}
+                  />
                 ))}
-
-                {/* delete-btn placeholder */}
-                <div className="py-2" />
               </div>
+            ) : (
+              <div className="overflow-x-auto">
+                {/* Column headers with resize handles */}
+                <div
+                  className="grid items-stretch bg-gray-50 dark:bg-gray-800/40 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide select-none"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                >
+                  {/* drag-handle placeholder */}
+                  <div className="px-4 py-2" />
 
-              {/* Rows */}
-              {section.rows.map((row) => (
-                <SpreadsheetRowItem
-                  key={row.id}
-                  row={row}
-                  sectionId={section.id}
-                  products={products}
-                  gridTemplate={gridTemplate}
-                  updateRow={updateRow}
-                  deleteRow={deleteRow}
-                  onAddNew={() => setShowPriceBook(true)}
-                  onDragStart={() => handleRowDragStart(row.id, section.id)}
-                  onDragOver={(e) => handleRowDragOver(e, row.id, section.id)}
-                  onDrop={() => handleRowDrop(section.id)}
-                />
-              ))}
-            </div>
+                  {[
+                    { label: "Scope Category", align: "left" },
+                    { label: "Product / Service Name", align: "left" },
+                    { label: "Product Code", align: "left" },
+                    { label: "List Price", align: "right" },
+                    { label: "Sales Price", align: "right" },
+                    { label: "Disc %", align: "right" },
+                    { label: "Qty", align: "right" },
+                    { label: "Amount", align: "right" },
+                  ].map(({ label, align }, i) => (
+                    <div
+                      key={label}
+                      className="relative border-r border-gray-200 dark:border-gray-700 hover:border-green-400 dark:hover:border-green-500 flex items-center py-2 min-w-0 overflow-hidden transition-colors"
+                    >
+                      <span className={`flex-1 ${align === "right" ? "text-right pr-3" : "pl-2 pr-4"} truncate`}>
+                        {label}
+                      </span>
+                      {/* Invisible wide hit-area for resize cursor */}
+                      <div
+                        className="absolute inset-y-0 right-0 w-3 cursor-col-resize z-10"
+                        onMouseDown={(e) => handleResizeMouseDown(i, e)}
+                      />
+                    </div>
+                  ))}
+
+                  {/* delete-btn placeholder */}
+                  <div className="py-2" />
+                </div>
+
+                {/* Rows */}
+                {section.rows.map((row) => (
+                  <SpreadsheetRowItem
+                    key={row.id}
+                    row={row}
+                    sectionId={section.id}
+                    products={products}
+                    gridTemplate={gridTemplate}
+                    layout={rowLayout}
+                    updateRow={updateRow}
+                    deleteRow={deleteRow}
+                    onAddNew={() => setShowPriceBook(true)}
+                    onDragStart={() => handleRowDragStart(row.id, section.id)}
+                    onDragOver={(e) => handleRowDragOver(e, row.id, section.id)}
+                    onDrop={() => handleRowDrop(section.id)}
+                  />
+                ))}
+              </div>
+            )}
 
             {/* Add row */}
-            <div className="px-5 py-2.5">
+            <div className="px-4 sm:px-5 py-2.5">
               <button
                 type="button"
                 onClick={() => addRow(section.id)}
-                className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 font-medium transition-colors"
+                className="flex items-center gap-1.5 min-h-11 text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 font-medium transition-colors"
               >
                 <Plus size={15} />
                 Add product or service
@@ -1216,7 +1413,7 @@ export default function SpreadsheetEditor({
         <button
           type="button"
           onClick={addSection}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500 hover:border-green-400 dark:hover:border-green-600 hover:text-green-600 dark:hover:text-green-400 transition-colors"
+          className="w-full flex items-center justify-center gap-2 py-3 min-h-11 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500 hover:border-green-400 dark:hover:border-green-600 hover:text-green-600 dark:hover:text-green-400 transition-colors"
         >
           <Plus size={15} />
           Add section
@@ -1224,11 +1421,11 @@ export default function SpreadsheetEditor({
       </div>
 
       {/* ── Footer ───────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="px-6 pt-4 pb-4 flex items-end justify-between gap-8">
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 safe-area-bottom">
+        <div className="px-3 sm:px-6 pt-3 sm:pt-4 pb-3 sm:pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4 sm:gap-8">
 
           {/* Pricing stack */}
-          <div className="flex-1 space-y-2">
+          <div className="flex-1 space-y-2 min-w-0">
 
             {/* Subtotal row */}
             <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
@@ -1258,7 +1455,7 @@ export default function SpreadsheetEditor({
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-sm tabular-nums text-gray-700 dark:text-gray-300">{fmt(c.calculated_amount)}</span>
-                      <button type="button" onClick={() => deleteTaxCharge(c.id)} className="text-gray-300 hover:text-red-500 transition-colors">
+                      <button type="button" onClick={() => deleteTaxCharge(c.id)} className="text-gray-300 hover:text-red-500 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center">
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -1281,7 +1478,7 @@ export default function SpreadsheetEditor({
                       >
                         {m.name} {m.mode === "percent" ? `(${+(m.value * 100).toFixed(2)}%)` : `(${fmt(m.value)} flat)`}:
                       </button>
-                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 break-words">
                         Base: {fmt(m.base_total)}
                         {m.base_applies_to === "exclude_products" && m.base_excluded.length > 0
                           ? ` → Excludes: ${m.base_excluded.join(", ")}`
@@ -1298,7 +1495,7 @@ export default function SpreadsheetEditor({
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-sm tabular-nums text-gray-700 dark:text-gray-300">{fmt(m.calculated_amount)}</span>
-                      <button type="button" onClick={() => deleteMarkup(m.id)} className="text-gray-300 hover:text-red-500 transition-colors">
+                      <button type="button" onClick={() => deleteMarkup(m.id)} className="text-gray-300 hover:text-red-500 transition-colors p-2 min-h-11 min-w-11 inline-flex items-center justify-center">
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -1308,18 +1505,18 @@ export default function SpreadsheetEditor({
             )}
 
             {/* Add Tax / Add Markup buttons */}
-            <div className="flex items-center gap-4 pt-1">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4 pt-1">
               <button
                 type="button"
                 onClick={openAddTax}
-                className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium"
+                className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium min-h-11"
               >
                 <Plus size={14} /> Add Tax
               </button>
               <button
                 type="button"
                 onClick={openAddMarkup}
-                className="flex items-center gap-1 text-sm text-purple-600 dark:text-purple-400 hover:text-purple-700 font-medium"
+                className="flex items-center gap-1 text-sm text-purple-600 dark:text-purple-400 hover:text-purple-700 font-medium min-h-11"
               >
                 <Plus size={14} /> Add Markup
               </button>
@@ -1339,7 +1536,7 @@ export default function SpreadsheetEditor({
             type="button"
             onClick={templateMode ? saveTemplate : submitToQuoteLog}
             disabled={submitting}
-            className="px-6 py-1.5 rounded-xl bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors shadow-sm flex-shrink-0"
+            className="w-full sm:w-auto px-6 py-3 sm:py-1.5 min-h-11 rounded-xl bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors shadow-sm flex-shrink-0"
           >
             {submitting
               ? "Saving…"

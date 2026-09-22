@@ -584,28 +584,28 @@ export default function PriceBookModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full max-w-6xl h-[95vh] sm:h-[90vh] flex flex-col safe-area-bottom relative">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center gap-4 flex-1">
-            <h2 className="text-2xl font-bold text-gray-900">Price Book</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-200 pr-14 sm:pr-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 flex-1 min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-900 shrink-0">Price Book</h2>
             {viewMode === "list" && (
-              <div className="flex-1 max-w-md relative">
+              <div className="flex-1 max-w-md relative w-full">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                 <input
                   type="text"
                   placeholder="Search products..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full pl-10 pr-4 py-2.5 min-h-11 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
             )}
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="absolute top-3 right-3 sm:static p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-100 rounded-lg transition-colors"
           >
             <X size={20} />
           </button>
@@ -613,7 +613,7 @@ export default function PriceBookModal({
 
         {/* Action Bar */}
         {viewMode === "list" && (
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 bg-gray-50 overflow-x-auto">
             {hasReadOnlyPriceBook() && (
               <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg">
                 <Lock size={16} className="text-blue-600" />
@@ -958,7 +958,81 @@ function ProductsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <>
+      {/* Mobile card list */}
+      <div className="md:hidden divide-y divide-gray-200">
+        {products.map((product) => (
+          <div key={product.id} className="p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={selectedProductIds.includes(product.id)}
+                onChange={() => onToggleProductSelection(product.id)}
+                className="mt-1 rounded border-gray-300 text-green-600 focus:ring-green-500 min-h-5 min-w-5"
+                aria-label={`Select product ${product.product_name}`}
+              />
+              <div className="flex-1 min-w-0">
+                <button
+                  type="button"
+                  className="text-green-600 hover:text-green-800 font-medium text-left text-base"
+                  onClick={() => onView(product)}
+                >
+                  {product.product_name}
+                </button>
+                {product.product_number && (
+                  <p className="text-xs text-gray-500 mt-0.5">#{product.product_number}</p>
+                )}
+                <p className="text-sm text-gray-600 mt-1">{getFamilyName(product.product_family_id)}</p>
+                {product.description && (
+                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">{product.description}</p>
+                )}
+                <div className="flex items-center justify-between gap-3 mt-3">
+                  <div className="text-sm">
+                    <span className="text-gray-500">List </span>
+                    <span className="tabular-nums">${product.list_price.toLocaleString()}</span>
+                  </div>
+                  <div className="text-sm font-medium text-green-600">
+                    <span className="text-gray-500 font-normal">Sales </span>
+                    <span className="tabular-nums">${product.sales_price.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pl-8">
+              <button
+                type="button"
+                onClick={() => onView(product)}
+                className="min-h-11 px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                View
+              </button>
+              {canManagePriceBook && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(product)}
+                    className="min-h-11 px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                  >
+                    <Edit size={14} />
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(product.id)}
+                    className="min-h-11 px-3 py-2 text-sm rounded-lg border border-red-100 text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block overflow-x-auto">
       <table className="w-full">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
@@ -1085,7 +1159,8 @@ function ProductsTable({
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1189,7 +1264,7 @@ function ProductForm({
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-8">
+    <div className="max-w-3xl mx-auto p-4 sm:p-8">
       <div className="mb-8">
         <h3 className="text-xl font-bold text-gray-900 mb-1">Product Information</h3>
         <p className="text-sm text-gray-500">* = Required information</p>
@@ -1197,7 +1272,7 @@ function ProductForm({
       
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Product Name and Product Code */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Product Name <span className="text-red-500">*</span>
@@ -1224,7 +1299,7 @@ function ProductForm({
         </div>
 
         {/* Product Brand and Product Type */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Product Brand
@@ -1309,7 +1384,7 @@ function ProductForm({
         </div>
 
         {/* List Price and Sales Price */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               List Price <span className="text-red-500">*</span>
@@ -1406,7 +1481,7 @@ function CsvColumnMapping({
   const isValid = requiredFields.every((field) => mapping[field.key]);
 
   return (
-    <div className="max-w-4xl mx-auto p-8">
+    <div className="max-w-4xl mx-auto p-4 sm:p-8">
       <div className="mb-6">
         <h3 className="text-xl font-bold mb-2">Map CSV Columns</h3>
         <p className="text-gray-600">
@@ -1416,7 +1491,7 @@ function CsvColumnMapping({
 
       <div className="space-y-4">
         {allFields.map((field) => (
-          <div key={field.key} className="grid grid-cols-3 gap-4 items-center">
+          <div key={field.key} className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 items-start sm:items-center">
             <div>
               <label className="block text-sm font-medium text-gray-700">
                 {field.label}
@@ -1810,7 +1885,7 @@ function ProductDetail({
   const family = productFamilies.find((f) => f.id === product.product_family_id);
 
   return (
-    <div className="max-w-4xl mx-auto p-8">
+    <div className="max-w-4xl mx-auto p-4 sm:p-8">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -1861,7 +1936,7 @@ function ProductDetail({
         
         <div className="p-6 space-y-6">
           {/* Row 1: Product Name and Code */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">Product Name</label>
               <p className="text-base text-gray-900">{product.product_name}</p>
@@ -1873,7 +1948,7 @@ function ProductDetail({
           </div>
 
           {/* Row 2: Brand and Type */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">Product Brand</label>
               <p className="text-base text-gray-900">{product.product_brand || "—"}</p>
@@ -1904,7 +1979,7 @@ function ProductDetail({
           </div>
 
           {/* Row 5: Pricing */}
-          <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-gray-200">
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-1">List Price</label>
               <p className="text-lg font-semibold text-gray-900">${product.list_price.toLocaleString()}</p>

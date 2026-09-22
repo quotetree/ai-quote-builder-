@@ -170,12 +170,12 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
   const logTabActive = mainTab === "log";
 
   return (
-    <div className="h-screen flex flex-col bg-white">
-      <div className="border-b border-gray-200 bg-white px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <span>project</span>
-          <span>/</span>
-          <span className="text-gray-900 font-medium">{currentProjectName}</span>
+    <div className="h-[calc(100dvh-3.5rem)] md:h-screen flex flex-col bg-white min-w-0">
+      <div className="border-b border-gray-200 bg-white px-3 sm:px-6 py-3 flex items-center justify-between gap-2 min-w-0">
+        <div className="flex items-center gap-2 text-sm text-gray-600 min-w-0">
+          <span className="hidden sm:inline shrink-0">project</span>
+          <span className="hidden sm:inline shrink-0">/</span>
+          <span className="text-gray-900 font-medium truncate">{currentProjectName}</span>
         </div>
         {canManageProject && (
           <div className="relative">
@@ -223,10 +223,10 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
         )}
       </div>
 
-      <div className="flex border-b border-gray-200 bg-white px-4">
+      <div className="flex border-b border-gray-200 bg-white px-2 sm:px-4 overflow-x-auto">
         <button
           onClick={selectDriveTab}
-          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 min-h-11 shrink-0 ${
             driveTabActive
               ? "border-gray-900 text-gray-900"
               : "border-transparent text-gray-600 hover:text-gray-900"
@@ -237,7 +237,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
         </button>
         <button
           onClick={selectChatTab}
-          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 min-h-11 shrink-0 ${
             chatTabActive
               ? "border-gray-900 text-gray-900"
               : "border-transparent text-gray-600 hover:text-gray-900"
@@ -248,7 +248,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
         </button>
         <button
           onClick={selectLogTab}
-          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+          className={`px-3 sm:px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 min-h-11 shrink-0 ${
             logTabActive
               ? "border-gray-900 text-gray-900"
               : "border-transparent text-gray-600 hover:text-gray-900"
@@ -259,9 +259,13 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
         </button>
       </div>
 
-      <div className="flex-1 overflow-hidden relative min-h-0">
-        <div className={mainTab === "drive" ? "flex h-full min-h-0" : "hidden"}>
-          <div className="flex-1 min-w-0 h-full overflow-y-auto relative">
+      <div className="flex-1 overflow-hidden relative min-h-0 min-w-0">
+        <div className={mainTab === "drive" ? "flex h-full min-h-0 min-w-0 flex-col md:flex-row" : "hidden"}>
+          <div
+            className={`flex-1 min-w-0 h-full overflow-y-auto relative ${
+              isChatOpen ? "hidden md:block" : ""
+            }`}
+          >
             <DrivePanel projectId={projectId} onActiveSpreadsheetChange={handleActiveSpreadsheetChange} />
           </div>
           {isChatOpen && (
@@ -270,7 +274,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
               projectName={currentProjectName}
               activeSpreadsheetId={activeSpreadsheetId}
               onClose={selectDriveTab}
-              className="w-[min(380px,38vw)] shrink-0"
+              className="w-full md:w-[min(380px,38vw)] shrink-0 h-full min-h-0"
             />
           )}
         </div>
@@ -280,8 +284,8 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
       </div>
 
       {showRenameModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto safe-area-bottom">
             <h2 className="text-xl font-semibold mb-4">Rename Project</h2>
             <input
               type="text"
@@ -314,22 +318,22 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
       )}
 
       {shareModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto safe-area-bottom">
             <h2 className="text-xl font-semibold mb-2">Share Project</h2>
             <p className="text-sm text-gray-600 mb-4">
               Send this link to anyone in your organization to open the project instantly.
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
                 value={shareUrl}
                 readOnly
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm"
+                className="flex-1 min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg text-sm"
               />
               <button
                 onClick={copyShareUrl}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-11 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
               >
                 <Copy size={16} />
                 Copy
@@ -338,7 +342,7 @@ export default function ProjectWorkspace({ projectId, projectName, isOwner = tru
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShareModalOpen(false)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                className="px-4 py-2.5 min-h-11 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 Close
               </button>

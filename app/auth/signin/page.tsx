@@ -100,7 +100,7 @@ function SignInForm() {
               type="button"
               onClick={handleGoogle}
               disabled={busy}
-              className="w-full flex items-center justify-center gap-3 rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-3 rounded-md border border-gray-300 bg-white px-4 py-3 min-h-11 text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50"
             >
               <GoogleIcon />
               {googleLoading ? "Redirecting to Google..." : "Continue with Google"}
@@ -166,7 +166,7 @@ function SignInForm() {
               <button
                 type="submit"
                 disabled={busy}
-                className="w-full rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full rounded-md bg-green-600 px-4 py-3 min-h-11 text-sm font-semibold text-white shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {emailLoading ? "Logging in..." : "Log in"}
               </button>

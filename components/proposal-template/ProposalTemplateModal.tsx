@@ -1513,7 +1513,7 @@ export default function ProposalTemplateModal({
   const innerContent = (
     <div className={inline
       ? "bg-white dark:bg-gray-900 flex flex-col w-full h-full overflow-hidden"
-      : "bg-white rounded-xl shadow-2xl flex flex-col w-full max-w-6xl h-[92vh] overflow-hidden"
+      : "bg-white sm:rounded-xl shadow-2xl flex flex-col w-full max-w-6xl h-[100dvh] sm:h-[92vh] overflow-hidden"
     }>
         {/* Tab bar */}
         <div className="flex items-center justify-between border-b border-gray-200 px-4 bg-white flex-shrink-0">
@@ -2139,7 +2139,7 @@ export default function ProposalTemplateModal({
   return (
     <>
       {shareLinkModal}
-      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
         {innerContent}
       </div>
     </>

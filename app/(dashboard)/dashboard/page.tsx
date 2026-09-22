@@ -208,7 +208,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">
-      <div className="w-full max-w-2xl px-8">
+      <div className="w-full max-w-2xl px-4 sm:px-8">
         <OnboardingBanner />
         {/* Main Content */}
         <div className="text-center mb-12">
