@@ -84,6 +84,7 @@ export async function increaseProSeatsWithImmediateInvoice(params: {
   // Absolute quantity on the existing item only — no duplicate plan items, no anchor reset.
   // Note: pending_if_incomplete only supports a limited attribute set (no metadata).
   // See: https://docs.stripe.com/billing/subscriptions/pending-updates
+  const prorationDate = Math.floor(Date.now() / 1000);
   const updated = await stripe.subscriptions.update(stripeSubscriptionId, {
     items: [
       {
@@ -93,6 +94,7 @@ export async function increaseProSeatsWithImmediateInvoice(params: {
     ],
     payment_behavior: "pending_if_incomplete",
     proration_behavior: "always_invoice",
+    proration_date: prorationDate,
     expand: ["latest_invoice.payment_intent"],
   });
 
