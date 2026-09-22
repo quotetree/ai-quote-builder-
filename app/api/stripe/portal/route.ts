@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
+import { resolveStripeCustomerId } from "@/lib/stripe/customers";
 
 export async function POST(request: NextRequest) {
   try {
-    // Runtime check for Stripe key
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json({ error: "Stripe not configured" }, { status: 500 });
     }
 
     const supabase = await createClient();
 
-    // Get the authenticated user
     const {
       data: { user },
       error: authError,
@@ -21,28 +20,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get user's Stripe customer ID
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("stripe_customer_id")
-      .eq("id", user.id)
-      .single();
+    const customerId = await resolveStripeCustomerId({
+      supabase,
+      userId: user.id,
+      email: user.email,
+    });
 
-    if (profileError || !profile?.stripe_customer_id) {
-      return NextResponse.json(
-        { error: "No Stripe customer found" },
-        { status: 404 }
-      );
-    }
-
-    // Create portal session
-    // Use production URL or fallback to localhost for development
-    const returnUrl = process.env.NEXT_PUBLIC_APP_URL 
+    const returnUrl = process.env.NEXT_PUBLIC_APP_URL
       ? `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`
-      : 'https://quotetree.ai/dashboard'; // Fallback to production URL
-    
+      : "https://quotetree.ai/dashboard";
+
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer: profile.stripe_customer_id,
+      customer: customerId,
       return_url: returnUrl,
     });
 
@@ -55,4 +44,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

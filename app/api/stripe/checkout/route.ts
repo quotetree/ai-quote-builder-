@@ -13,6 +13,7 @@ import {
   totalSeatsFromLicenses,
 } from "@/lib/stripe/pricing";
 import { increaseProSeatsWithImmediateInvoice } from "@/lib/stripe/seatUpdates";
+import { resolveStripeCustomerId } from "@/lib/stripe/customers";
 import Stripe from "stripe";
 
 /**
@@ -94,24 +95,18 @@ export async function POST(request: NextRequest) {
     let organizationId: string | undefined;
 
     if (isAuthenticated && user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("stripe_customer_id")
-        .eq("id", user.id)
-        .single();
-
-      if (profile?.stripe_customer_id) {
-        customerId = profile.stripe_customer_id;
-      } else {
-        const customer = await stripe.customers.create({
+      try {
+        customerId = await resolveStripeCustomerId({
+          supabase,
+          userId: user.id,
           email: user.email,
-          metadata: { supabase_user_id: user.id },
         });
-        customerId = customer.id;
-        await supabase
-          .from("profiles")
-          .update({ stripe_customer_id: customerId })
-          .eq("id", user.id);
+      } catch (customerErr: any) {
+        console.error("Failed to resolve Stripe customer:", customerErr);
+        return NextResponse.json(
+          { error: customerErr.message || "Failed to resolve Stripe customer" },
+          { status: 500 }
+        );
       }
 
       const { data: orgData } = await supabase.rpc("get_user_organization_membership", {
