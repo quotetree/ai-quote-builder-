@@ -3,7 +3,6 @@ import { createClient } from "@/lib/supabase/server";
 import { getServiceClient } from "@/lib/supabase/service";
 import {
   API_KEY_LIMIT_PER_ORG,
-  API_KEY_TTL_DAYS,
   deriveKeyStatus,
   generateApiKey,
 } from "@/lib/apiKeys/token";
@@ -62,13 +61,12 @@ export async function POST(
 
     const svc = getServiceClient();
 
-    // Count live keys (not revoked, not expired) against the cap
+    // Count active (non-revoked) keys against the cap; revoking frees a slot
     const { count, error: countError } = await svc
       .from("organization_api_keys")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organizationId)
-      .is("revoked_at", null)
-      .gt("expires_at", new Date().toISOString());
+      .is("revoked_at", null);
 
     if (countError) {
       console.error("Failed to count API keys:", countError);
@@ -78,7 +76,7 @@ export async function POST(
     if ((count ?? 0) >= API_KEY_LIMIT_PER_ORG) {
       return NextResponse.json(
         {
-          error: `This organization already has ${API_KEY_LIMIT_PER_ORG} live API keys. Revoke one before creating another.`,
+          error: `This organization already has ${API_KEY_LIMIT_PER_ORG} active API keys. Revoke one before creating another.`,
           limit: API_KEY_LIMIT_PER_ORG,
         },
         { status: 400 }
@@ -86,9 +84,6 @@ export async function POST(
     }
 
     const { plaintext, prefix, hash } = generateApiKey();
-
-    // Expiry is always server-computed; any expires_at in the body is ignored
-    const expiresAt = new Date(Date.now() + API_KEY_TTL_DAYS * 24 * 60 * 60 * 1000);
 
     const { data: created, error: insertError } = await svc
       .from("organization_api_keys")
@@ -98,9 +93,8 @@ export async function POST(
         key_prefix: prefix,
         key_hash: hash,
         created_by: user.id,
-        expires_at: expiresAt.toISOString(),
       })
-      .select("id, name, key_prefix, expires_at")
+      .select("id, name, key_prefix")
       .single();
 
     if (insertError || !created) {
@@ -154,7 +148,7 @@ export async function GET(
 
     const { data: rows, error: listError } = await svc
       .from("organization_api_keys")
-      .select("id, name, key_prefix, created_by, expires_at, revoked_at, created_at")
+      .select("id, name, key_prefix, created_by, revoked_at, last_used_at, created_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
@@ -173,10 +167,9 @@ export async function GET(
       (profiles ?? []).map((p) => [p.id, p.full_name || p.email || null])
     );
 
-    const now = new Date();
     const keys = rows.map((row) => ({
       ...row,
-      status: deriveKeyStatus({ ...row, organization_id: organizationId }, now),
+      status: deriveKeyStatus(row),
       created_by_label: row.created_by ? creatorMap.get(row.created_by) ?? null : null,
     }));
 

@@ -54,6 +54,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const [billingOpen, setBillingOpen] = useState(false);
   const [billingInitialView, setBillingInitialView] = useState<"overview" | "edit-plan">("overview");
   const [membersOpen, setMembersOpen] = useState(false);
+  const [integrationsSubMenuOpen, setIntegrationsSubMenuOpen] = useState(false);
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [profile, setProfile] = useState<{
     company_name: string | null;
@@ -62,6 +63,7 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   } | null>(null);
   const { projects, loading, fetchProjects } = useProjects();
   const { canViewBilling, canViewMembers, canViewPersonalization, canManageMembers, canManageBilling, canManagePersonalization, isOwner, isSuperAdmin } = useOrganizationRole();
+  const canManageIntegrations = isOwner() || isSuperAdmin();
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
@@ -154,12 +156,14 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
         !accountButtonRef.current.contains(target)
       ) {
         setAccountMenuOpen(false);
+        setIntegrationsSubMenuOpen(false);
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setAccountMenuOpen(false);
+        setIntegrationsSubMenuOpen(false);
       }
     };
 
@@ -587,27 +591,48 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               </span>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
-            <button
-              onClick={() => {
-                if (isOwner() || isSuperAdmin()) {
-                  setAccountMenuOpen(false);
-                  setApiKeysOpen(true);
-                }
-              }}
-              disabled={!(isOwner() || isSuperAdmin())}
-              className={`w-full flex items-center justify-between px-4 py-2.5 min-h-11 text-sm transition-colors ${
-                isOwner() || isSuperAdmin()
-                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
-                  : "text-gray-400 cursor-not-allowed opacity-60"
-              }`}
-              title={!(isOwner() || isSuperAdmin()) ? "Owner or super admin access only" : ""}
-            >
-              <span className="flex items-center gap-2">
-                API keys
-                {!(isOwner() || isSuperAdmin()) && <Lock size={14} className="text-gray-400" />}
-              </span>
-              <ChevronRight size={14} className="text-gray-400" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => {
+                  if (!canManageIntegrations) return;
+                  setIntegrationsSubMenuOpen((v) => !v);
+                }}
+                disabled={!canManageIntegrations}
+                className={`w-full flex items-center justify-between px-4 py-2.5 min-h-11 text-sm transition-colors ${
+                  canManageIntegrations
+                    ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                    : "text-gray-400 cursor-not-allowed opacity-60"
+                }`}
+                title={!canManageIntegrations ? "Owner or super admin access only" : ""}
+              >
+                <span className="flex items-center gap-2">
+                  Integrations
+                  {!canManageIntegrations && <Lock size={14} className="text-gray-400" />}
+                </span>
+                <ChevronRight size={14} className="text-gray-400" />
+              </button>
+
+              {integrationsSubMenuOpen && canManageIntegrations && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setIntegrationsSubMenuOpen(false)}
+                  />
+                  <div className="absolute left-0 sm:left-full top-full sm:top-0 mt-1 sm:mt-0 sm:ml-1 z-50 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                    <button
+                      onClick={() => {
+                        setIntegrationsSubMenuOpen(false);
+                        setAccountMenuOpen(false);
+                        setApiKeysOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      API Keys
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <div className="my-1 border-t border-gray-100" />
             <button
               type="button"

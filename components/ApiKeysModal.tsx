@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { X, Plus, Copy, AlertCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Copy, KeyRound, Plus, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { useOrganizationRole } from "@/hooks/useOrganizationRole";
 
@@ -10,162 +10,206 @@ interface ApiKeysModalProps {
   onClose: () => void;
 }
 
-type ApiKeyStatus = "active" | "expired" | "revoked";
+type ApiKeyStatus = "active" | "revoked";
 
-interface ApiKeyListItem {
+interface ApiKeyRow {
   id: string;
   name: string;
   key_prefix: string;
   created_by: string | null;
   created_by_label: string | null;
-  expires_at: string;
   revoked_at: string | null;
+  last_used_at: string | null;
   created_at: string;
   status: ApiKeyStatus;
 }
 
-const STATUS_BADGE: Record<ApiKeyStatus, { label: string; className: string }> = {
-  active: { label: "Active", className: "bg-green-100 text-green-800" },
-  expired: { label: "Expired", className: "bg-amber-100 text-amber-800" },
-  revoked: { label: "Revoked", className: "bg-gray-100 text-gray-600" },
-};
-
 export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
-  const { organizationId } = useOrganizationRole();
+  const { organizationId, isOwner, isSuperAdmin } = useOrganizationRole();
+  const canManage = isOwner() || isSuperAdmin();
+
   const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [keys, setKeys] = useState<ApiKeyListItem[]>([]);
-  const [maxKeys, setMaxKeys] = useState<number | null>(null);
-  const [newKeyName, setNewKeyName] = useState("");
+  const [keys, setKeys] = useState<ApiKeyRow[]>([]);
+  const [maxKeys, setMaxKeys] = useState(5);
   const [creating, setCreating] = useState(false);
-  // The plaintext secret lives only here, and only until the reveal panel is dismissed
-  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [showRevoked, setShowRevoked] = useState(false);
+
+  const activeKeys = useMemo(
+    () => keys.filter((k) => k.status === "active"),
+    [keys]
+  );
+  const revokedKeys = useMemo(
+    () => keys.filter((k) => k.status === "revoked"),
+    [keys]
+  );
+  const activeCount = activeKeys.length;
+  const atCap = activeCount >= maxKeys;
+
+  const resetEphemeral = useCallback(() => {
+    setRevealedSecret(null);
+    setShowCreateForm(false);
+    setNewKeyName("");
+  }, []);
+
+  const handleClose = () => {
+    resetEphemeral();
+    setShowRevoked(false);
+    onClose();
+  };
 
   const loadKeys = useCallback(async () => {
     if (!organizationId) return;
     setLoading(true);
-    setLoadError(null);
     try {
-      const response = await fetch(`/api/organizations/${organizationId}/api-keys`);
-      const data = await response.json();
-      if (!response.ok) {
+      const res = await fetch(
+        `/api/organizations/${organizationId}/api-keys`
+      );
+      const data = await res.json();
+      if (!res.ok) {
         throw new Error(data.error || "Failed to load API keys");
       }
-      setKeys(data.keys || []);
-      setMaxKeys(data.max_keys ?? null);
-    } catch (error: any) {
-      console.error("Failed to load API keys:", error);
-      setLoadError(error.message || "Failed to load API keys");
-      toast.error(error.message || "Failed to load API keys");
+      setKeys(data.keys ?? []);
+      if (typeof data.max_keys === "number") {
+        setMaxKeys(data.max_keys);
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to load API keys";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   }, [organizationId]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && canManage) {
+      resetEphemeral();
+      setShowRevoked(false);
       loadKeys();
-    } else {
-      setRevealedKey(null);
-      setNewKeyName("");
     }
-  }, [isOpen, loadKeys]);
+  }, [isOpen, canManage, loadKeys, resetEphemeral]);
 
-  const liveKeyCount = keys.filter((k) => k.status === "active").length;
-  const atCap = maxKeys !== null && liveKeyCount >= maxKeys;
-
-  const handleClose = () => {
-    setRevealedKey(null);
-    setNewKeyName("");
-    onClose();
-  };
-
-  const handleCreateKey = async () => {
-    if (!organizationId) return;
+  async function handleCreate() {
+    if (!organizationId || atCap) return;
     const name = newKeyName.trim();
     if (!name) {
-      toast.error("Enter a name for the key");
+      toast.error("Name is required");
       return;
     }
 
     setCreating(true);
     try {
-      const response = await fetch(`/api/organizations/${organizationId}/api-keys`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        toast.error(data.error || "Failed to create API key", { duration: 5000 });
-        return;
+      const res = await fetch(
+        `/api/organizations/${organizationId}/api-keys`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to create API key");
       }
-      setRevealedKey(data.key);
+
+      setRevealedSecret(data.key);
+      setShowCreateForm(false);
       setNewKeyName("");
+      toast.success("API key created");
       await loadKeys();
-    } catch (error: any) {
-      console.error("Failed to create API key:", error);
-      toast.error(error.message || "Failed to create API key");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to create API key";
+      toast.error(message);
     } finally {
       setCreating(false);
     }
-  };
+  }
 
-  const handleCopyKey = async () => {
-    if (!revealedKey) return;
-    try {
-      await navigator.clipboard.writeText(revealedKey);
-      toast.success("API key copied to clipboard");
-    } catch (error) {
-      console.error("Failed to copy API key:", error);
-      toast.error("Could not copy. Select the key and copy it manually.");
-    }
-  };
-
-  const handleRevokeKey = async (key: ApiKeyListItem) => {
+  async function handleRevoke(key: ApiKeyRow) {
     if (!organizationId) return;
+    const confirmed = window.confirm(
+      `Revoke “${key.name}”? It will stop working immediately.`
+    );
+    if (!confirmed) return;
 
-    if (!confirm(`Revoke the API key "${key.name}"? Any integration using it will stop working immediately.`)) {
-      return;
-    }
-
+    setRevokingId(key.id);
     try {
-      const response = await fetch(`/api/organizations/${organizationId}/api-keys/${key.id}`, {
-        method: "DELETE",
-      });
-      const data = await response.json();
-      if (!response.ok) {
+      const res = await fetch(
+        `/api/organizations/${organizationId}/api-keys/${key.id}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (!res.ok) {
         throw new Error(data.error || "Failed to revoke API key");
       }
       toast.success("API key revoked");
       await loadKeys();
-    } catch (error: any) {
-      console.error("Failed to revoke API key:", error);
-      toast.error(error.message || "Failed to revoke API key");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to revoke API key";
+      toast.error(message);
+    } finally {
+      setRevokingId(null);
     }
-  };
+  }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  };
+  async function copySecret() {
+    if (!revealedSecret) return;
+    try {
+      await navigator.clipboard.writeText(revealedSecret);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  }
 
   if (!isOpen) return null;
 
+  if (!canManage) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Access Denied</h2>
+            <button
+              onClick={handleClose}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-6 py-8 text-center">
+            <p className="text-gray-600">
+              Only organization owners and super admins can manage API keys.
+            </p>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+            <button
+              onClick={handleClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center px-0 sm:px-4">
-      <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col safe-area-bottom">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-white">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-white sticky top-0 z-10">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">API keys</h2>
+            <h2 className="text-xl font-semibold text-gray-900">API Keys</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              {maxKeys !== null
-                ? `${liveKeyCount} of ${maxKeys} live keys · keys expire 90 days after creation`
-                : "Keys expire 90 days after creation"}
+              Integrations · {activeCount} of {maxKeys} active keys
             </p>
           </div>
           <button
@@ -177,178 +221,260 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          {/* One-time secret reveal */}
-          {revealedKey && (
-            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="text-green-700 mt-0.5 flex-shrink-0" size={20} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-green-900">Copy your new API key now</p>
-                  <p className="text-sm text-green-800 mt-1">
-                    This is the only time you will see this key. Store it somewhere safe. If you lose it,
-                    revoke it and create a new one.
-                  </p>
-                  <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
-                    <code
-                      className="flex-1 min-w-0 block px-3 py-2 bg-white border border-green-200 rounded-lg font-mono text-xs text-gray-900 break-all select-all"
-                      data-testid="api-key-secret"
-                    >
-                      {revealedKey}
-                    </code>
-                    <button
-                      onClick={handleCopyKey}
-                      className="flex items-center justify-center gap-2 px-4 py-2 min-h-11 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-medium rounded-lg transition-colors"
-                    >
-                      <Copy size={16} />
-                      Copy
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => setRevealedKey(null)}
-                    className="mt-3 px-4 py-2 min-h-11 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-colors"
-                  >
-                    I have saved this key
-                  </button>
-                </div>
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          {revealedSecret && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">
+                Copy your API key now. For security, you won&apos;t be able to
+                view it again.
+              </p>
+              <div className="mt-3 flex items-stretch gap-2">
+                <code className="flex-1 text-xs sm:text-sm font-mono bg-white border border-amber-200 rounded-lg px-3 py-2 break-all text-gray-900">
+                  {revealedSecret}
+                </code>
+                <button
+                  type="button"
+                  onClick={copySecret}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors"
+                >
+                  <Copy size={14} />
+                  Copy
+                </button>
               </div>
+              <button
+                type="button"
+                onClick={() => setRevealedSecret(null)}
+                className="mt-3 text-xs font-medium text-amber-900 underline hover:no-underline"
+              >
+                Done — I&apos;ve saved my key
+              </button>
             </div>
           )}
 
-          {/* Create form */}
-          <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
-            <input
-              type="text"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !atCap && !creating) {
-                  e.preventDefault();
-                  handleCreateKey();
-                }
-              }}
-              maxLength={100}
-              placeholder="Key name, for example: Accounting sync"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-gray-600">
+              Connect QuoteTree to other apps and services using an API key.
+              Keys stay active until you revoke them.
+            </p>
             <button
-              onClick={handleCreateKey}
-              disabled={atCap || creating || !organizationId}
-              title={atCap ? `Your organization has reached the limit of ${maxKeys} live API keys. Revoke one to create another.` : ""}
-              className="flex items-center justify-center gap-2 px-4 py-2 min-h-11 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+              type="button"
+              onClick={() => setShowCreateForm(true)}
+              disabled={atCap}
+              title={
+                atCap
+                  ? `Limit of ${maxKeys} active keys reached`
+                  : "Create new API key"
+              }
+              className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors shrink-0 ${
+                atCap
+                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  : "bg-gray-900 text-white hover:bg-gray-800"
+              }`}
             >
-              <Plus size={18} />
-              {creating ? "Creating..." : "New key"}
+              <Plus size={16} />
+              Create new key
             </button>
           </div>
 
-          {loading && keys.length === 0 ? (
-            <div className="text-center py-16">
-              <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-gray-900"></div>
-              <p className="mt-4 text-sm text-gray-500">Loading API keys...</p>
-            </div>
-          ) : (
-            <div className="border border-gray-200 rounded-lg overflow-x-auto">
-              <div className="min-w-[760px]">
-                {/* Table Header */}
-                <div className="bg-gray-50 border-b border-gray-200 px-6 py-3">
-                  <div className="grid grid-cols-12 gap-4">
-                    <div className="col-span-3 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                      Name
-                    </div>
-                    <div className="col-span-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                      Prefix
-                    </div>
-                    <div className="col-span-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                      Created by
-                    </div>
-                    <div className="col-span-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                      Expires
-                    </div>
-                    <div className="col-span-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                      Status
-                    </div>
-                    <div className="col-span-1"></div>
-                  </div>
-                </div>
-
-                {/* Table Body */}
-                <div className="divide-y divide-gray-200 bg-white">
-                  {loadError && keys.length === 0 ? (
-                    <div className="px-6 py-12 text-center">
-                      <p className="text-sm text-red-600">{loadError}</p>
-                    </div>
-                  ) : keys.length === 0 ? (
-                    <div className="px-6 py-12 text-center">
-                      <p className="text-sm text-gray-500">No API keys yet</p>
-                    </div>
-                  ) : (
-                    keys.map((key) => {
-                      const badge = STATUS_BADGE[key.status];
-                      return (
-                        <div key={key.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
-                          <div className="grid grid-cols-12 gap-4 items-center">
-                            <div className="col-span-3 min-w-0">
-                              <p className="font-medium text-gray-900 truncate" title={key.name}>
-                                {key.name}
-                              </p>
-                            </div>
-                            <div className="col-span-2 min-w-0">
-                              <span className="font-mono text-xs text-gray-700">{key.key_prefix}...</span>
-                            </div>
-                            <div className="col-span-2 min-w-0">
-                              <span className="text-sm text-gray-600 truncate block">
-                                {key.created_by_label || "Unknown"}
-                              </span>
-                            </div>
-                            <div className="col-span-2">
-                              <span className="text-sm text-gray-600">{formatDate(key.expires_at)}</span>
-                            </div>
-                            <div className="col-span-2">
-                              <span
-                                className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}
-                              >
-                                {badge.label}
-                              </span>
-                            </div>
-                            <div className="col-span-1 flex justify-end">
-                              {key.status !== "revoked" && (
-                                <button
-                                  onClick={() => handleRevokeKey(key)}
-                                  className="px-2 py-1 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
-                                >
-                                  Revoke
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+          {showCreateForm && (
+            <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+              <label className="block text-sm font-medium text-gray-700">
+                Key name
+                <input
+                  type="text"
+                  value={newKeyName}
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  maxLength={100}
+                  placeholder="e.g. Zapier production"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-400"
+                  autoFocus
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setNewKeyName("");
+                  }}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={creating || !newKeyName.trim()}
+                  className="px-3 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+                >
+                  {creating ? "Creating…" : "Create"}
+                </button>
               </div>
             </div>
           )}
 
-          <p className="mt-4 text-xs text-gray-500">
-            API keys give read access to this organization&apos;s quotes through the QuoteTree API. Send a
-            key in the <code className="font-mono">Authorization: Bearer</code> header or the{" "}
-            <code className="font-mono">X-API-Key</code> header.
-          </p>
-        </div>
+          {loading ? (
+            <div className="text-center py-16">
+              <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-gray-900" />
+              <p className="mt-4 text-sm text-gray-500">Loading API keys…</p>
+            </div>
+          ) : keys.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <KeyRound size={32} className="mx-auto mb-3 text-gray-300" />
+              <p className="text-sm">No API keys yet.</p>
+              <p className="text-xs mt-1">
+                Create a key to integrate Quote Tree with other systems.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {activeKeys.length > 0 ? (
+                <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+                  {activeKeys.map((key) => (
+                    <KeyRow
+                      key={key.id}
+                      keyRow={key}
+                      revokingId={revokingId}
+                      onRevoke={handleRevoke}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-center py-8 text-gray-500 border border-dashed border-gray-200 rounded-lg">
+                  <p className="text-sm">No active API keys.</p>
+                </div>
+              )}
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 flex justify-end bg-white">
-          <button
-            onClick={handleClose}
-            className="px-4 py-2 min-h-11 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            Close
-          </button>
+              {revokedKeys.length > 0 && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowRevoked((v) => !v)}
+                    className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                  >
+                    {showRevoked ? (
+                      <ChevronDown size={16} className="text-gray-400" />
+                    ) : (
+                      <ChevronRight size={16} className="text-gray-400" />
+                    )}
+                    {showRevoked ? "Hide" : "Show"} revoked keys (
+                    {revokedKeys.length})
+                  </button>
+                  {showRevoked && (
+                    <ul className="mt-2 divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+                      {revokedKeys.map((key) => (
+                        <KeyRow
+                          key={key.id}
+                          keyRow={key}
+                          revokingId={revokingId}
+                          onRevoke={handleRevoke}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function KeyRow({
+  keyRow,
+  revokingId,
+  onRevoke,
+}: {
+  keyRow: ApiKeyRow;
+  revokingId: string | null;
+  onRevoke: (key: ApiKeyRow) => void;
+}) {
+  return (
+    <li className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-gray-900 text-sm truncate">
+            {keyRow.name}
+          </span>
+          <StatusBadge status={keyRow.status} />
+        </div>
+        <p className="text-xs text-gray-500 mt-1 font-mono">
+          {keyRow.key_prefix}…
+        </p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Created by {keyRow.created_by_label ?? "a former member"} ·{" "}
+          {formatDate(keyRow.created_at)}
+        </p>
+        {keyRow.status === "active" && (
+          <p className="text-xs text-gray-500 mt-0.5">
+            Last used {formatLastUsed(keyRow.last_used_at)}
+          </p>
+        )}
+      </div>
+      {keyRow.status === "active" && (
+        <button
+          type="button"
+          onClick={() => onRevoke(keyRow)}
+          disabled={revokingId === keyRow.id}
+          className="text-sm font-medium text-red-600 hover:text-red-700 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors self-start sm:self-center disabled:opacity-50"
+        >
+          {revokingId === keyRow.id ? "Revoking…" : "Revoke"}
+        </button>
+      )}
+    </li>
+  );
+}
+
+function StatusBadge({ status }: { status: ApiKeyStatus }) {
+  const styles =
+    status === "active"
+      ? "bg-green-50 text-green-700 border-green-200"
+      : "bg-red-50 text-red-700 border-red-200";
+
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border capitalize ${styles}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function formatLastUsed(iso: string | null): string {
+  if (!iso) return "never";
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const seconds = Math.max(0, Math.floor((now - then) / 1000));
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) {
+      return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+    }
+    const days = Math.floor(hours / 24);
+    if (days < 30) {
+      return days === 1 ? "1 day ago" : `${days} days ago`;
+    }
+    return formatDate(iso);
+  } catch {
+    return "never";
+  }
 }

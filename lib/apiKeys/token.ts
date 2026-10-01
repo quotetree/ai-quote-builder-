@@ -5,14 +5,12 @@ export const API_KEY_HEX_BYTES = 32;
 export const API_KEY_LENGTH = 67; // API_KEY_PREFIX + 64 hex characters
 export const KEY_PREFIX_LENGTH = 11; // API_KEY_PREFIX + 8 hex characters
 export const API_KEY_LIMIT_PER_ORG = 5;
-export const API_KEY_TTL_DAYS = 90;
 
-export type ApiKeyStatus = "active" | "expired" | "revoked";
+export type ApiKeyStatus = "active" | "revoked";
 
 export interface ApiKeyRow {
   id: string;
   organization_id: string;
-  expires_at: string;
   revoked_at: string | null;
 }
 
@@ -82,13 +80,11 @@ export function extractPresentedKey(headers: Headers): PresentedKey {
 }
 
 /**
- * Derives a key's status from its row at the given time. Revocation is checked
- * first, so a key that is both revoked and expired reports as revoked.
+ * Derives a key's status from its row. Keys do not expire; a key stays active
+ * until it is revoked.
  */
-export function deriveKeyStatus(row: ApiKeyRow, now: Date): ApiKeyStatus {
-  if (row.revoked_at !== null) return "revoked";
-  if (new Date(row.expires_at) <= now) return "expired";
-  return "active";
+export function deriveKeyStatus(row: Pick<ApiKeyRow, "revoked_at">): ApiKeyStatus {
+  return row.revoked_at !== null ? "revoked" : "active";
 }
 
 /**
@@ -97,14 +93,14 @@ export function deriveKeyStatus(row: ApiKeyRow, now: Date): ApiKeyStatus {
  * A database error is a 500, never a 401, so an outage is not reported to the
  * caller as a bad credential.
  */
-export function classifyKeyLookup(
-  lookup: { row: ApiKeyRow | null; error: unknown },
-  now: Date
-): KeyLookupResult {
+export function classifyKeyLookup(lookup: {
+  row: ApiKeyRow | null;
+  error: unknown;
+}): KeyLookupResult {
   if (lookup.error) return { ok: false, status: 500, error: "Unable to verify credentials" };
   if (!lookup.row) return { ok: false, status: 401, error: "Invalid API key" };
-  const status = deriveKeyStatus(lookup.row, now);
-  if (status === "revoked") return { ok: false, status: 401, error: "API key revoked" };
-  if (status === "expired") return { ok: false, status: 401, error: "API key expired" };
+  if (deriveKeyStatus(lookup.row) === "revoked") {
+    return { ok: false, status: 401, error: "API key revoked" };
+  }
   return { ok: true, organizationId: lookup.row.organization_id };
 }

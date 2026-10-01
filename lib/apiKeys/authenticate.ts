@@ -28,14 +28,24 @@ export async function authenticateApiKey(request: Request): Promise<ApiKeyAuth> 
   const svc = getServiceClient();
   const { data: row, error } = await svc
     .from("organization_api_keys")
-    .select("id, organization_id, expires_at, revoked_at")
+    .select("id, organization_id, revoked_at")
     .eq("key_hash", hashApiKey(presented.key))
     .maybeSingle();
 
-  const classified = classifyKeyLookup({ row, error }, new Date());
+  const classified = classifyKeyLookup({ row, error });
   if (!classified.ok) return classified;
 
   const { organizationId } = classified;
+
+  // Best-effort activity stamp; a failed write must never fail the request
+  void svc
+    .from("organization_api_keys")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("id", row!.id)
+    .then(({ error: stampError }: { error: unknown }) => {
+      if (stampError) console.error("Failed to stamp API key last_used_at:", stampError);
+    });
+
   return {
     ok: true,
     organizationId,

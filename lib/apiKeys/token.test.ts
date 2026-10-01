@@ -12,15 +12,12 @@ import {
   type ApiKeyRow,
 } from "./token.ts";
 
-const NOW = new Date("2026-10-01T12:00:00Z");
 const PAST = "2026-09-30T12:00:00Z";
-const FUTURE = "2026-12-30T12:00:00Z";
 
 function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
   return {
     id: "key-1",
     organization_id: "org-1",
-    expires_at: FUTURE,
     revoked_at: null,
     ...overrides,
   };
@@ -52,24 +49,17 @@ describe("generateApiKey", () => {
 });
 
 describe("deriveKeyStatus", () => {
-  it("reports a live key as active", () => {
-    assert.equal(deriveKeyStatus(row(), NOW), "active");
+  it("reports a non-revoked key as active", () => {
+    assert.equal(deriveKeyStatus(row()), "active");
   });
 
-  it("reports a key past expires_at as expired", () => {
-    assert.equal(deriveKeyStatus(row({ expires_at: PAST }), NOW), "expired");
-  });
-
-  it("reports a key expiring exactly now as expired", () => {
-    assert.equal(deriveKeyStatus(row({ expires_at: NOW.toISOString() }), NOW), "expired");
+  it("keeps an old non-revoked key active (keys do not expire)", () => {
+    const ancient = { ...row(), created_at: "2020-01-01T00:00:00Z" };
+    assert.equal(deriveKeyStatus(ancient), "active");
   });
 
   it("reports a revoked key as revoked", () => {
-    assert.equal(deriveKeyStatus(row({ revoked_at: PAST }), NOW), "revoked");
-  });
-
-  it("reports a key that is both revoked and expired as revoked", () => {
-    assert.equal(deriveKeyStatus(row({ revoked_at: PAST, expires_at: PAST }), NOW), "revoked");
+    assert.equal(deriveKeyStatus(row({ revoked_at: PAST })), "revoked");
   });
 });
 
@@ -148,7 +138,7 @@ describe("extractPresentedKey", () => {
 
 describe("classifyKeyLookup", () => {
   it("maps a lookup error to 500, not 401", () => {
-    assert.deepEqual(classifyKeyLookup({ row: null, error: new Error("connection refused") }, NOW), {
+    assert.deepEqual(classifyKeyLookup({ row: null, error: new Error("connection refused") }), {
       ok: false,
       status: 500,
       error: "Unable to verify credentials",
@@ -156,7 +146,7 @@ describe("classifyKeyLookup", () => {
   });
 
   it("maps a missing row to 401 Invalid API key", () => {
-    assert.deepEqual(classifyKeyLookup({ row: null, error: null }, NOW), {
+    assert.deepEqual(classifyKeyLookup({ row: null, error: null }), {
       ok: false,
       status: 401,
       error: "Invalid API key",
@@ -164,23 +154,15 @@ describe("classifyKeyLookup", () => {
   });
 
   it("maps a revoked row to 401 API key revoked", () => {
-    assert.deepEqual(classifyKeyLookup({ row: row({ revoked_at: PAST }), error: null }, NOW), {
+    assert.deepEqual(classifyKeyLookup({ row: row({ revoked_at: PAST }), error: null }), {
       ok: false,
       status: 401,
       error: "API key revoked",
     });
   });
 
-  it("maps an expired row to 401 API key expired", () => {
-    assert.deepEqual(classifyKeyLookup({ row: row({ expires_at: PAST }), error: null }, NOW), {
-      ok: false,
-      status: 401,
-      error: "API key expired",
-    });
-  });
-
-  it("maps a live row to its organization", () => {
-    assert.deepEqual(classifyKeyLookup({ row: row(), error: null }, NOW), {
+  it("maps an active row to its organization", () => {
+    assert.deepEqual(classifyKeyLookup({ row: row(), error: null }), {
       ok: true,
       organizationId: "org-1",
     });
