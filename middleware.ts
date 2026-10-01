@@ -16,9 +16,10 @@ export const config = {
      * - api/trial-inquiry (Landing page trial form doesn't need auth)
      * - api/auth/reset-password-email (Password reset API doesn't need auth)
      * - checkout/success (Success page for unauthenticated purchases)
+     * - api/v1 (Key-authenticated API; must return JSON, never a sign-in redirect)
      * Feel free to modify this pattern to include more paths.
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/trial-inquiry|api/auth/reset-password-email|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mov|avi|webm)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/stripe/webhook|api/stripe/checkout|api/trial-inquiry|api/auth/reset-password-email|api/v1|checkout/success|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|mov|avi|webm)$).*)",
   ],
 };
 

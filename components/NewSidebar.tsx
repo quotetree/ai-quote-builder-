@@ -21,6 +21,7 @@ import PersonalizationModal from "./PersonalizationModal";
 import ProposalTemplateModal from "./proposal-template/ProposalTemplateModal";
 import BillingModal from "./BillingModal";
 import MembersModal from "./MembersModal";
+import ApiKeysModal from "./ApiKeysModal";
 import type { Project } from "@/types/database";
 import { PROPOSAL_BUILDER_UI_ENABLED } from "@/lib/features/proposalBuilderUi";
 
@@ -53,13 +54,14 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
   const [billingOpen, setBillingOpen] = useState(false);
   const [billingInitialView, setBillingInitialView] = useState<"overview" | "edit-plan">("overview");
   const [membersOpen, setMembersOpen] = useState(false);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [profile, setProfile] = useState<{
     company_name: string | null;
     company_address: string | null;
     company_logo_url: string | null;
   } | null>(null);
   const { projects, loading, fetchProjects } = useProjects();
-  const { canViewBilling, canViewMembers, canViewPersonalization, canManageMembers, canManageBilling, canManagePersonalization } = useOrganizationRole();
+  const { canViewBilling, canViewMembers, canViewPersonalization, canManageMembers, canManageBilling, canManagePersonalization, isOwner, isSuperAdmin } = useOrganizationRole();
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
@@ -585,6 +587,27 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
               </span>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
+            <button
+              onClick={() => {
+                if (isOwner() || isSuperAdmin()) {
+                  setAccountMenuOpen(false);
+                  setApiKeysOpen(true);
+                }
+              }}
+              disabled={!(isOwner() || isSuperAdmin())}
+              className={`w-full flex items-center justify-between px-4 py-2.5 min-h-11 text-sm transition-colors ${
+                isOwner() || isSuperAdmin()
+                  ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
+                  : "text-gray-400 cursor-not-allowed opacity-60"
+              }`}
+              title={!(isOwner() || isSuperAdmin()) ? "Owner or super admin access only" : ""}
+            >
+              <span className="flex items-center gap-2">
+                API keys
+                {!(isOwner() || isSuperAdmin()) && <Lock size={14} className="text-gray-400" />}
+              </span>
+              <ChevronRight size={14} className="text-gray-400" />
+            </button>
             <div className="my-1 border-t border-gray-100" />
             <button
               type="button"
@@ -707,6 +730,11 @@ export default function NewSidebar({ userEmail, userName }: NewSidebarProps) {
           setBillingInitialView(opts?.upgrade ? "edit-plan" : "overview");
           setBillingOpen(true);
         }}
+      />
+
+      <ApiKeysModal
+        isOpen={apiKeysOpen}
+        onClose={() => setApiKeysOpen(false)}
       />
     </>
   );
