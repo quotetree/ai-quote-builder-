@@ -1000,13 +1000,12 @@ export default function SpreadsheetEditor({
 
       // Resolve an existing quote: explicit edit context, or spreadsheet link
       let existingQuoteId = editQuoteId ?? null;
-      let existingVersion = editVersion ?? null;
       let existingQuoteNumber = editQuoteNumber ?? null;
 
       if (!existingQuoteId) {
         const { data: linked } = await supabase
           .from("quotes")
-          .select("id, quote_number, version_number")
+          .select("id, quote_number")
           .eq("spreadsheet_id", spreadsheet.id)
           .order("created_at", { ascending: false })
           .limit(1)
@@ -1014,36 +1013,40 @@ export default function SpreadsheetEditor({
 
         if (linked) {
           existingQuoteId = linked.id;
-          existingVersion = linked.version_number ?? 1;
           existingQuoteNumber = linked.quote_number;
         }
       }
 
+      const itemRows = lineItems.map((row, index) => ({
+        product_id: row.product_id ?? null,
+        product_number: row.product_code || null,
+        product_name: row.product_name,
+        description: null,
+        quantity: row.quantity,
+        unit_price: row.sales_price,
+        discount_percent: (row.discount ?? 0) / 100,
+        line_total: rowAmount(row),
+        sort_order: index,
+      }));
+
       if (existingQuoteId) {
         // ── Update existing quote in place (same row, no duplicate in log) ──
-        const baseVersion = existingVersion ?? 1;
-        const newVersion = baseVersion + 1;
+        // One database call writes the quote and replaces its items in a single
+        // transaction, so another writer cannot land between the two.
+        const { data: newVersion, error: saveError } = await supabase.rpc(
+          "save_spreadsheet_quote",
+          {
+            p_quote_id: existingQuoteId,
+            p_quote: quotePayload,
+            p_items: itemRows,
+          },
+        );
 
-        const { error: quoteError } = await supabase
-          .from("quotes")
-          .update({
-            ...quotePayload,
-            version_number: newVersion,
-          })
-          .eq("id", existingQuoteId);
-
-        if (quoteError) throw quoteError;
-
-        const { error: deleteItemsError } = await supabase
-          .from("quote_items")
-          .delete()
-          .eq("quote_id", existingQuoteId);
-
-        if (deleteItemsError) throw deleteItemsError;
+        if (saveError) throw saveError;
 
         quoteId = existingQuoteId;
         quoteNumber = existingQuoteNumber ?? "";
-        savedVersion = newVersion;
+        savedVersion = newVersion as number;
       } else {
         // ── New quote ─────────────────────────────────────────────────────
         const { count } = await supabase
@@ -1068,26 +1071,13 @@ export default function SpreadsheetEditor({
         if (quoteError) throw quoteError;
         quoteId = quote.id;
         savedVersion = 1;
+
+        const { error: itemsError } = await supabase
+          .from("quote_items")
+          .insert(itemRows.map((item) => ({ ...item, quote_id: quote.id })));
+
+        if (itemsError) throw itemsError;
       }
-
-      const quoteItems = lineItems.map((row, index) => ({
-        quote_id: quoteId,
-        product_id: row.product_id ?? null,
-        product_number: row.product_code || null,
-        product_name: row.product_name,
-        description: null,
-        quantity: row.quantity,
-        unit_price: row.sales_price,
-        discount_percent: (row.discount ?? 0) / 100,
-        line_total: rowAmount(row),
-        sort_order: index,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("quote_items")
-        .insert(quoteItems);
-
-      if (itemsError) throw itemsError;
 
       await updateProjectTimestamp(spreadsheet.project_id);
 

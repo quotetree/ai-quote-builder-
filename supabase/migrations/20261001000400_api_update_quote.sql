@@ -1,7 +1,8 @@
--- Updates a quote, replaces its items and rewrites its linked spreadsheet for an organization API key in one transaction. Callable by service_role only.
+-- Updates a quote, replaces its items and rewrites its linked spreadsheet for an organization API key in one transaction,
+-- and records the write in api_key_audit. Callable by service_role only.
 
 CREATE OR REPLACE FUNCTION public.api_update_quote(
-  p_organization_id UUID, p_quote_id UUID, p_fields JSONB, p_items JSONB,
+  p_organization_id UUID, p_key_id UUID, p_quote_id UUID, p_fields JSONB, p_items JSONB,
   p_subtotal NUMERIC, p_sheet_sections JSONB
 )
 RETURNS JSONB
@@ -13,7 +14,9 @@ DECLARE
   v_fields JSONB := coalesce(p_fields, '{}'::jsonb);
   v_quote quotes%ROWTYPE;
 BEGIN
-  -- The lock check is part of the write, so no browser edit can start between a read and this update.
+  -- This UPDATE takes the quote row lock, and the spreadsheet editor saves through save_spreadsheet_quote, which takes
+  -- the same lock first, so the two saves run one after the other. is_editing marks an open chat edit session: it is
+  -- set before that session reads its snapshot and cleared only after its last write, so the update is refused then.
   -- Stored charges and markups are kept and re-added to the new subtotal in the same statement.
   -- A NULL version_number would make the snapshot trigger's comparison NULL and skip history, hence the coalesce.
   UPDATE quotes SET
@@ -31,8 +34,10 @@ BEGIN
 
   IF NOT FOUND THEN
     IF EXISTS (SELECT 1 FROM quotes WHERE id = p_quote_id AND organization_id = p_organization_id) THEN
+      PERFORM api_key_audit_log(p_key_id, p_organization_id, 'update', p_quote_id, 'locked');
       RETURN jsonb_build_object('status', 'locked');
     END IF;
+    PERFORM api_key_audit_log(p_key_id, p_organization_id, 'update', p_quote_id, 'not_found');
     RETURN jsonb_build_object('status', 'not_found');
   END IF;
 
@@ -60,6 +65,8 @@ BEGIN
 
   UPDATE projects SET updated_at = now() WHERE id = v_quote.project_id AND organization_id = p_organization_id;
 
+  PERFORM api_key_audit_log(p_key_id, p_organization_id, 'update', p_quote_id, 'ok');
+
   RETURN jsonb_build_object(
     'status', 'ok',
     'quote', to_jsonb(v_quote),
@@ -67,14 +74,16 @@ BEGIN
               FROM quote_items qi WHERE qi.quote_id = v_quote.id)
   );
 EXCEPTION
-  -- The block's changes are rolled back, so a total that does not fit changes nothing
+  -- The block's changes are rolled back, so a total that does not fit changes nothing. The audit row is
+  -- written after that rollback, so it is kept.
   WHEN numeric_value_out_of_range THEN
+    PERFORM api_key_audit_log(p_key_id, p_organization_id, 'update', p_quote_id, 'too_large');
     RETURN jsonb_build_object('status', 'too_large');
 END;
 $$;
 
 -- REVOKE FROM PUBLIC alone leaves Supabase's default grants to anon and authenticated in place
-REVOKE ALL ON FUNCTION public.api_update_quote(UUID, UUID, JSONB, JSONB, NUMERIC, JSONB)
+REVOKE ALL ON FUNCTION public.api_update_quote(UUID, UUID, UUID, JSONB, JSONB, NUMERIC, JSONB)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.api_update_quote(UUID, UUID, JSONB, JSONB, NUMERIC, JSONB)
+GRANT EXECUTE ON FUNCTION public.api_update_quote(UUID, UUID, UUID, JSONB, JSONB, NUMERIC, JSONB)
   TO service_role;

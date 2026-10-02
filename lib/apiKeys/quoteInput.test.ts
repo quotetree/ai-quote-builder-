@@ -104,6 +104,35 @@ describe("parseQuoteCreate", () => {
     });
   }
 
+  // Parsed from JSON text, as a request body is, so each value is the double a client sends
+  for (const [field, literal] of [
+    ["unit_price", "9999999999.99"],
+    ["unit_price", "5000000000.37"],
+    ["unit_price", "1234567890.12"],
+    ["unit_price", "123456789.01"],
+    ["quantity", "99999999.99"],
+    ["quantity", "67108864.07"],
+    ["quantity", "12345678.91"],
+  ]) {
+    it(`accepts a two-decimal ${field} of ${literal}`, () => {
+      const parsed = JSON.parse(
+        `{"project_id":"${PROJECT_ID}","quote_name":"Roof",` +
+          `"items":[{"product_name":"Shingles","quantity":1,"unit_price":1,"${field}":${literal}}]}`
+      );
+      const result = parseQuoteCreate(parsed);
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.ok(result.ok);
+      assert.equal(result.value.items[0][field as "quantity" | "unit_price"], Number(literal));
+    });
+  }
+
+  it("rejects 3 decimal places on a large unit_price", () => {
+    assert.equal(
+      errorOf(body({ items: [item({ unit_price: 1234567890.125 })] })),
+      "items[0].unit_price must have at most 2 decimal places"
+    );
+  });
+
   it("rejects a discount above 1", () => {
     assert.equal(
       errorOf(body({ items: [item({ discount_percent: 1.5 })] })),

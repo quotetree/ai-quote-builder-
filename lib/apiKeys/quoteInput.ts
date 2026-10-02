@@ -69,8 +69,10 @@ function rejectUnknownFields(obj: Record<string, unknown>, allowed: string[], pa
   }
 }
 
+// A two-decimal JSON number parses to the nearest double to k / 100, and dividing
+// the rounded cents by 100 lands on that same double at any magnitude.
 function hasAtMostTwoDecimals(n: number): boolean {
-  return Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
+  return Math.round(n * 100) / 100 === n;
 }
 
 function requiredText(value: unknown, path: string, max: number): string {
