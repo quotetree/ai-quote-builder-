@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/apiKeys/authenticate";
+import { hasPermission } from "@/lib/apiKeys/permissions";
+import { parseQuoteCreate } from "@/lib/apiKeys/quoteInput";
+import { V1_QUOTE_COLUMNS } from "@/lib/apiKeys/v1Quote";
+import { computeQuoteTotals, fitsMoneyColumns } from "@/lib/quote/totals";
 
 export const runtime = "nodejs";
-
-// Explicit projection: a new column on quotes is never published here by accident
-const V1_QUOTE_COLUMNS =
-  "id, quote_number, quote_name, status, subtotal, tax_amount, total_price, expiration_date, created_at, updated_at";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -58,6 +58,50 @@ export async function GET(request: NextRequest) {
     const rows = data ?? [];
     const has_more = rows.length > limit;
     return NextResponse.json({ quotes: rows.slice(0, limit), limit, offset, has_more });
+  } catch (error) {
+    console.error("Error handling API key request:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+// POST /api/v1/quotes
+// Create a quote with its items in one of the key's organization's projects.
+// A project in another organization gets the same 404 as one that does not exist.
+export async function POST(request: NextRequest) {
+  try {
+    const auth = await authenticateApiKey(request);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    // The grant is checked before the body is parsed or any table is read
+    if (!hasPermission(auth.permissions, "quotes:create")) {
+      return NextResponse.json(
+        { error: "This API key is not allowed to create quotes" },
+        { status: 403 }
+      );
+    }
+
+    const body = await request.json().catch(() => null);
+    const parsed = parseQuoteCreate(body);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+
+    const totals = computeQuoteTotals(parsed.value.items);
+    if (!fitsMoneyColumns(totals)) {
+      return NextResponse.json({ error: "Quote total is too large" }, { status: 400 });
+    }
+
+    const result = await auth.writes.createQuote(parsed.value, totals);
+    if (result.status === "not_found") {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+    if (result.status !== "ok") {
+      throw new Error(`Unexpected create outcome: ${result.status}`);
+    }
+
+    return NextResponse.json(result.quote, { status: 201 });
   } catch (error) {
     console.error("Error handling API key request:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

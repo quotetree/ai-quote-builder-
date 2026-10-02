@@ -6,6 +6,7 @@ import {
   deriveKeyStatus,
   generateApiKey,
 } from "@/lib/apiKeys/token";
+import { parsePermissions, type ApiKeyPermission } from "@/lib/apiKeys/permissions";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,16 @@ export async function POST(
       );
     }
 
+    // Grants are optional; a key created without them is read-only
+    let permissions: ApiKeyPermission[] = [];
+    if (body?.permissions !== undefined) {
+      const parsed = parsePermissions(body.permissions);
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
+      }
+      permissions = parsed.value;
+    }
+
     const svc = getServiceClient();
 
     // Count active (non-revoked) keys against the cap; revoking frees a slot
@@ -93,8 +104,9 @@ export async function POST(
         key_prefix: prefix,
         key_hash: hash,
         created_by: user.id,
+        permissions,
       })
-      .select("id, name, key_prefix")
+      .select("id, name, key_prefix, permissions")
       .single();
 
     if (insertError || !created) {
@@ -148,7 +160,7 @@ export async function GET(
 
     const { data: rows, error: listError } = await svc
       .from("organization_api_keys")
-      .select("id, name, key_prefix, created_by, revoked_at, last_used_at, created_at")
+      .select("id, name, key_prefix, created_by, revoked_at, last_used_at, created_at, permissions")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
