@@ -1,5 +1,7 @@
 import { getServiceClient } from "@/lib/supabase/service";
 import { classifyKeyLookup, extractPresentedKey, hashApiKey } from "./token";
+import type { ApiKeyPermission } from "./permissions";
+import { createQuoteWrites, type QuoteWrites } from "./quoteWrites";
 
 /**
  * Starts a query on a table already filtered to the key's organization. Only
@@ -10,16 +12,23 @@ import { classifyKeyLookup, extractPresentedKey, hashApiKey } from "./token";
 export type ScopedQuery = (table: string, columns?: string) => any;
 
 export type ApiKeyAuth =
-  | { ok: true; organizationId: string; scoped: ScopedQuery }
+  | {
+      ok: true;
+      organizationId: string;
+      permissions: ApiKeyPermission[];
+      scoped: ScopedQuery;
+      writes: QuoteWrites;
+    }
   | { ok: false; status: number; error: string };
 
 /**
  * Authenticates a request by its API key and binds it to the key's organization.
  *
  * The organization is derived from the key hash, never from request input, and
- * the caller receives only pre-filtered query handles. This is the single
- * tenant-isolation point for key-authenticated requests, since RLS does not
- * apply to the service-role client.
+ * the caller receives only pre-filtered read handles and write operations bound
+ * to the key's organization. This is the single tenant-isolation point for
+ * key-authenticated requests, since RLS does not apply to the service-role
+ * client.
  */
 export async function authenticateApiKey(request: Request): Promise<ApiKeyAuth> {
   const presented = extractPresentedKey(request.headers);
@@ -28,7 +37,7 @@ export async function authenticateApiKey(request: Request): Promise<ApiKeyAuth> 
   const svc = getServiceClient();
   const { data: row, error } = await svc
     .from("organization_api_keys")
-    .select("id, organization_id, revoked_at")
+    .select("id, organization_id, revoked_at, permissions")
     .eq("key_hash", hashApiKey(presented.key))
     .maybeSingle();
 
@@ -49,7 +58,10 @@ export async function authenticateApiKey(request: Request): Promise<ApiKeyAuth> 
   return {
     ok: true,
     organizationId,
+    // The column's CHECK constraint guarantees only known grants are stored
+    permissions: (row!.permissions ?? []) as ApiKeyPermission[],
     scoped: (table, columns = "*") =>
       svc.from(table).select(columns).eq("organization_id", organizationId),
+    writes: createQuoteWrites(svc, { keyId: row!.id, organizationId }),
   };
 }

@@ -52,6 +52,9 @@ export async function startEditSession(
   const supabase = createClient();
   
   logEditOperation('edit:start', { quoteId, projectId });
+
+  // Session id whose mark on the quote must be released if a later step fails
+  let heldSessionId: string | null = null;
   
   try {
     // Verify schema exists (only in development)
@@ -76,6 +79,74 @@ export async function startEditSession(
     if (!user) {
       throw new Error("Not authenticated");
     }
+
+    // Read just the lock state first, to resume a session that is still active
+    const { data: lockState, error: lockStateError } = await supabase
+      .from("quotes")
+      .select("id, version_number, is_editing, edit_session_id")
+      .eq("id", quoteId)
+      .single();
+
+    if (lockStateError) {
+      console.error('[EditSession] Error fetching quote:', {
+        message: lockStateError.message,
+        code: lockStateError.code,
+        details: lockStateError.details,
+        hint: lockStateError.hint,
+        raw: JSON.stringify(lockStateError)
+      });
+      throw lockStateError;
+    }
+    if (!lockState) throw new Error("Quote not found");
+
+    // Check if quote is already being edited
+    if (lockState.is_editing && lockState.edit_session_id) {
+      // Check if there's an active session
+      const { data: existingSession } = await supabase
+        .from("quote_edit_sessions")
+        .select("*")
+        .eq("id", lockState.edit_session_id)
+        .eq("status", "active")
+        .single();
+      
+      if (existingSession) {
+        logEditOperation('edit:resume', { 
+          quoteId, 
+          existingSessionId: lockState.edit_session_id 
+        });
+        
+        return {
+          sessionId: lockState.edit_session_id,
+          snapshot: existingSession.snapshot as QuoteSnapshot,
+          version: lockState.version_number
+        };
+      }
+    }
+
+    // Generate new edit session ID
+    const sessionId = generateEditSessionId();
+
+    // Mark the quote as being edited before reading the snapshot. An API key
+    // update refuses a quote marked this way, so no such update can land after
+    // the snapshot is read and be overwritten when the edit is saved.
+    // The filter takes the mark only if no other session has taken it since the read above.
+    const markQuery = supabase
+      .from("quotes")
+      .update({
+        is_editing: true,
+        edit_session_id: sessionId
+      })
+      .eq("id", quoteId);
+    const { data: marked, error: lockError } = await (lockState.edit_session_id
+      ? markQuery.eq("edit_session_id", lockState.edit_session_id)
+      : markQuery.is("edit_session_id", null)
+    ).select("id");
+
+    if (lockError) throw lockError;
+    if (!marked || marked.length === 0) {
+      throw new Error("This quote is already being edited in another session");
+    }
+    heldSessionId = sessionId;
 
     // Fetch the quote with all its items (* includes baked_markups, charges, discounts)
     console.log('[EditSession] Fetching quote:', quoteId);
@@ -110,30 +181,6 @@ export async function startEditSession(
       hasCharges: !!quote.charges,
       chargesCount: (quote.charges || []).length
     });
-
-    // Check if quote is already being edited
-    if (quote.is_editing && quote.edit_session_id) {
-      // Check if there's an active session
-      const { data: existingSession } = await supabase
-        .from("quote_edit_sessions")
-        .select("*")
-        .eq("id", quote.edit_session_id)
-        .eq("status", "active")
-        .single();
-      
-      if (existingSession) {
-        logEditOperation('edit:resume', { 
-          quoteId, 
-          existingSessionId: quote.edit_session_id 
-        });
-        
-        return {
-          sessionId: quote.edit_session_id,
-          snapshot: existingSession.snapshot as QuoteSnapshot,
-          version: quote.version_number
-        };
-      }
-    }
 
     // Load charges and baked markups from the quote itself (not working state)
     // Note: Database returns snake_case (baked_markups) but we use camelCase in app
@@ -178,9 +225,6 @@ export async function startEditSession(
       items: snapshot.items.map(i => ({ name: i.product_name, qty: i.quantity }))
     });
 
-    // Generate new edit session ID
-    const sessionId = generateEditSessionId();
-
     // Create edit session record
     const { error: sessionError } = await supabase
       .from("quote_edit_sessions")
@@ -195,17 +239,7 @@ export async function startEditSession(
       });
 
     if (sessionError) throw sessionError;
-
-    // Mark quote as being edited
-    const { error: updateError } = await supabase
-      .from("quotes")
-      .update({
-        is_editing: true,
-        edit_session_id: sessionId
-      })
-      .eq("id", quoteId);
-
-    if (updateError) throw updateError;
+    heldSessionId = null;
 
     logEditOperation('edit:rehydrate', {
       quoteId,
@@ -224,6 +258,14 @@ export async function startEditSession(
     };
 
   } catch (error: any) {
+    if (heldSessionId) {
+      // Release the mark this call set, unless another session has taken it since
+      await supabase
+        .from("quotes")
+        .update({ is_editing: false, edit_session_id: null })
+        .eq("id", quoteId)
+        .eq("edit_session_id", heldSessionId);
+    }
     const info = logErr('startEditSession', error);
     logEditOperation('edit:error', { 
       operation: 'startEditSession',
@@ -702,14 +744,15 @@ export async function submitEditedQuote(
         baked_markups: modifiedQuote.bakedMarkups || [], // Save baked markups with quote (DB uses snake_case)
         change_notes: changeNotes || null,
         diff_summary: diff,
-        author_id: user.id,
-        is_editing: false,
-        edit_session_id: null
+        author_id: user.id
         // Note: parent_quote_id stays null - we're updating the same quote record
       })
       .eq("id", session.quote_id)
+      // Only while this session still holds the edit mark, so an API key update cannot interleave
+      .eq("is_editing", true)
+      .eq("edit_session_id", sessionId)
       .select()
-      .single();
+      .maybeSingle();
     
     console.log('[Submit] Updated quote with charges and markups:', {
       quoteId: session.quote_id,
@@ -739,7 +782,9 @@ export async function submitEditedQuote(
     }
     
     if (!updatedQuote) {
-      throw new Error("Failed to update quote - no data returned");
+      const error = new Error("CONCURRENCY_CONFLICT: This edit session no longer holds the quote");
+      (error as any).code = "CONCURRENCY_CONFLICT";
+      throw error;
     }
 
     // Delete old quote items
@@ -777,6 +822,19 @@ export async function submitEditedQuote(
         ...itemsError
       };
       throw structuredError;
+    }
+
+    // Clear the edit mark only after the last quote write, so an API key
+    // update cannot land between the quote update and the items replacement
+    const { error: unlockError } = await supabase
+      .from("quotes")
+      .update({ is_editing: false, edit_session_id: null })
+      .eq("id", session.quote_id)
+      .eq("edit_session_id", sessionId);
+
+    // The quote and items are saved by now, so report the failed unlock but do not fail the save
+    if (unlockError) {
+      console.error('[EditSession] Saved, but could not clear the edit mark:', unlockError);
     }
 
     // Mark session as completed
@@ -874,14 +932,15 @@ export async function cancelEditSession(
       .update({ status: 'cancelled' })
       .eq("id", sessionId);
 
-    // Clear quote editing flag
+    // Clear quote editing flag, unless another session holds it now
     await supabase
       .from("quotes")
       .update({
         is_editing: false,
         edit_session_id: null
       })
-      .eq("id", session.quote_id);
+      .eq("id", session.quote_id)
+      .eq("edit_session_id", sessionId);
 
     // Clear project working state edit mode
     await supabase

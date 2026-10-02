@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Copy, KeyRound, Plus, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { useOrganizationRole } from "@/hooks/useOrganizationRole";
+import type { ApiKeyPermission } from "@/lib/apiKeys/permissions";
 
 interface ApiKeysModalProps {
   isOpen: boolean;
@@ -22,7 +23,14 @@ interface ApiKeyRow {
   last_used_at: string | null;
   created_at: string;
   status: ApiKeyStatus;
+  permissions: ApiKeyPermission[];
 }
+
+const GRANT_OPTIONS: { permission: ApiKeyPermission; label: string; chip: string }[] = [
+  { permission: "quotes:create", label: "Create quotes", chip: "Create" },
+  { permission: "quotes:update", label: "Update quotes", chip: "Update" },
+  { permission: "quotes:delete", label: "Delete quotes", chip: "Delete" },
+];
 
 export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
   const { organizationId, isOwner, isSuperAdmin } = useOrganizationRole();
@@ -33,6 +41,7 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
   const [maxKeys, setMaxKeys] = useState(5);
   const [creating, setCreating] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyPermissions, setNewKeyPermissions] = useState<ApiKeyPermission[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -53,7 +62,14 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
     setRevealedSecret(null);
     setShowCreateForm(false);
     setNewKeyName("");
+    setNewKeyPermissions([]);
   }, []);
+
+  const toggleNewKeyPermission = (permission: ApiKeyPermission, checked: boolean) => {
+    setNewKeyPermissions((current) =>
+      checked ? [...current, permission] : current.filter((p) => p !== permission)
+    );
+  };
 
   const handleClose = () => {
     resetEphemeral();
@@ -108,7 +124,7 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, permissions: newKeyPermissions }),
         }
       );
       const data = await res.json();
@@ -119,6 +135,7 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
       setRevealedSecret(data.key);
       setShowCreateForm(false);
       setNewKeyName("");
+      setNewKeyPermissions([]);
       toast.success("API key created");
       await loadKeys();
     } catch (err: unknown) {
@@ -290,12 +307,35 @@ export default function ApiKeysModal({ isOpen, onClose }: ApiKeysModalProps) {
                   autoFocus
                 />
               </label>
+              <fieldset className="space-y-2" disabled={creating}>
+                <legend className="text-sm font-medium text-gray-700">Grants</legend>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  {GRANT_OPTIONS.map(({ permission, label }) => (
+                    <label
+                      key={permission}
+                      className="inline-flex items-center gap-2 min-h-8 text-sm text-gray-900 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newKeyPermissions.includes(permission)}
+                        onChange={(e) => toggleNewKeyPermission(permission, e.target.checked)}
+                        className="h-4 w-4 accent-gray-900"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500">
+                  Every key can read quotes. Leave all three unchecked for a read-only key. Grants cannot be changed later.
+                </p>
+              </fieldset>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setShowCreateForm(false);
                     setNewKeyName("");
+                    setNewKeyPermissions([]);
                   }}
                   className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                 >
@@ -403,6 +443,20 @@ function KeyRow({
         <p className="text-xs text-gray-500 mt-1 font-mono">
           {keyRow.key_prefix}…
         </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {keyRow.permissions.length === 0 ? (
+            <span className="text-xs text-gray-500">Read-only</span>
+          ) : (
+            GRANT_OPTIONS.filter((g) => keyRow.permissions.includes(g.permission)).map((g) => (
+              <span
+                key={g.permission}
+                className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-[11px] font-medium"
+              >
+                {g.chip}
+              </span>
+            ))
+          )}
+        </div>
         <p className="text-xs text-gray-500 mt-0.5">
           Created by {keyRow.created_by_label ?? "a former member"} ·{" "}
           {formatDate(keyRow.created_at)}
